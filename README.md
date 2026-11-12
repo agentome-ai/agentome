@@ -186,22 +186,27 @@ Codex reads the token from `AGENTOME_TOKEN` in the environment it starts in.
 On a Linux or macOS machine with Docker Engine 25 or newer and the Compose plugin:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/agentome-ai/agentome/main/deploy/install.sh | sh
+curl -fsSL https://agentome.ai/install.sh | sh
 ```
 
-The script creates `./agentome`, starts the server and PostgreSQL from the images on Docker Hub, and
-prints the address of the first-run setup with its setup code. Open it, create the administrator,
-then either connect a computer (Admin → Computers gives a one-time command) or add a model
-connection, and give an agent its first task.
+The script puts `compose.yaml` into `./agentome`, pulls the images from Docker Hub
+([`agentome/agentome`](https://hub.docker.com/r/agentome/agentome) and `postgres:16-alpine`),
+starts them, and prints the address of the first-run setup with its setup code. Open it, create the
+administrator, then either connect a computer (Admin → Computers gives a one-time command) or add a
+model connection, and give an agent its first task.
 
-From a checkout of this repository instead:
+The same by hand, without the script:
 
 ```sh
-git clone https://github.com/agentome-ai/agentome.git
-cd agentome
-docker compose up -d --build
+mkdir agentome && cd agentome
+curl -fsSLO https://raw.githubusercontent.com/agentome-ai/agentome/main/compose.yaml
+docker compose up -d
 docker compose exec app agentome setup-code   # then open http://localhost:3000/setup
 ```
+
+Agents on the server, with an API key, run in the
+[`agentome/agentome-seat`](https://hub.docker.com/r/agentome/agentome-seat) image; both images are
+for amd64 and arm64.
 
 How to set up and use it, with screenshots, is in the [documentation](docs/guide/README.md). HTTPS,
 backups, updates and troubleshooting are in [deploy/OPERATIONS.md](deploy/OPERATIONS.md); every
@@ -297,6 +302,7 @@ Then:
 
 ```sh
 pnpm install
+docker compose up -d --build                # the whole thing from this checkout, as agentome:local
 pnpm --filter @agentome/server dev          # applies migrations, serves http://localhost:3000
 pnpm --filter @agentome/web dev             # the web app on Vite, passing /api on to the server
 pnpm typecheck && pnpm lint && pnpm test    # tests start their own PostgreSQL in Docker

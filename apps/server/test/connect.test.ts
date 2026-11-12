@@ -350,7 +350,8 @@ describe('the routes', () => {
 // the server and the worker is the same on every system.
 const PWSH = ['/opt/homebrew/bin/pwsh', '/usr/bin/pwsh', '/usr/local/bin/pwsh'].find(existsSync);
 
-describe.skipIf(PWSH === undefined)('the PowerShell installer', () => {
+// pwsh takes seconds to start on a CI runner, and every test starts it more than once.
+describe.skipIf(PWSH === undefined)('the PowerShell installer', { timeout: 30_000 }, () => {
   function pwsh(
     script: string,
     { claude = true, env = {} }: { claude?: boolean; env?: object } = {},
