@@ -1,0 +1,49 @@
+# Agentome on Kubernetes: edit this file, then `kubectl apply -k deploy/kubernetes`.
+# The steps, the Secret and backups are in deploy/OPERATIONS.md, under Kubernetes.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Create it before the Secret: kubectl create namespace agentome
+namespace: agentome
+
+resources:
+  - agentome.yaml
+  - ingress.yaml
+
+# PostgreSQL inside the cluster. To use the company's database instead, remove these two
+# lines and put its address into the Secret (secret.example.yaml).
+components:
+  - postgres
+
+# The release: an update or a rollback changes newTag.
+images:
+  - name: docker.io/agentome/agentome
+    newTag: 0.1.0
+
+# The server's settings (deploy/CONFIG.md); add any other one as NAME=value. Secrets go into
+# the Secret instead. A change here restarts the server on the next apply.
+configMapGenerator:
+  - name: agentome
+    literals:
+      # The address people open and computers connect to. The Ingress takes its host from it.
+      - AGENTOME_PUBLIC_URL=https://agentome.example.com
+      # Behind the Ingress the client's address comes in X-Forwarded-For.
+      - AGENTOME_TRUST_PROXY=true
+      - AGENTOME_LOG_LEVEL=info
+
+# The host of AGENTOME_PUBLIC_URL, the part after https://, into the Ingress.
+replacements:
+  - source:
+      kind: ConfigMap
+      name: agentome
+      fieldPath: data.AGENTOME_PUBLIC_URL
+      options:
+        delimiter: /
+        index: 2
+    targets:
+      - select:
+          kind: Ingress
+          name: agentome
+        fieldPaths:
+          - spec.rules.0.host
+          - spec.tls.0.hosts.0

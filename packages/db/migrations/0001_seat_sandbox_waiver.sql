@@ -1,0 +1,1 @@
+ALTER TABLE "seats" ADD COLUMN "sandbox_waived_at" timestamp with time zone;

@@ -1,0 +1,517 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens of direction A, "Ink and paper", in its Vercel-like edition. The variables keep the names
+ * from the design plan; @theme maps them to utilities (bg-paper, text-ink-2, border-line-control).
+ * Light is the default. Dark applies when the OS asks for it and the person did not pick light,
+ * or when they picked dark: the choice is data-theme on <html>, set before paint in index.html.
+ */
+:root {
+  color-scheme: light;
+  --bg: #ffffff; /* Panel: the page */
+  --bg-sunken: #fafafa; /* Desk: the ground the sidebar and the panel sit on */
+  --bg-raised: #ffffff;
+  --bg-hover: #f4f4f5;
+  /* Inline code: sunken on paper, raised on the dark page, where sunken disappears. */
+  --code-bg: var(--bg-sunken);
+  --bg-selected: #ececee;
+  --line: #ebebed; /* Rule */
+  --line-strong: #dedee2;
+  --line-control: #85858f; /* 3:1 against every surface: field, radio and tab borders */
+  --ink: #111113; /* Ink */
+  --ink-2: #52525b; /* Pencil: a clear step above ink-3, so colour carries the hierarchy */
+  --ink-3: #6b6b74;
+  --ink-inverse: #ffffff;
+  --primary-hover: #2a2a2e;
+  --accent: #2563eb; /* Sign-off: the approve button, a picked radio */
+  --accent-hover: #1d4ed8;
+  --accent-subtle: #eff4ff;
+  --accent-subtle-hover: #e1eaff;
+  --accent-text: #1d4ed8; /* the word on --accent-subtle: Approve, 6.1:1 */
+  --on-accent: #ffffff;
+  /* State colours, each for one meaning: */
+  --running: #a86a00; /* an agent working */
+  --waiting: #b45309; /* an agent waiting for a person */
+  --review: #18804a; /* a task waiting for a person's review */
+  --failed: #c03a30;
+  --done: #6550d0;
+  --mark-muted: #85858f;
+  --focus: #1a1a1e;
+  --selection: #d9dbe6;
+  --overlay-shadow: 0 16px 40px -16px rgb(20 20 28 / 0.3);
+  /* Projects' and teams' own colours (ui/tint.tsx). */
+  --tint-1: #2f6fd0;
+  --tint-2: #7a4fd0;
+  --tint-3: #c2417f;
+  --tint-4: #c4473a;
+  --tint-5: #b8600a;
+  --tint-6: #8a6d00;
+  --tint-7: #2e8540;
+  --tint-8: #0f7f88;
+  /* The logo (docs/brand): the mark's gradients and the name, dark on a light page. */
+  --brand-body-1: #070708;
+  --brand-body-2: #0b0b0c;
+  --brand-body-3: #111113;
+  --brand-fold-1: #171719;
+  --brand-fold-2: #c9c9cc;
+  --brand-ink: #09090a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #0a0a0a;
+    --bg-sunken: #0a0a0a;
+    --bg-raised: #111112;
+    --bg-hover: #19191b;
+    --code-bg: var(--bg-hover);
+    --bg-selected: #1f1f22;
+    --line: #1f1f22;
+    --line-strong: #2c2c30;
+    --line-control: #6e6e78;
+    --ink: #ededed;
+    --ink-2: #a1a1a6;
+    --ink-3: #8b8b93;
+    --ink-inverse: #0a0a0a;
+    --primary-hover: #ffffff;
+    --accent: #2563eb;
+    --accent-hover: #3b82f6;
+    --accent-subtle: #0f1b33;
+    --accent-subtle-hover: #152548;
+    --accent-text: #60a5fa; /* 6.7:1 on --accent-subtle */
+    --on-accent: #ffffff;
+    --running: #f2c94c;
+    --waiting: #f2994a;
+    --review: #4cb782;
+    --failed: #f07167;
+    --done: #9d8cf2;
+    --mark-muted: #6e6e78;
+    --focus: #ededf0;
+    --selection: #1e3a6b;
+    --overlay-shadow: 0 16px 40px -16px rgb(0 0 0 / 0.7);
+    --tint-1: #5e9bf0;
+    --tint-2: #a78bfa;
+    --tint-3: #f06bab;
+    --tint-4: #f2786b;
+    --tint-5: #f2994a;
+    --tint-6: #e8c14a;
+    --tint-7: #5fbf77;
+    --tint-8: #3fbfc9;
+    --brand-body-1: #ffffff;
+    --brand-body-2: #f0f0f1;
+    --brand-body-3: #a7a7aa;
+    --brand-fold-1: #fcfcfc;
+    --brand-fold-2: #3d3d3f;
+    --brand-ink: #f8f8f8;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0a0a0a;
+  --bg-sunken: #0a0a0a;
+  --bg-raised: #111112;
+  --bg-hover: #19191b;
+  --code-bg: var(--bg-hover);
+  --bg-selected: #1f1f22;
+  --line: #1f1f22;
+  --line-strong: #2c2c30;
+  --line-control: #6e6e78;
+  --ink: #ededed;
+  --ink-2: #a1a1a6;
+  --ink-3: #8b8b93;
+  --ink-inverse: #0a0a0a;
+  --primary-hover: #ffffff;
+  --accent: #2563eb;
+  --accent-hover: #3b82f6;
+  --accent-subtle: #0f1b33;
+  --accent-subtle-hover: #152548;
+  --accent-text: #60a5fa;
+  --on-accent: #ffffff;
+  --running: #f2c94c;
+  --waiting: #f2994a;
+  --review: #4cb782;
+  --failed: #f07167;
+  --done: #9d8cf2;
+  --mark-muted: #6e6e78;
+  --focus: #ededf0;
+  --selection: #1e3a6b;
+  --overlay-shadow: 0 16px 40px -16px rgb(0 0 0 / 0.7);
+  --tint-1: #5e9bf0;
+  --tint-2: #a78bfa;
+  --tint-3: #f06bab;
+  --tint-4: #f2786b;
+  --tint-5: #f2994a;
+  --tint-6: #e8c14a;
+  --tint-7: #5fbf77;
+  --tint-8: #3fbfc9;
+  --brand-body-1: #ffffff;
+  --brand-body-2: #f0f0f1;
+  --brand-body-3: #a7a7aa;
+  --brand-fold-1: #fcfcfc;
+  --brand-fold-2: #3d3d3f;
+  --brand-ink: #f8f8f8;
+}
+
+/* Only our scale exists: no zinc, no indigo, no text-sm, no shadow-md to reach for by habit. */
+@theme {
+  --color-*: initial;
+  --font-sans:
+    'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --text-*: initial;
+  --text-small: 12px;
+  --text-small--line-height: 16px;
+  --text-small--letter-spacing: 0.005em;
+  --text-ui: 13px;
+  --text-ui--line-height: 20px;
+  --text-read: 14px;
+  --text-read--line-height: 22px;
+  --text-section: 15px;
+  --text-section--line-height: 22px;
+  --text-section--letter-spacing: -0.005em;
+  --text-section--font-weight: 600;
+  --text-title: 20px;
+  --text-title--line-height: 26px;
+  --text-title--letter-spacing: -0.015em;
+  --text-title--font-weight: 600;
+  --text-name: 24px;
+  --text-name--line-height: 30px;
+  --text-name--letter-spacing: -0.02em;
+  --text-name--font-weight: 600;
+  --radius-*: initial;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --shadow-*: initial;
+  --breakpoint-*: initial;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1440px;
+  --breakpoint-3xl: 1680px;
+  --animate-running: spin 1.6s linear infinite;
+  --animate-overlay-in: overlay-in 180ms ease-out;
+  --animate-sheet-in: sheet-in 180ms ease-out;
+  --animate-nudge: nudge 360ms ease-out;
+  --animate-rise: rise 160ms ease-out;
+  --animate-unfold: unfold 160ms ease-out;
+
+  @keyframes overlay-in {
+    from {
+      opacity: 0;
+      scale: 0.98;
+    }
+  }
+  /* The phone's More, from the tab bar it opens from. */
+  @keyframes sheet-in {
+    from {
+      translate: 0 100%;
+    }
+  }
+  /* Something that arrived while the page was open: a streamed row, a run that started. */
+  @keyframes rise {
+    from {
+      opacity: 0;
+      translate: 0 4px;
+    }
+  }
+  /* A disclosure opening: its body grows from nothing (grid rows animate since 2023). */
+  @keyframes unfold {
+    from {
+      grid-template-rows: 0fr;
+      opacity: 0;
+    }
+  }
+  /* Once, when a new request starts waiting: the one motion that asks for attention unasked. */
+  @keyframes nudge {
+    40% {
+      scale: 1.35;
+    }
+  }
+}
+
+@theme inline {
+  --color-paper: var(--bg);
+  --color-desk: var(--bg-sunken);
+  --color-raised: var(--bg-raised);
+  --color-hover: var(--bg-hover);
+  --color-selected: var(--bg-selected);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-line-control: var(--line-control);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-inverse: var(--ink-inverse);
+  --color-primary-hover: var(--primary-hover);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-accent-subtle-hover: var(--accent-subtle-hover);
+  --color-accent-text: var(--accent-text);
+  --color-on-accent: var(--on-accent);
+  --color-running: var(--running);
+  --color-failed: var(--failed);
+  --color-waiting: var(--waiting);
+  --color-review: var(--review);
+  --color-tint-1: var(--tint-1);
+  --color-tint-2: var(--tint-2);
+  --color-tint-3: var(--tint-3);
+  --color-tint-4: var(--tint-4);
+  --color-tint-5: var(--tint-5);
+  --color-tint-6: var(--tint-6);
+  --color-tint-7: var(--tint-7);
+  --color-tint-8: var(--tint-8);
+  --color-mark-muted: var(--mark-muted);
+  --color-done: var(--done);
+  --shadow-overlay: var(--overlay-shadow);
+}
+
+/* The agent sheet switches to its compact density below 360 px of panel width, or when its
+   pass layout is taller than the window (data-density, set by the sheet itself). */
+@custom-variant compact {
+  @container sheet (width < 360px) {
+    @slot;
+  }
+  &:where([data-density='compact'] *) {
+    @slot;
+  }
+}
+
+@layer base {
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 20px;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* No orphan on a heading, no lonely last word in a paragraph. */
+  :is(h1, h2, h3, [role='heading']) {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  ::selection {
+    background: var(--selection);
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+  }
+}
+
+/* A phone is an app, not a page: no blue flash on a tap, no zoom on a double tap or into
+   a field (iOS zooms into text under 16 px), no rubber band past the ends, chrome that is not
+   selected like text. */
+@layer base {
+  @media (width < 48rem) {
+    html {
+      -webkit-tap-highlight-color: transparent;
+      -webkit-text-size-adjust: 100%;
+    }
+    body {
+      overscroll-behavior-y: none;
+    }
+    :is(a, button, [role='tab'], summary) {
+      touch-action: manipulation;
+    }
+    :is(input, textarea) {
+      font-size: 16px;
+    }
+    :is(nav, header, [role='tablist']) {
+      -webkit-user-select: none;
+      user-select: none;
+    }
+  }
+}
+
+/* Table phoneList (ui/table.tsx): on a phone each row is a list item of an app. Outside the
+   layers on purpose: it must win over the cells' own utilities (h-9, px-3) on a phone. */
+@media (width < 48rem) {
+  .phone-list,
+  .phone-list tbody {
+    display: block;
+  }
+  .phone-list :is(colgroup, thead) {
+    display: none;
+  }
+  .phone-list tbody tr {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 2px;
+    min-height: 60px;
+    padding: 10px 40px 10px 16px;
+  }
+  /* A row shown above as a card of its own (a running run on Runs). */
+  .phone-list tbody tr[data-card] {
+    display: none;
+  }
+  .phone-list tbody tr:active {
+    background: var(--bg-hover);
+  }
+  /* What the row is about first, on its own line; the rest quiet under it. */
+  .phone-list td {
+    height: auto;
+    padding: 0;
+    font-size: 12px;
+    line-height: 18px;
+  }
+  .phone-list td[data-primary] {
+    order: -1;
+    flex-basis: 100%;
+    font-size: 15px;
+    line-height: 22px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  /* A row led by its agent's tile: the tile two lines tall on the left, no chevron. */
+  .phone-list tbody tr:has(> td[data-lead]) {
+    column-gap: 8px;
+    padding: 10px 16px 10px 64px;
+  }
+  .phone-list tbody tr:has(> td[data-lead])::after {
+    content: none;
+  }
+  .phone-list td[data-lead] {
+    position: absolute;
+    top: 50%;
+    left: 16px;
+    translate: 0 -50%;
+  }
+  /* A row with a menu of its own: the menu's button stands where the chevron would. */
+  .phone-list tbody tr:has(> td[data-menu]) {
+    padding-right: 48px;
+  }
+  .phone-list tbody tr:has(> td[data-menu])::after {
+    content: none;
+  }
+  .phone-list td[data-menu] {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    translate: 0 -50%;
+  }
+  .phone-list tbody tr::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 16px;
+    width: 14px;
+    height: 14px;
+    translate: 0 -50%;
+    background: var(--ink-3);
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+}
+
+/* Rendered markdown (ui/markdown.tsx): reading type, not more than 72 characters a line. The one
+   place where italics appear, because the author wrote them. A word longer than the column (a
+   path, a URL) breaks rather than widens it; code blocks and tables scroll inside it instead. */
+@layer components {
+  .markdown {
+    max-width: 72ch;
+    font-size: 14px;
+    line-height: 22px;
+    overflow-wrap: anywhere;
+  }
+  .markdown > * + * {
+    margin-top: 10px;
+  }
+  .markdown :is(h1, h2, h3, h4) {
+    font-weight: 600;
+  }
+  .markdown h1 {
+    font-size: 20px;
+    line-height: 28px;
+  }
+  .markdown h2 {
+    font-size: 15px;
+    margin-top: 22px;
+  }
+  .markdown :is(h3, h4) {
+    margin-top: 16px;
+  }
+  .markdown :is(ul, ol) {
+    padding-left: 20px;
+  }
+  .markdown ul {
+    list-style: disc;
+  }
+  .markdown ol {
+    list-style: decimal;
+  }
+  .markdown li + li {
+    margin-top: 4px;
+  }
+  .markdown :is(code, pre) {
+    border-radius: var(--radius-sm);
+    background: var(--code-bg);
+  }
+  .markdown code {
+    padding: 1px 4px;
+  }
+  .markdown pre {
+    overflow-x: auto;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 18px;
+  }
+  .markdown pre code {
+    padding: 0;
+  }
+  .markdown a {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .markdown blockquote {
+    border-left: 2px solid var(--line-strong);
+    padding-left: 12px;
+    color: var(--ink-2);
+  }
+  .markdown hr {
+    border-top: 1px solid var(--line);
+  }
+  .markdown table {
+    border-collapse: collapse;
+  }
+  .markdown :is(th, td) {
+    border-bottom: 1px solid var(--line);
+    padding: 4px 12px 4px 0;
+    text-align: left;
+    /* Columns as wide as their longest word: a table too wide for that scrolls instead. */
+    overflow-wrap: break-word;
+  }
+}
+
+/* Safari on a phone zooms into a field set smaller than 16 px as it takes focus, and stays
+   zoomed. Outside a layer, so it outranks the text utilities; a field that is a page's title
+   (data-heading) is larger than that already and keeps its own size. */
+@media (pointer: coarse) {
+  :is(input, textarea, [contenteditable]):not([data-heading]) {
+    font-size: max(16px, 1em);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

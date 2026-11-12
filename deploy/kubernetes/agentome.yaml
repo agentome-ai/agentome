@@ -1,0 +1,126 @@
+# The server: the web app, the API and the `agentome` command, in one container.
+# Settings come from the ConfigMap that kustomization.yaml generates and from the Secret
+# `agentome` (secret.example.yaml); every setting is listed in deploy/CONFIG.md.
+
+# The data directory. The secret key comes from the Secret, not from here: the key must stay
+# with the database, which may be the company's own and outlive this cluster, while a volume
+# goes with its namespace. `agentome backup` and `restore` still carry the directory.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agentome-data
+  labels:
+    app.kubernetes.io/name: agentome
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentome
+  labels:
+    app.kubernetes.io/name: agentome
+spec:
+  # One server: it keeps sign-in limits in memory and owns its data volume.
+  replicas: 1
+  # The old pod stops before the new one starts: the volume mounts on one node at a time,
+  # and the new release applies its migrations on start, with nothing old still writing.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agentome
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agentome
+    spec:
+      # The server never talks to the Kubernetes API.
+      automountServiceAccountToken: false
+      # Otherwise Kubernetes adds AGENTOME_PORT, AGENTOME_SERVICE_HOST and the like for the
+      # Service of the same name, which read like settings of the server.
+      enableServiceLinks: false
+      # The image runs as `node` (uid and gid 1000); fsGroup makes the volume writable for it.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agentome
+          image: docker.io/agentome/agentome:0.1.0
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: agentome
+            # AGENTOME_SECRET_KEY, AGENTOME_DATABASE_URL and PGPASSWORD, by those names.
+            - secretRef:
+                name: agentome
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          # The migrations of a start run before the server listens: up to five minutes.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          # /health answers while the process lives.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 3
+          # /ready answers once the database does too; until then the Ingress sends no one here.
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          # A start: adjust to what the server uses with your agents.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            # `agentome backup` and `restore` unpack the archive here.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: agentome-data
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentome
+  labels:
+    app.kubernetes.io/name: agentome
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: agentome
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

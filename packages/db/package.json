@@ -1,0 +1,33 @@
+{
+  "name": "@agentome/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "agentome-dist": "./dist/index.js",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "migrations"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "generate": "drizzle-kit generate",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run --config ../../vitest.config.ts",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@agentome/shared": "workspace:*",
+    "drizzle-orm": "^0.45.4",
+    "postgres": "^3.4.9"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "^12.2.1",
+    "drizzle-kit": "^0.31.11"
+  }
+}

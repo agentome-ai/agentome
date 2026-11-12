@@ -1,0 +1,55 @@
+{
+  "object_kind": "note",
+  "event_type": "note",
+  "user": {
+    "id": 3,
+    "name": "Reviewer",
+    "username": "reviewer",
+    "email": "[REDACTED]"
+  },
+  "project_id": 42,
+  "project": {
+    "id": 42,
+    "name": "payments",
+    "web_url": "https://gitlab.example.com/platform/payments",
+    "namespace": "platform",
+    "visibility_level": 0,
+    "path_with_namespace": "platform/payments",
+    "default_branch": "main"
+  },
+  "object_attributes": {
+    "id": 70412,
+    "note": "This needs a timeout, or the worker hangs.",
+    "noteable_type": "MergeRequest",
+    "author_id": 3,
+    "created_at": "2026-09-15 09:04:11 UTC",
+    "updated_at": "2026-09-15 09:04:11 UTC",
+    "project_id": 42,
+    "attachment": null,
+    "line_code": "a1b2c3d4_15_15",
+    "commit_id": null,
+    "noteable_id": 991,
+    "system": false,
+    "st_diff": null,
+    "url": "https://gitlab.example.com/platform/payments/-/merge_requests/7#note_70412",
+    "type": "DiffNote",
+    "action": "create",
+    "description": "This needs a timeout, or the worker hangs."
+  },
+  "repository": {
+    "name": "payments",
+    "url": "git@gitlab.example.com:platform/payments.git",
+    "homepage": "https://gitlab.example.com/platform/payments"
+  },
+  "merge_request": {
+    "id": 991,
+    "iid": 7,
+    "title": "PAY-114: GitLab webhooks",
+    "source_branch": "agent/task-1a2b3c4d5e6f",
+    "target_branch": "main",
+    "source_project_id": 42,
+    "target_project_id": 42,
+    "state": "opened",
+    "url": "https://gitlab.example.com/platform/payments/-/merge_requests/7"
+  }
+}

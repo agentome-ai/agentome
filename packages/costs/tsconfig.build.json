@@ -1,0 +1,6 @@
+{
+  // prices.json sits beside src/ and pricing.ts imports it, so this build is rooted one level
+  // up: dist/src/*.js with dist/prices.json, where `../prices.json` finds it.
+  "extends": ["./tsconfig.json", "../../tsconfig.build.json"],
+  "compilerOptions": { "rootDir": "${configDir}" }
+}

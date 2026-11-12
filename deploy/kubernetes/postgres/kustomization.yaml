@@ -1,0 +1,6 @@
+# PostgreSQL inside the cluster, as a component: kustomization.yaml lists it under
+# `components`, and a company with a database of its own removes that line.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - postgres.yaml

@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "resolveJsonModule": true,
+    // scripts/update-prices.ts runs on Node's own type stripping, which cannot run enums.
+    "erasableSyntaxOnly": true
+  },
+  "include": ["src", "scripts", "test"]
+}

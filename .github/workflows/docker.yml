@@ -1,0 +1,45 @@
+name: docker
+
+# Builds the image and runs deploy/smoke.sh against it, compose with PostgreSQL included, for
+# every change that is more than documents, and on pull requests with the docker label. Like
+# checks, it is a required check of main. Nothing is pushed: release.yml
+# publishes the images.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push supersedes a running build of a pull request. A label other than docker gets
+# a group of its own, so that its skipped run cannot cancel the build; main is never cancelled.
+concurrency:
+  group: docker-${{ github.ref }}-${{ github.event.action == 'labeled' && github.event.label.name != 'docker' && github.event.label.name || 'build' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  docker:
+    name: docker
+    # A label other than docker does not rebuild the image.
+    if: github.event.action != 'labeled' || github.event.label.name == 'docker'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      # On a pull request the checkout is the merge commit, so HEAD^1 is the base branch; on
+      # main it is the commit before.
+      - name: Build and smoke
+        env:
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'docker') }}
+        run: |
+          if [ "$HAS_LABEL" = true ] || git diff --name-only HEAD^1 HEAD | grep -qvE '^docs/|\.md$'; then
+            deploy/smoke.sh
+            docker image ls agentome:smoke
+          else
+            echo "Only documents changed and there is no docker label: skipping."
+          fi

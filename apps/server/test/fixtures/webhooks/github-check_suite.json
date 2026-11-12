@@ -1,0 +1,57 @@
+{
+  "action": "completed",
+  "check_suite": {
+    "id": 31877420113,
+    "node_id": "CS_kwDOLQ2x3s8AAAAHa0Xb0Q",
+    "head_branch": "agent/readme",
+    "head_sha": "4f2a9c1d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a39",
+    "status": "completed",
+    "conclusion": "failure",
+    "url": "https://api.github.com/repos/acme/api/check-suites/31877420113",
+    "before": "1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d",
+    "after": "4f2a9c1d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a39",
+    "pull_requests": [
+      {
+        "url": "https://api.github.com/repos/acme/api/pulls/42",
+        "id": 2074419381,
+        "number": 42,
+        "head": {
+          "ref": "agent/readme",
+          "sha": "4f2a9c1d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a39",
+          "repo": { "id": 761044210, "url": "https://api.github.com/repos/acme/api", "name": "api" }
+        },
+        "base": {
+          "ref": "main",
+          "sha": "1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d",
+          "repo": { "id": 761044210, "url": "https://api.github.com/repos/acme/api", "name": "api" }
+        }
+      }
+    ],
+    "app": { "id": 15368, "slug": "github-actions", "name": "GitHub Actions" },
+    "created_at": "2026-10-22T09:12:09Z",
+    "updated_at": "2026-10-22T09:16:47Z",
+    "rerequestable": true,
+    "runs_rerequestable": true,
+    "latest_check_runs_count": 2,
+    "head_commit": {
+      "id": "4f2a9c1d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a39",
+      "tree_id": "8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b",
+      "message": "Add a README",
+      "timestamp": "2026-10-22T09:11:58Z",
+      "author": { "name": "Backend developer", "email": "agent@agentome.local" },
+      "committer": { "name": "Backend developer", "email": "agent@agentome.local" }
+    }
+  },
+  "repository": {
+    "id": 761044210,
+    "node_id": "R_kgDOLQ2x3g",
+    "name": "api",
+    "full_name": "acme/api",
+    "private": true,
+    "owner": { "login": "acme", "id": 60293811, "type": "Organization" },
+    "html_url": "https://github.com/acme/api",
+    "default_branch": "main"
+  },
+  "organization": { "login": "acme", "id": 60293811 },
+  "sender": { "login": "github-actions[bot]", "id": 41898282, "type": "Bot" }
+}

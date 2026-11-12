@@ -1,0 +1,14 @@
+# The image builds everything from source, so only the host's own artefacts stay out:
+# dependencies and builds for another platform, local state and secrets, at any depth.
+**/node_modules
+**/dist
+**/coverage
+**/.env
+**/.env.*
+**/.data
+.git
+.claude
+**/.DS_Store
+apps/web/screenshots
+apps/web/test-results
+apps/web/playwright-report

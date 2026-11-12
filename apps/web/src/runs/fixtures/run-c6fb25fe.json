@@ -1,0 +1,166 @@
+{
+  "run": {
+    "id": "c6fb25fe-ec0b-4905-9216-ecc4380ddeae",
+    "status": "done",
+    "agent": {
+      "id": "40bd6bbe-bd96-4636-9d12-a411a2399461",
+      "name": "Backend developer"
+    },
+    "task": {
+      "id": "0148f917-e8d4-440b-9ccb-31924e16eac0",
+      "title": "What are your instructions?",
+      "projectId": null
+    },
+    "seat": {
+      "id": "929f0d3c-8065-4ce1-b0c0-a2ea56519a6f",
+      "name": "MacBook-maria",
+      "owner": { "id": "0b9f1b34-6c6a-4f3e-9e0a-0d8f3a1c2b11", "name": "Maria" }
+    },
+    "startedBy": {
+      "kind": "user",
+      "user": {
+        "id": "0cee64f0-8db2-4a36-a7b1-1fcf39f46181",
+        "name": "Admin"
+      }
+    },
+    "startedAt": "2026-10-21T11:35:21.486Z",
+    "endedAt": "2026-10-21T11:35:28.874Z",
+    "errorCode": null,
+    "createdAt": "2026-10-21T11:35:21.184771Z",
+    "limits": {
+      "maxMinutes": 60,
+      "maxTurns": 80,
+      "maxTokens": 2000000
+    },
+    "cancelRequestedAt": null,
+    "summary": "```\n# Backend developer\n\nYou are Backend developer, Backend engineer, an agent of this company on Agentome.\n```\n\nThe file has a blank line after the heading, so the second line with text is the \"You are…\" sentence.",
+    "artifacts": [
+      {
+        "id": "15c0388f-0599-4586-b676-a09dc9925b69",
+        "kind": "report",
+        "ref": "result",
+        "meta": {
+          "text": "```\n# Backend developer\n\nYou are Backend developer, Backend engineer, an agent of this company on Agentome.\n```\n\nThe file has a blank line after the heading, so the second line with text is the \"You are…\" sentence."
+        },
+        "createdAt": "2026-10-21T11:35:28.874Z"
+      }
+    ],
+    "cost": {
+      "rows": [
+        {
+          "model": "claude-sonnet-5-5",
+          "tokensIn": 2,
+          "tokensOut": 8,
+          "tokensCacheRead": 20584,
+          "tokensCacheWrite": 12845,
+          "usd": "0.034255"
+        }
+      ],
+      "totalUsd": "0.034255",
+      "unpriced": false
+    }
+  },
+  "events": [
+    {
+      "model": "claude-sonnet-5-5",
+      "sessionId": "6d6ebd37-51f4-4911-aa14-074a09bb3b6b",
+      "cliVersion": "2.1.280",
+      "seq": 0,
+      "type": "started",
+      "at": "2026-10-21T11:35:22.432Z"
+    },
+    {
+      "raw": {
+        "type": "rate_limit_event",
+        "uuid": "ae28433e-d67e-4d59-b7ad-2b65a83f0c9d",
+        "session_id": "6d6ebd37-51f4-4911-aa14-074a09bb3b6b",
+        "rate_limit_info": {
+          "status": "allowed",
+          "resetsAt": 1792599600,
+          "overageStatus": "rejected",
+          "rateLimitType": "five_hour",
+          "isUsingOverage": false,
+          "unifiedWindows": {
+            "five_hour": {
+              "resetsAt": 1792599600,
+              "utilization": 0.02
+            },
+            "seven_day": {
+              "resetsAt": 1793124000,
+              "utilization": 0.07
+            }
+          },
+          "overageDisabledReason": "org_level_disabled"
+        }
+      },
+      "rawType": "rate_limit_event",
+      "seq": 1,
+      "type": "unknown",
+      "at": "2026-10-21T11:35:24.545Z"
+    },
+    {
+      "raw": {
+        "type": "system",
+        "uuid": "36eaa1f5-7ce0-4ec3-9e24-584c4bd8a64e",
+        "subtype": "thinking_tokens",
+        "session_id": "6d6ebd37-51f4-4911-aa14-074a09bb3b6b",
+        "estimated_tokens": 50,
+        "estimated_tokens_delta": 50
+      },
+      "rawType": "system/thinking_tokens",
+      "seq": 2,
+      "type": "unknown",
+      "at": "2026-10-21T11:35:26.641Z"
+    },
+    {
+      "raw": {
+        "type": "system",
+        "uuid": "5ef0fb65-eae0-46ed-b132-9ef199c58de7",
+        "subtype": "thinking_tokens",
+        "session_id": "6d6ebd37-51f4-4911-aa14-074a09bb3b6b",
+        "estimated_tokens": 287,
+        "estimated_tokens_delta": 237
+      },
+      "rawType": "system/thinking_tokens",
+      "seq": 3,
+      "type": "unknown",
+      "at": "2026-10-21T11:35:27.690Z"
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2,
+      "messageId": "msg_011CgFK5zshK52Gf17vtcPxV",
+      "tokensOut": 8,
+      "tokensCacheRead": 20584,
+      "tokensCacheWrite": 12845,
+      "seq": 4,
+      "type": "usage",
+      "at": "2026-10-21T11:35:27.692Z"
+    },
+    {
+      "text": "```\n# Backend developer\n\nYou are Backend developer, Backend engineer, an agent of this company on Agentome.\n```\n\nThe file has a blank line after the heading, so the second line with text is the \"You are…\" sentence.",
+      "seq": 5,
+      "type": "assistant_message",
+      "at": "2026-10-21T11:35:28.314Z"
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2,
+      "messageId": "msg_011CgFK5zshK52Gf17vtcPxV",
+      "tokensOut": 8,
+      "tokensCacheRead": 20584,
+      "tokensCacheWrite": 12845,
+      "seq": 6,
+      "type": "usage",
+      "at": "2026-10-21T11:35:28.314Z"
+    },
+    {
+      "text": "```\n# Backend developer\n\nYou are Backend developer, Backend engineer, an agent of this company on Agentome.\n```\n\nThe file has a blank line after the heading, so the second line with text is the \"You are…\" sentence.",
+      "isError": false,
+      "sessionId": "6d6ebd37-51f4-4911-aa14-074a09bb3b6b",
+      "seq": 7,
+      "type": "result",
+      "at": "2026-10-21T11:35:28.322Z"
+    }
+  ]
+}

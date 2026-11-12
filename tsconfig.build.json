@@ -1,0 +1,10 @@
+{
+  // The production build of a package (`pnpm build`, the Docker image): its src/ without the
+  // tests, into dist/. ${configDir} is the package whose tsconfig.build.json extends this.
+  "compilerOptions": {
+    "outDir": "${configDir}/dist",
+    "rootDir": "${configDir}/src"
+  },
+  "include": ["${configDir}/src"],
+  "exclude": ["${configDir}/src/**/*.test.ts"]
+}

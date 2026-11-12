@@ -1,0 +1,52 @@
+{
+  "action": "submitted",
+  "review": {
+    "id": 2381144907,
+    "node_id": "PRR_kwDOLQ2x3s6N7xZL",
+    "user": { "login": "maria", "id": 4410982, "type": "User" },
+    "body": "Say which Node version it needs.",
+    "commit_id": "4f2a9c1d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a39",
+    "submitted_at": "2026-10-22T10:03:27Z",
+    "state": "changes_requested",
+    "html_url": "https://github.com/acme/api/pull/42#pullrequestreview-2381144907",
+    "pull_request_url": "https://api.github.com/repos/acme/api/pulls/42",
+    "author_association": "MEMBER"
+  },
+  "pull_request": {
+    "url": "https://api.github.com/repos/acme/api/pulls/42",
+    "id": 2074419381,
+    "html_url": "https://github.com/acme/api/pull/42",
+    "number": 42,
+    "state": "open",
+    "locked": false,
+    "title": "Add a README",
+    "user": { "login": "acme-bot", "id": 181220517, "type": "User" },
+    "created_at": "2026-10-22T09:12:04Z",
+    "updated_at": "2026-10-22T10:03:27Z",
+    "closed_at": null,
+    "merged_at": null,
+    "draft": false,
+    "head": {
+      "label": "acme:agent/readme",
+      "ref": "agent/readme",
+      "sha": "4f2a9c1d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a39"
+    },
+    "base": {
+      "label": "acme:main",
+      "ref": "main",
+      "sha": "1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d"
+    },
+    "author_association": "MEMBER"
+  },
+  "repository": {
+    "id": 761044210,
+    "name": "api",
+    "full_name": "acme/api",
+    "private": true,
+    "owner": { "login": "acme", "id": 60293811, "type": "Organization" },
+    "html_url": "https://github.com/acme/api",
+    "default_branch": "main"
+  },
+  "organization": { "login": "acme", "id": 60293811 },
+  "sender": { "login": "maria", "id": 4410982, "type": "User" }
+}

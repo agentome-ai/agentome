@@ -1,0 +1,12 @@
+# Docker Compose reads this file next to compose.yaml, so in a checkout of the repository
+# `docker compose up -d --build` builds the image from the source, as agentome:local: a local
+# build never takes the name of a release. Your own changes go into .env or compose.local.yaml.
+services:
+  app:
+    image: agentome:local
+    build: .
+  seat:
+    image: agentome-seat:local
+    build:
+      context: .
+      target: seat

@@ -1,0 +1,26 @@
+{
+  "name": "@agentome/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "connect": "tsx src/cli.ts connect",
+    "start": "tsx src/cli.ts run",
+    "install-service": "tsx src/cli.ts install-service",
+    "uninstall-service": "tsx src/cli.ts uninstall-service",
+    "status": "tsx src/cli.ts status",
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/agentome-worker.mjs --banner:js='#!/usr/bin/env node' --log-level=warning",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run --config ../../vitest.config.ts",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@agentome/costs": "workspace:*",
+    "@agentome/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "tsx": "^4.23.15"
+  }
+}

@@ -1,0 +1,15 @@
+# The proxy profile of compose.yaml: HTTPS for the domain in AGENTOME_PROXY_HOST, with a
+# certificate that Caddy obtains and renews by itself (DNS must point at this machine, and
+# ports 80 and 443 must be reachable). An IP address instead of a domain gets a certificate
+# from Caddy's own authority, for a local network (deploy/OPERATIONS.md). For a certificate of
+# your own or `tls internal`, edit this file: the install script never replaces it once it is
+# there.
+{
+	# A browser sends no server name for an IP address; without this Caddy has no certificate
+	# to answer it with.
+	default_sni {$AGENTOME_PROXY_HOST}
+}
+
+{$AGENTOME_PROXY_HOST} {
+	reverse_proxy app:3000
+}

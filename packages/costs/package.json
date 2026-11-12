@@ -1,0 +1,26 @@
+{
+  "name": "@agentome/costs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "agentome-dist": "./dist/src/index.js",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "update-prices": "node scripts/update-prices.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run --config ../../vitest.config.ts",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@agentome/shared": "workspace:*"
+  }
+}

@@ -1,0 +1,110 @@
+# Agentome: `docker compose up -d`, then open http://localhost:3000/setup. Every ${VARIABLE}
+# has a default (deploy/CONFIG.md); updates, backups, HTTPS: deploy/OPERATIONS.md. Your own
+# changes go into .env or compose.local.yaml, not into this file.
+name: agentome
+
+services:
+  app:
+    # The release: an update or a rollback changes AGENTOME_VERSION. In a checkout,
+    # compose.override.yaml builds agentome:local from the source instead.
+    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.1.0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # The password goes in PGPASSWORD, out of the URL, so any character is fine in it.
+      AGENTOME_DATABASE_URL: postgres://agentome@postgres:5432/agentome
+      PGPASSWORD: ${AGENTOME_POSTGRES_PASSWORD:-agentome}
+      AGENTOME_PUBLIC_URL: ${AGENTOME_PUBLIC_URL:-http://localhost:${AGENTOME_HTTP_PORT:-3000}}
+      AGENTOME_LOG_LEVEL: ${AGENTOME_LOG_LEVEL:-}
+      AGENTOME_OAUTH_RETURN_URL: ${AGENTOME_OAUTH_RETURN_URL:-}
+      # Behind the proxy, the address of the client comes in X-Forwarded-For.
+      AGENTOME_TRUST_PROXY: ${AGENTOME_PROXY_HOST:+true}
+    ports:
+      - '${AGENTOME_HTTP_PORT:-3000}:3000'
+    volumes:
+      # The generated secret key and whatever else the server keeps on disk.
+      - agentome-data:/data
+    # default: the database and the proxy; seat: the server seat, which reaches the app only.
+    networks: [default, seat]
+    restart: unless-stopped
+
+  # Not published: only the app reaches it, on the compose network.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agentome
+      POSTGRES_PASSWORD: ${AGENTOME_POSTGRES_PASSWORD:-agentome}
+      POSTGRES_DB: agentome
+    volumes:
+      - agentome-postgres:/var/lib/postgresql/data
+    healthcheck:
+      # Over TCP: the socket answers already while the temporary server of initdb runs.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U agentome -d agentome']
+      interval: 30s
+      timeout: 3s
+      start_period: 60s
+      start_interval: 1s
+    restart: unless-stopped
+
+  # `docker compose --profile proxy up -d`: HTTPS for the domain in AGENTOME_PROXY_HOST.
+  proxy:
+    profiles: [proxy]
+    image: caddy:2
+    depends_on: [app]
+    environment:
+      AGENTOME_PROXY_HOST: ${AGENTOME_PROXY_HOST:-}
+    # Checked here, because a ${…:?} in this file would stop every compose command.
+    command:
+      - sh
+      - -c
+      - >-
+        test -n "$$AGENTOME_PROXY_HOST" || { echo 'AGENTOME_PROXY_HOST, the domain, is
+        required for the proxy profile' >&2; exit 1; };
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Caddy's certificates and keys.
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+  # `docker compose --profile server-seat up -d`: agents that work on the server.
+  # Connect it once with a code an admin makes in Admin → Computers:
+  #   docker compose run --rm seat connect <code> --server http://app:3000
+  # It takes one run and exits; compose starts it again clean. Read-only but for the connection
+  # and npm's cache in /seat and the run in memory; on a network of its own, it reaches the app and the internet
+  # (the models' addresses), not the database. In production, run it on a machine of its own.
+  seat:
+    profiles: [server-seat]
+    image: docker.io/agentome/agentome-seat:${AGENTOME_VERSION:-0.1.0}
+    depends_on: [app]
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=2g
+      # The CLIs' own homes (~/.claude, ~/.codex): in memory too, not under /tmp, where Codex
+      # refuses to put its helpers.
+      - /home/node:uid=1000,gid=1000,mode=0700,size=512m
+      # Claude Code, installed at each start from the image's list of checksums; `exec`, since
+      # it is a program.
+      - /seat/cli:exec,uid=1000,gid=1000,mode=0700,size=1g
+      - /seat/runs:uid=1000,gid=1000,mode=0700,size=4g
+    volumes:
+      - agentome-seat:/seat
+    networks: [seat]
+    restart: unless-stopped
+
+networks:
+  default:
+  seat:
+
+volumes:
+  agentome-data:
+  agentome-seat:
+  agentome-postgres:
+  caddy-data:
+  caddy-config:

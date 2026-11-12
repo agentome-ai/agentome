@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"01a196df-0000-7b03-9946-614b7d13f889"}
+{"type":"turn.started"}
+{"type":"error","message":"Reconnecting... 1/5"}
+{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized: invalid api key"}}

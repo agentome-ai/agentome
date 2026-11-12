@@ -1,0 +1,10 @@
+this line is not json at all
+{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":181402},"session_id":"7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d","uuid":"00000000-0000-4000-8000-000000000010"}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}},"session_id":"7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d","uuid":"00000000-0000-4000-8000-000000000011"}
+{"type":"quantum_entanglement","payload":{"whatever":true}}
+[1,2,3]
+{"session_id":"7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d","note":"an object without a type"}
+{"type":"assistant","message":{"id":"msg_01Broken","model":"claude-opus-4-6[1m]","role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/tmp/x"}},{"type":"image","source":{"type":"base64"}}],"usage":{"input_tokens":11,"output_tokens":3}},"session_id":"7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d","uuid":"00000000-0000-4000-8000-000000000012"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"no tool_use_id here","is_error":true}]},"session_id":"7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d","uuid":"00000000-0000-4000-8000-000000000013"}
+{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":512,"error_status":529,"error":"overloaded_error","session_id":"7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d","uuid":"00000000-0000-4000-8000-000000000014"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":120,"num_turns":1,"result":"done","session_id":"7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d","total_cost_usd":0.0004,"usage":{"input_tokens":11,"output_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"uuid":"00000000-0000-4000-8000-000000000015"}

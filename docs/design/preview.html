@@ -1,0 +1,4516 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Agentome styleguide</title>
+    <!-- Preview only: in the product IBM Plex is bundled (self-hosted woff2, OFL 1.1), no CDN. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    />
+    <script>
+      // Set the theme before first paint: ?theme=light|dark wins, then the saved choice, then the OS setting.
+      (function () {
+        var mode = null;
+        try {
+          mode = new URLSearchParams(location.search).get('theme');
+        } catch (e) {}
+        if (!mode) {
+          try {
+            mode = localStorage.getItem('agentome-preview-theme');
+          } catch (e) {}
+        }
+        if (mode === 'light' || mode === 'dark')
+          document.documentElement.setAttribute('data-theme', mode);
+      })();
+    </script>
+    <style>
+      /* ---------- Tokens: direction A, ink and paper ---------- */
+      :root {
+        --sans:
+          'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+        color-scheme: light;
+        --bg: #ffffff; /* Paper */
+        --bg-sunken: #f5f6f8; /* Desk */
+        --bg-raised: #ffffff;
+        --bg-hover: #f0f1f4;
+        --bg-selected: #e9ebef;
+        --line: #e3e6ea; /* Rule */
+        --line-strong: #d3d7dd;
+        --line-control: #858b94; /* 3:1, field and radio borders */
+        --ink: #1b1e24; /* Ink */
+        --ink-2: #555b66; /* Pencil */
+        --ink-3: #666c77;
+        --ink-inverse: #ffffff;
+        --primary-hover: #30343c;
+        --accent: #2f47b4; /* Sign-off: an agent is waiting for a person */
+        --accent-hover: #283e9e;
+        --accent-subtle: #edf0fa;
+        --on-accent: #ffffff;
+        --running: #23756d;
+        --failed: #ae4337;
+        --mark-muted: #80868f;
+        --done: #555b66;
+        --focus: #1b1e24;
+        --selection: #d8dde6;
+        --overlay-shadow: 0 16px 40px -16px rgba(20, 24, 32, 0.3);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          color-scheme: dark;
+          --bg: #1b1d22;
+          --bg-sunken: #16181c;
+          --bg-raised: #212329;
+          --bg-hover: #25282e;
+          --bg-selected: #2b2e35;
+          --line: #2e3138;
+          --line-strong: #3a3e46;
+          --line-control: #737983;
+          --ink: #e7e9ed;
+          --ink-2: #a3a9b3;
+          --ink-3: #8a909a;
+          --ink-inverse: #16181c;
+          --primary-hover: #ffffff;
+          --accent: #96a7f2;
+          --accent-hover: #aab8f5;
+          --accent-subtle: #252b44;
+          --on-accent: #16181c;
+          --running: #5db0a5;
+          --failed: #e58a7e;
+          --mark-muted: #737983;
+          --done: #a3a9b3;
+          --focus: #e7e9ed;
+          --selection: #3a4050;
+          --overlay-shadow: 0 16px 40px -16px rgba(0, 0, 0, 0.6);
+        }
+      }
+      :root[data-theme='dark'] {
+        color-scheme: dark;
+        --bg: #1b1d22;
+        --bg-sunken: #16181c;
+        --bg-raised: #212329;
+        --bg-hover: #25282e;
+        --bg-selected: #2b2e35;
+        --line: #2e3138;
+        --line-strong: #3a3e46;
+        --line-control: #737983;
+        --ink: #e7e9ed;
+        --ink-2: #a3a9b3;
+        --ink-3: #8a909a;
+        --ink-inverse: #16181c;
+        --primary-hover: #ffffff;
+        --accent: #96a7f2;
+        --accent-hover: #aab8f5;
+        --accent-subtle: #252b44;
+        --on-accent: #16181c;
+        --running: #5db0a5;
+        --failed: #e58a7e;
+        --mark-muted: #737983;
+        --done: #a3a9b3;
+        --focus: #e7e9ed;
+        --selection: #3a4050;
+        --overlay-shadow: 0 16px 40px -16px rgba(0, 0, 0, 0.6);
+      }
+
+      /* ---------- Base ---------- */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: var(--sans);
+        font-size: 13px;
+        line-height: 20px;
+        font-weight: 400;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      :where(h1, h2, h3, h4, p, ul, ol, dl, dd, figure) {
+        margin: 0;
+        padding: 0;
+      }
+      :where(ul, ol) {
+        list-style: none;
+      }
+      :where(button, input, select, textarea) {
+        font: inherit;
+        color: inherit;
+      }
+      :where(button) {
+        background: none;
+        border: 0;
+        padding: 0;
+        cursor: pointer;
+      }
+      :where(a) {
+        color: inherit;
+      }
+      :where(code) {
+        font-family: var(--mono);
+        font-size: 0.92em;
+      }
+      ::selection {
+        background: var(--selection);
+      }
+      :focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+
+      /* ---------- Type roles ---------- */
+      .t-display {
+        font-size: 28px;
+        line-height: 34px;
+        font-weight: 600;
+        letter-spacing: -0.015em;
+      }
+      .t-title {
+        font-size: 20px;
+        line-height: 28px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .t-section {
+        font-size: 15px;
+        line-height: 22px;
+        font-weight: 600;
+      }
+      .t-read {
+        font-size: 14px;
+        line-height: 22px;
+      }
+      .t-ui {
+        font-size: 13px;
+        line-height: 20px;
+      }
+      .t-small {
+        font-size: 12px;
+        line-height: 16px;
+      }
+      .t-mono {
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 20px;
+      }
+      .w-500 {
+        font-weight: 500;
+      }
+      .ink-2 {
+        color: var(--ink-2);
+      }
+      .ink-3 {
+        color: var(--ink-3);
+      }
+      .num {
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+        white-space: nowrap;
+      }
+
+      /* ---------- Icons and status markers ---------- */
+      .ico {
+        width: 16px;
+        height: 16px;
+        flex: none;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.5;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .mk {
+        width: 14px;
+        height: 14px;
+        flex: none;
+      }
+      .mk-running {
+        animation: mk-spin 1.6s linear infinite;
+      }
+      @keyframes mk-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        white-space: nowrap;
+        color: var(--ink-2);
+      }
+      .status--queued .mk,
+      .status--cancelled .mk {
+        color: var(--mark-muted);
+      }
+      .status--running .mk {
+        color: var(--running);
+      }
+      .status--waiting {
+        color: var(--accent);
+      }
+      .status--done .mk {
+        color: var(--done);
+      }
+      .status--failed {
+        color: var(--failed);
+      }
+      .status--cancelled {
+        color: var(--ink-3);
+      }
+
+      /* ---------- Controls ---------- */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        height: 32px;
+        padding: 0 12px;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        font-size: 13px;
+        line-height: 20px;
+        font-weight: 500;
+        white-space: nowrap;
+        text-decoration: none;
+        transition:
+          background-color 0.12s,
+          border-color 0.12s,
+          color 0.12s;
+      }
+      .btn--primary {
+        background: var(--ink);
+        color: var(--ink-inverse);
+      }
+      .btn--primary:hover {
+        background: var(--primary-hover);
+      }
+      .btn--secondary {
+        background: var(--bg-raised);
+        border-color: var(--line-strong);
+        color: var(--ink);
+      }
+      .btn--secondary:hover {
+        background: var(--bg-hover);
+      }
+      .btn--quiet {
+        color: var(--ink-2);
+        padding: 0 10px;
+      }
+      .btn--quiet:hover {
+        background: var(--bg-hover);
+        color: var(--ink);
+      }
+      .btn--decision {
+        background: var(--accent);
+        color: var(--on-accent);
+      }
+      .btn--decision:hover {
+        background: var(--accent-hover);
+      }
+      .btn--danger {
+        background: var(--bg-raised);
+        border-color: var(--line-strong);
+        color: var(--failed);
+      }
+      .btn--danger:hover {
+        background: var(--bg-hover);
+      }
+      .btn--sm {
+        height: 28px;
+        padding: 0 10px;
+      }
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .is-focus {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+        max-width: 360px;
+        align-content: start;
+      }
+      .field-label {
+        font-weight: 500;
+      }
+      .field-error {
+        color: var(--failed);
+        font-size: 12px;
+        line-height: 16px;
+      }
+      .input {
+        width: 100%;
+        height: 32px;
+        padding: 0 10px;
+        border: 1px solid var(--line-control);
+        border-radius: 6px;
+        background: var(--bg-raised);
+        color: var(--ink);
+      }
+      .input--error {
+        border-color: var(--failed);
+      }
+      .input::placeholder {
+        color: var(--ink-3);
+      }
+      /* Select: our own trigger and list (Radix Select in the product). No native select element anywhere. */
+      .cselect {
+        position: relative;
+        display: block;
+        max-width: 100%;
+      }
+      .cselect-trigger {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: 100%;
+        height: 32px;
+        padding: 0 8px 0 10px;
+        border: 1px solid var(--line-control);
+        border-radius: 6px;
+        background: var(--bg-raised);
+        color: var(--ink);
+        text-align: left;
+        cursor: pointer;
+      }
+      .cselect-trigger:hover {
+        background: var(--bg-hover);
+      }
+      .cselect-value {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cselect-trigger .ico {
+        color: var(--ink-2);
+        transition: transform 0.12s;
+      }
+      .cselect-trigger[aria-expanded='true'] .ico {
+        transform: rotate(180deg);
+      }
+      .cselect-pop {
+        position: absolute;
+        z-index: 40;
+        top: calc(100% + 4px);
+        left: 0;
+        min-width: 100%;
+        width: max-content;
+        max-width: 320px;
+        padding: 4px;
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        background: var(--bg-raised);
+        box-shadow: var(--overlay-shadow);
+      }
+      .cselect-pop[hidden] {
+        display: none;
+      }
+      .cselect-pop:focus {
+        outline: none;
+      }
+      .cselect-opt {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 30px;
+        padding: 5px 8px;
+        border-radius: 6px;
+        color: var(--ink);
+        cursor: pointer;
+      }
+      .cselect-opt.is-active,
+      .cselect-opt:hover {
+        background: var(--bg-hover);
+      }
+      .cselect-main {
+        display: grid;
+        gap: 1px;
+      }
+      .cselect-desc {
+        color: var(--ink-3);
+        font-size: 12px;
+        line-height: 16px;
+      }
+      .cselect-opt .ico {
+        width: 14px;
+        height: 14px;
+        flex: none;
+        color: var(--ink);
+        visibility: hidden;
+      }
+      .cselect-opt[aria-selected='true'] .ico {
+        visibility: visible;
+      }
+      .cselect--sm .cselect-trigger {
+        height: 28px;
+      }
+      /* Inside dense tables: no border until hover or open; the chevron identifies the control. */
+      .cselect--quiet {
+        margin-left: -8px;
+      }
+      .cselect--quiet .cselect-trigger {
+        border-color: transparent;
+        background: transparent;
+        padding-left: 8px;
+      }
+      .cselect--quiet .cselect-trigger:hover,
+      .cselect--quiet .cselect-trigger[aria-expanded='true'] {
+        border-color: var(--line-control);
+        background: var(--bg-raised);
+      }
+      .spec-open {
+        min-height: 196px;
+        align-content: start;
+      }
+      .variant-switch {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .seg {
+        display: inline-flex;
+        gap: 2px;
+        padding: 2px;
+        background: var(--bg-sunken);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      .seg button {
+        height: 24px;
+        padding: 0 10px;
+        border-radius: 6px;
+        color: var(--ink-2);
+        font-weight: 500;
+      }
+      .seg button:hover {
+        color: var(--ink);
+      }
+      .seg button[aria-pressed='true'] {
+        background: var(--bg-raised);
+        color: var(--ink);
+        box-shadow: 0 0 0 1px var(--line-strong);
+      }
+
+      .radio,
+      .checkbox {
+        appearance: none;
+        -webkit-appearance: none;
+        margin: 0;
+        width: 16px;
+        height: 16px;
+        flex: none;
+        vertical-align: middle;
+        display: inline-grid;
+        place-content: center;
+        border: 1px solid var(--line-control);
+        background: var(--bg-raised);
+        cursor: pointer;
+      }
+      .radio {
+        border-radius: 50%;
+      }
+      .radio:checked {
+        border-color: var(--ink);
+      }
+      .radio:checked::before {
+        content: '';
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--ink);
+      }
+      .radio--ask:checked {
+        border-color: var(--accent);
+      }
+      .radio--ask:checked::before {
+        background: var(--accent);
+      }
+      .radio:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .checkbox {
+        border-radius: 4px;
+      }
+      .checkbox:checked {
+        background: var(--ink);
+        border-color: var(--ink);
+      }
+      .checkbox:checked::before {
+        content: '';
+        width: 9px;
+        height: 5px;
+        margin-top: -2px;
+        border-left: 1.75px solid var(--ink-inverse);
+        border-bottom: 1.75px solid var(--ink-inverse);
+        transform: rotate(-45deg);
+      }
+      .check {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+      }
+
+      .kbd {
+        display: inline-flex;
+        align-items: center;
+        height: 18px;
+        padding: 0 5px;
+        border: 1px solid var(--line-strong);
+        border-radius: 4px;
+        font-size: 11px;
+        line-height: 16px;
+        font-weight: 500;
+        color: var(--ink-2);
+        background: var(--bg-raised);
+      }
+      .search-field {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 32px;
+        padding: 0 8px 0 10px;
+        max-width: 360px;
+        border: 1px solid var(--line-control);
+        border-radius: 6px;
+        background: var(--bg-raised);
+        color: var(--ink-3);
+      }
+      .search-field .kbd {
+        margin-left: auto;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        height: 26px;
+        padding: 0 3px 0 8px;
+        border: 1px solid var(--line-strong);
+        border-radius: 4px;
+        background: var(--bg-raised);
+      }
+      .tag button {
+        display: grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 3px;
+        color: var(--ink-3);
+      }
+      .tag button:hover {
+        background: var(--bg-hover);
+        color: var(--ink);
+      }
+      .tag .ico {
+        width: 12px;
+        height: 12px;
+      }
+
+      /* ---------- Tables ---------- */
+      .tbl {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .tbl th {
+        height: 32px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        white-space: nowrap;
+        font-size: 12px;
+        line-height: 16px;
+        font-weight: 500;
+        color: var(--ink-2);
+      }
+      .tbl td {
+        height: 36px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: middle;
+      }
+      .tbl th.num,
+      .tbl td.num {
+        text-align: right;
+      }
+      .tbl--rows tbody tr:hover td {
+        background: var(--bg-hover);
+      }
+      .tbl--bleed {
+        width: calc(100% + 24px);
+        margin: 0 -12px;
+      }
+      .tbl--flush th:first-child,
+      .tbl--flush td:first-child {
+        padding-left: 0;
+      }
+      .tbl--flush th:last-child,
+      .tbl--flush td:last-child {
+        padding-right: 0;
+      }
+      .tbl--fixed {
+        table-layout: fixed;
+      }
+      .tbl--fixed th,
+      .tbl--fixed td {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .truncate {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .runs-table .c-status {
+        width: 148px;
+      }
+      .runs-table .c-agent {
+        width: 150px;
+      }
+      .runs-table .c-by {
+        width: 116px;
+      }
+      .runs-table .c-computer {
+        width: 112px;
+      }
+      .runs-table .c-result {
+        width: 196px;
+      }
+      .runs-table .c-dur {
+        width: 76px;
+      }
+      .runs-table .c-cost {
+        width: 68px;
+      }
+      .task-key {
+        color: var(--ink-2);
+        margin-right: 6px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ---------- Styleguide page ---------- */
+      .sg-header {
+        border-bottom: 1px solid var(--line);
+      }
+      .sg-wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding-left: 48px;
+        padding-right: 48px;
+      }
+      .sg-header-row {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 24px;
+        padding-top: 40px;
+        padding-bottom: 28px;
+      }
+      .sg-sub {
+        color: var(--ink-2);
+        margin-top: 4px;
+        font-size: 14px;
+        line-height: 22px;
+      }
+      .sg-section {
+        padding-top: 56px;
+      }
+      .sg-lead {
+        color: var(--ink-2);
+        font-size: 14px;
+        line-height: 22px;
+        max-width: 72ch;
+        margin-top: 4px;
+      }
+      .sg-block {
+        margin-top: 28px;
+      }
+      .sg-block > h3 {
+        font-size: 15px;
+        line-height: 22px;
+        font-weight: 600;
+        margin-bottom: 12px;
+      }
+      .swatch {
+        display: inline-block;
+        width: 56px;
+        height: 28px;
+        border-radius: 4px;
+        box-shadow: inset 0 0 0 1px rgba(128, 134, 143, 0.35);
+        vertical-align: middle;
+      }
+      .swatch + .swatch {
+        margin-left: 6px;
+      }
+      .spec-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 24px 32px;
+        align-items: flex-start;
+      }
+      .spec {
+        display: grid;
+        gap: 8px;
+        justify-items: start;
+      }
+      .spec figcaption,
+      .caption {
+        font-size: 12px;
+        line-height: 16px;
+        color: var(--ink-3);
+        max-width: 28ch;
+      }
+      .spec-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 28px 40px;
+      }
+      .type-spec td {
+        padding-top: 14px;
+        padding-bottom: 14px;
+        height: auto;
+        vertical-align: baseline;
+      }
+      .type-role {
+        width: 180px;
+        color: var(--ink-2);
+      }
+      .type-meta {
+        width: 220px;
+        color: var(--ink-3);
+        white-space: nowrap;
+      }
+      .mini-matrix {
+        width: 100%;
+        max-width: 560px;
+      }
+
+      /* ---------- App mock ---------- */
+      .mock-intro {
+        padding-top: 64px;
+        padding-bottom: 24px;
+      }
+      .mock {
+        border-top: 1px solid var(--line);
+      }
+      .app {
+        --sidebar-w: 232px;
+        --gutter: 32px;
+        --sheet-w: 400px;
+        --col-gap: 40px;
+        --header-h: 93px;
+        --sheet-pad: 24px;
+        display: grid;
+        grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+        background: var(--bg);
+      }
+
+      .sidebar {
+        background: var(--bg-sunken);
+        border-right: 1px solid var(--line);
+        min-width: 0;
+      }
+      .sidebar-in {
+        position: sticky;
+        top: 0;
+        height: min(100vh, 100%);
+        display: flex;
+        flex-direction: column;
+        padding: 12px 12px 10px;
+        overflow-y: auto;
+      }
+      .org {
+        display: flex;
+        align-items: center;
+        height: 32px;
+        padding: 0 8px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .search-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 32px;
+        margin: 8px 0 14px;
+        padding: 0 6px 0 8px;
+        width: 100%;
+        border: 1px solid var(--line-strong);
+        border-radius: 6px;
+        background: var(--bg-raised);
+        color: var(--ink-3);
+        text-align: left;
+      }
+      .search-btn .kbd {
+        margin-left: auto;
+      }
+      .nav {
+        display: grid;
+        gap: 1px;
+      }
+      .nav-item,
+      .agent-link {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 30px;
+        padding: 0 8px;
+        border-radius: 6px;
+        color: var(--ink-2);
+        text-decoration: none;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .nav-item:hover,
+      .agent-link:hover {
+        background: var(--bg-hover);
+        color: var(--ink);
+      }
+      .nav-item[aria-current] {
+        background: var(--bg-selected);
+        color: var(--ink);
+      }
+      .nav-count {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--ink-3);
+        font-variant-numeric: tabular-nums;
+      }
+      .nav-count--accent {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .nav-label {
+        padding: 18px 8px 6px;
+        font-size: 12px;
+        line-height: 16px;
+        font-weight: 500;
+        color: var(--ink-3);
+      }
+      .agent-link {
+        font-weight: 400;
+      }
+      .agent-link .mk {
+        margin: 0 1px;
+      }
+      .agent-link .mk-blank {
+        display: inline-block;
+        width: 14px;
+        margin: 0 1px;
+        flex: none;
+      }
+      .agent-link[aria-current] {
+        color: var(--ink);
+        font-weight: 500;
+      }
+      .sidebar-foot {
+        margin-top: auto;
+        padding-top: 16px;
+        display: grid;
+        gap: 1px;
+      }
+      .seat {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin-top: 10px;
+        padding: 12px 8px 6px;
+        border-top: 1px solid var(--line);
+      }
+      .seat .mk {
+        margin: 3px 1px 0;
+        color: var(--running);
+      }
+      .seat-name {
+        font-weight: 500;
+      }
+      .me {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 32px;
+        padding: 0 8px;
+        border-radius: 6px;
+        color: var(--ink);
+      }
+      .me .ico {
+        margin-left: auto;
+        color: var(--ink-3);
+      }
+
+      .main {
+        min-width: 0;
+      }
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding-left: var(--gutter);
+        padding-right: var(--gutter);
+      }
+      .page-header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: var(--bg);
+        border-bottom: 1px solid var(--line);
+      }
+      .header-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        height: 52px;
+      }
+      .crumbs {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        font-size: 14px;
+        line-height: 22px;
+      }
+      .crumbs a {
+        color: var(--ink-2);
+        text-decoration: none;
+      }
+      .crumbs a:hover {
+        color: var(--ink);
+      }
+      .crumbs .sep {
+        color: var(--ink-3);
+      }
+      .crumbs [aria-current] {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .header-actions {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .save-state {
+        color: var(--ink-2);
+        margin-right: 8px;
+        white-space: nowrap;
+      }
+      .anchors {
+        display: flex;
+        height: 40px;
+        margin-left: -10px;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .anchors::-webkit-scrollbar {
+        display: none;
+      }
+      .anchor {
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        margin-bottom: -1px;
+        border-bottom: 2px solid transparent;
+        color: var(--ink-2);
+        text-decoration: none;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .anchor:hover {
+        color: var(--ink);
+      }
+      .anchor[aria-current='true'] {
+        color: var(--ink);
+        border-bottom-color: var(--ink);
+      }
+
+      .editor {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) var(--sheet-w);
+        gap: var(--col-gap);
+        padding-top: 32px;
+      }
+      /* Bottom space lives inside the grid area so the sticky sheet is never pushed up at the end of the page. */
+      .form {
+        min-width: 0;
+        max-width: 860px;
+        padding-bottom: 160px;
+      }
+      .sheet-col {
+        min-width: 0;
+      }
+
+      /* Form sections: separated by air, not boxes */
+      .fsec {
+        scroll-margin-top: calc(var(--header-h) + 24px);
+      }
+      .fsec + .fsec {
+        margin-top: 56px;
+      }
+      .fsec-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 28px;
+        margin-bottom: 14px;
+      }
+      .fsec-head h2 {
+        font-size: 15px;
+        line-height: 22px;
+        font-weight: 600;
+      }
+      .fsec-head .push {
+        margin-left: auto;
+      }
+      .fsec-desc {
+        color: var(--ink-2);
+        max-width: 72ch;
+        margin: -6px 0 14px;
+      }
+      .fgrid {
+        display: grid;
+        grid-template-columns: 128px minmax(0, 560px);
+        gap: 12px 16px;
+        align-items: center;
+      }
+      .flabel {
+        color: var(--ink-2);
+      }
+      .fgrid .static {
+        min-height: 32px;
+        display: flex;
+        align-items: center;
+      }
+      .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      .inline-fields {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 16px;
+        align-items: center;
+      }
+
+      .md {
+        border: 1px solid var(--line-control);
+        border-radius: 6px;
+        background: var(--bg-raised);
+      }
+      .md textarea {
+        display: block;
+        width: 100%;
+        min-height: 452px;
+        resize: vertical;
+        border: 0;
+        border-radius: 6px;
+        padding: 14px 16px;
+        background: transparent;
+        color: var(--ink);
+        font-family: var(--mono);
+        font-size: 12.5px;
+        line-height: 20px;
+      }
+      .md textarea:focus-visible {
+        outline-offset: 0;
+      }
+      .md--preview {
+        border-color: var(--line-strong);
+        padding: 16px 20px 18px;
+      }
+      .prose {
+        font-size: 14px;
+        line-height: 22px;
+      }
+      .prose > * {
+        max-width: 72ch;
+      }
+      .prose h3 {
+        margin-top: 16px;
+        font-size: 14px;
+        line-height: 22px;
+        font-weight: 600;
+      }
+      .prose h3 + ul {
+        margin-top: 2px;
+      }
+      .prose ul {
+        list-style: disc;
+        padding-left: 20px;
+      }
+      .prose ul + p {
+        margin-top: 16px;
+      }
+      .prose li + li {
+        margin-top: 2px;
+      }
+      .prose li::marker {
+        color: var(--ink-3);
+      }
+      .prose code {
+        padding: 1px 4px;
+        border-radius: 4px;
+        background: var(--bg-sunken);
+      }
+      .md-foot {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 8px;
+        color: var(--ink-3);
+        font-size: 12px;
+        line-height: 16px;
+      }
+
+      .rows {
+        border-top: 1px solid var(--line);
+      }
+      .skill-row {
+        display: grid;
+        grid-template-columns: minmax(140px, 168px) minmax(0, 1fr) 48px minmax(96px, 148px) 28px;
+        align-items: center;
+        gap: 12px;
+        min-height: 40px;
+        border-bottom: 1px solid var(--line);
+      }
+      .skill-name {
+        font-weight: 500;
+      }
+      .icon-btn {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        color: var(--ink-3);
+      }
+      .icon-btn:hover {
+        background: var(--bg-hover);
+        color: var(--ink);
+      }
+
+      .matrix {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .matrix th,
+      .matrix td {
+        border-bottom: 1px solid var(--line);
+      }
+      .matrix thead th {
+        height: 32px;
+        padding: 0 4px;
+        font-size: 12px;
+        line-height: 16px;
+        font-weight: 500;
+        color: var(--ink-2);
+        text-align: center;
+        white-space: nowrap;
+      }
+      .matrix thead th:first-child {
+        text-align: left;
+        padding-left: 0;
+      }
+      .matrix .mx-col {
+        width: 88px;
+      }
+      .matrix tbody th[scope='row'] {
+        position: relative;
+        padding: 7px 12px 7px 0;
+        text-align: left;
+        font-weight: 400;
+      }
+      .matrix td {
+        text-align: center;
+      }
+      .mx-tool {
+        display: block;
+        color: var(--ink);
+        line-height: 20px;
+      }
+      .mx-tool code {
+        font-size: 12.5px;
+      }
+      .mx-desc {
+        display: block;
+        color: var(--ink-2);
+        font-size: 12px;
+        line-height: 16px;
+        margin-top: 1px;
+      }
+      .mx-group th {
+        padding: 18px 0 6px;
+        text-align: left;
+        font-size: 12px;
+        line-height: 16px;
+        font-weight: 500;
+        color: var(--ink-3);
+      }
+      .is-changed > th[scope='row']::before {
+        content: '';
+        position: absolute;
+        left: -14px;
+        top: 10px;
+        bottom: 10px;
+        width: 2px;
+        border-radius: 1px;
+        background: var(--ink-2);
+      }
+      .was {
+        color: var(--ink-3);
+        margin-left: 6px;
+      }
+      .mx-lock {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--ink-3);
+      }
+      .mx-lock .ico {
+        width: 14px;
+        height: 14px;
+      }
+
+      /* ---------- Agent sheet, iteration 2: read by shape, not by sentences ---------- */
+      .sheet {
+        position: sticky;
+        top: calc(var(--header-h) + 24px);
+        max-height: calc(100vh - var(--header-h) - 48px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        background: var(--bg-raised);
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+      }
+      .sheet--v2 {
+        display: none;
+      }
+      .app[data-sheet='v2'] .sheet--v1 {
+        display: none;
+      }
+      .app[data-sheet='v2'] .sheet--v2 {
+        display: block;
+      }
+      .sheet-in {
+        padding: var(--sheet-pad);
+      }
+      .sr {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+
+      /* ID block: name, role and the fields of a pass */
+      .pass-top {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .pass-name {
+        font-size: 24px;
+        line-height: 30px;
+        font-weight: 600;
+        letter-spacing: -0.015em;
+      }
+      .pass-name--sm {
+        font-size: 20px;
+        line-height: 26px;
+        letter-spacing: -0.01em;
+      }
+      .pass-id {
+        flex: none;
+        font-size: 11.5px;
+        line-height: 16px;
+        color: var(--ink-3);
+      }
+      .pass-role {
+        margin-top: 2px;
+        color: var(--ink-2);
+      }
+      .pass-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin-top: 14px;
+        border-top: 1px solid var(--line);
+      }
+      .pass-grid > div {
+        min-width: 0;
+        padding: 7px 12px 8px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .pass-grid > div:nth-child(even) {
+        padding: 7px 0 8px 12px;
+        border-left: 1px solid var(--line);
+      }
+      .pass-grid > div.wide {
+        grid-column: 1 / -1;
+        padding: 7px 0 8px;
+        border-left: 0;
+      }
+      .pass-grid dt,
+      .rail-id dt {
+        font-size: 12px;
+        line-height: 16px;
+        color: var(--ink-3);
+      }
+      .pass-grid dd {
+        margin-top: 2px;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .rail-id {
+        display: grid;
+        grid-template-columns: 64px minmax(0, 1fr);
+        gap: 6px 10px;
+        align-items: center;
+        margin-top: 12px;
+      }
+      .rail-id dd {
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .seat-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .sheet-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      /* Chips and host glyphs */
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 24px;
+        padding: 0 8px;
+        white-space: nowrap;
+        border: 1px solid var(--line-strong);
+        border-radius: 4px;
+        background: var(--bg-raised);
+        font-size: 12px;
+        line-height: 16px;
+      }
+      .chip-v {
+        color: var(--ink-3);
+      }
+      .chip .ico {
+        width: 12px;
+        height: 12px;
+        color: var(--ink-3);
+      }
+      .host {
+        display: inline-grid;
+        place-items: center;
+        min-width: 20px;
+        height: 16px;
+        padding: 0 3px;
+        border-radius: 3px;
+        background: var(--bg-sunken);
+        color: var(--ink-2);
+        font-size: 9.5px;
+        line-height: 1;
+        font-weight: 600;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex: none;
+      }
+      .dot--busy {
+        background: var(--running);
+      }
+
+      /* Blocks */
+      .blk {
+        margin-top: 22px;
+      }
+      .blk-h {
+        margin-bottom: 8px;
+        font-size: 12px;
+        line-height: 16px;
+        font-weight: 500;
+        color: var(--ink-2);
+      }
+      .blk-h b,
+      .legend b {
+        color: var(--ink);
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      /* Tools: one part-to-whole bar with 2 px surface gaps and a legend in text tokens */
+      .pbar {
+        display: flex;
+        gap: 2px;
+        height: 8px;
+      }
+      .pbar > span {
+        min-width: 4px;
+      }
+      .pbar > span:last-child {
+        border-radius: 0 4px 4px 0;
+      }
+      /* Normal is quiet: can is the control gray, the human gate is Sign-off, never is the ink stop at the end. */
+      .pbar-can,
+      .sw-can,
+      .d-can {
+        background: var(--line-control);
+      }
+      .pbar-ask,
+      .sw-ask,
+      .d-ask {
+        background: var(--accent);
+      }
+      .pbar-never,
+      .sw-never,
+      .d-never {
+        background: var(--ink);
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 14px;
+        margin-top: 8px;
+        color: var(--ink-2);
+        font-size: 12px;
+        line-height: 18px;
+      }
+      .legend li {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .sw {
+        width: 10px;
+        height: 8px;
+        border-radius: 2px;
+      }
+
+      /* Connector matrix: dots count tools, columns are the three policies */
+      .cmx {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+      .cmx th,
+      .cmx td {
+        height: 28px;
+        padding: 0;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: middle;
+      }
+      .cmx thead th {
+        height: 22px;
+        font-size: 12px;
+        line-height: 16px;
+        font-weight: 400;
+        color: var(--ink-3);
+      }
+      .cmx tbody th {
+        position: relative;
+        font-weight: 400;
+        white-space: nowrap;
+      }
+      .cmx tbody th .host {
+        margin-left: 4px;
+        vertical-align: 1px;
+      }
+      .cmx .cmx-c {
+        width: 58px;
+      }
+      .cmx .cmx-a {
+        width: 70px;
+      }
+      .cmx .cmx-n {
+        width: 48px;
+      }
+      .d {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        margin-right: 3px;
+        border-radius: 50%;
+        vertical-align: middle;
+      }
+      .cmx tr.is-changed > th::before,
+      .all li.is-changed::before,
+      .row2.is-changed::before {
+        content: '';
+        position: absolute;
+        left: calc(-1 * var(--sheet-pad) + 6px);
+        width: 2px;
+        border-radius: 1px;
+        background: var(--ink-2);
+      }
+      .cmx tr.is-changed > th::before {
+        top: 6px;
+        bottom: 6px;
+      }
+
+      /* Disclosures */
+      .more > summary,
+      .row2 > summary {
+        list-style: none;
+        cursor: pointer;
+      }
+      .more > summary::-webkit-details-marker,
+      .row2 > summary::-webkit-details-marker {
+        display: none;
+      }
+      .more > summary {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        height: 28px;
+        margin: 6px 0 0 -6px;
+        padding: 0 8px 0 4px;
+        border-radius: 6px;
+        color: var(--ink-2);
+        font-weight: 500;
+      }
+      .more > summary:hover {
+        background: var(--bg-hover);
+        color: var(--ink);
+      }
+      .more > summary .ico,
+      .row2 > summary .ico {
+        width: 14px;
+        height: 14px;
+        transform: rotate(-90deg);
+        transition: transform 0.12s;
+      }
+      .more[open] > summary .ico,
+      .row2[open] > summary .ico {
+        transform: none;
+      }
+      .more[open] .when-closed,
+      .more:not([open]) .when-open {
+        display: none;
+      }
+      .all-h {
+        margin-top: 10px;
+        font-size: 12px;
+        line-height: 16px;
+        color: var(--ink-3);
+      }
+      .all li {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 22px;
+      }
+      .all li .d {
+        margin: 0;
+        flex: none;
+      }
+      .all li.is-changed::before {
+        top: 4px;
+        bottom: 4px;
+      }
+      .note {
+        color: var(--ink-3);
+        font-size: 12px;
+      }
+
+      /* People: weight of the ring follows the weight of the access */
+      .people {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 16px;
+      }
+      .people li {
+        display: grid;
+        justify-items: start;
+        gap: 4px;
+      }
+      .ini {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        font-size: 11px;
+        line-height: 1;
+        font-weight: 600;
+        color: var(--ink-2);
+      }
+      .ini--owner {
+        background: var(--ink);
+        color: var(--ink-inverse);
+      }
+      .ini--deputy {
+        box-shadow: inset 0 0 0 1.5px var(--ink);
+        color: var(--ink);
+      }
+      .ini--operator {
+        box-shadow: inset 0 0 0 1px var(--line-control);
+      }
+      .ini--viewer {
+        border: 1px dashed var(--line-control);
+      }
+      .ini--sm {
+        width: 20px;
+        height: 20px;
+        font-size: 8.5px;
+      }
+      .ini--sm.ini--deputy {
+        box-shadow: inset 0 0 0 1.25px var(--ink);
+      }
+      .people .role {
+        font-size: 12px;
+        line-height: 16px;
+        color: var(--ink-2);
+      }
+      .people .until {
+        display: block;
+        color: var(--ink-3);
+      }
+
+      /* Cost: one number, a meter against the monthly limit, the per-task range */
+      .cost-row {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+      }
+      .cost-v {
+        font-size: 15px;
+        line-height: 22px;
+        font-weight: 600;
+      }
+      .meter {
+        height: 4px;
+        margin: 6px 0 8px;
+        border-radius: 2px;
+        background: var(--line);
+        overflow: hidden;
+      }
+      .meter > span {
+        display: block;
+        height: 100%;
+        border-radius: 0 2px 2px 0;
+        background: var(--ink-2);
+      }
+      .meter--inline {
+        width: 44px;
+        margin: 0;
+        flex: none;
+      }
+      .cost-sub {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 12px;
+        line-height: 16px;
+        color: var(--ink-2);
+      }
+
+      /* V2 rows: label, a glanceable value, a chevron; details on click */
+      .rows2 {
+        margin-top: 18px;
+        border-top: 1px solid var(--line);
+      }
+      .row2 {
+        position: relative;
+        border-bottom: 1px solid var(--line);
+      }
+      .row2.is-changed::before {
+        top: 10px;
+        height: 16px;
+      }
+      .row2 > summary {
+        display: grid;
+        grid-template-columns: 72px minmax(0, 1fr) 14px;
+        align-items: center;
+        gap: 8px;
+        min-height: 36px;
+        margin: 0 -8px;
+        padding: 0 8px;
+        border-radius: 6px;
+      }
+      .row2 > summary:hover {
+        background: var(--bg-hover);
+      }
+      .row2 > summary .ico {
+        color: var(--ink-3);
+      }
+      .row2-l {
+        color: var(--ink-2);
+        font-weight: 500;
+      }
+      .row2-v {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .row2-v .ini {
+        flex: none;
+      }
+      .row2-body {
+        padding: 2px 0 14px;
+      }
+      .row2[open] > summary .row2-v {
+        visibility: hidden;
+      }
+      .lockline {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+      }
+      .lockline .ico {
+        width: 12px;
+        height: 12px;
+      }
+      .pass-grid dd.dd-chips {
+        margin-top: 4px;
+        white-space: normal;
+        overflow: visible;
+      }
+      .row2-body .cmx {
+        margin-top: 0;
+      }
+
+      .sheet-ws {
+        margin-top: 22px;
+      }
+      .sheet-ws .btn {
+        width: 100%;
+      }
+      .sheet-ws p {
+        margin-top: 8px;
+        color: var(--ink-3);
+        font-size: 12px;
+        line-height: 16px;
+      }
+      .sheet-foot {
+        display: flex;
+        gap: 4px;
+        margin: 12px -10px 0;
+      }
+
+      /* Sheet widths per variant: the panel is no longer prose, so it can be narrower */
+      .app[data-sheet='v1'] {
+        --sheet-w: 360px;
+        --sheet-pad: 20px;
+      }
+      .app[data-sheet='v2'] {
+        --sheet-w: 320px;
+        --sheet-pad: 16px;
+      }
+
+      /* ---------- Widths ---------- */
+      @media (max-width: 1439px) {
+        .app {
+          --sidebar-w: 220px;
+          --gutter: 24px;
+          --sheet-w: 360px;
+          --col-gap: 32px;
+          --sheet-pad: 20px;
+        }
+        .app[data-sheet='v1'] {
+          --sheet-w: 344px;
+        }
+        .app[data-sheet='v2'] {
+          --sheet-w: 304px;
+        }
+        .fgrid {
+          grid-template-columns: 112px minmax(0, 560px);
+        }
+      }
+      @media (min-width: 1680px) {
+        .app {
+          --sidebar-w: 248px;
+          --sheet-w: 440px;
+          --col-gap: 48px;
+        }
+        .app[data-sheet='v1'] {
+          --sheet-w: 384px;
+        }
+        .app[data-sheet='v2'] {
+          --sheet-w: 336px;
+        }
+      }
+      @media (max-width: 1279px) {
+        .app {
+          --sidebar-w: 56px;
+          --sheet-w: 320px;
+        }
+        .sidebar .lbl,
+        .nav-label,
+        .search-btn .lbl,
+        .search-btn .kbd,
+        .agents-group,
+        .seat > div,
+        .me span,
+        .me .ico,
+        .nav-count {
+          display: none;
+        }
+        .org {
+          justify-content: center;
+          padding: 0;
+        }
+        .org .lbl-full {
+          display: none;
+        }
+        .nav-item,
+        .search-btn {
+          justify-content: center;
+          padding: 0;
+        }
+      }
+      @media (max-width: 1023px) {
+        /* Tables drop columns by priority instead of scrolling sideways: Started by, Computer, Result go first. */
+        .runs-table .c-by,
+        .runs-table .c-computer,
+        .runs-table .c-result {
+          width: 0;
+        }
+        .runs-table th:nth-child(4),
+        .runs-table td:nth-child(4),
+        .runs-table th:nth-child(5),
+        .runs-table td:nth-child(5),
+        .runs-table th:nth-child(6),
+        .runs-table td:nth-child(6) {
+          display: none;
+        }
+        .app {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .sidebar {
+          display: none;
+        }
+        .editor {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .sheet-col {
+          order: -1;
+        }
+        .sheet {
+          position: static;
+          max-height: none;
+        }
+        .sheet {
+          max-width: 520px;
+        }
+        .sg-wrap {
+          padding-left: 16px;
+          padding-right: 16px;
+        }
+        .spec-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .type-meta {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Icon and marker symbols -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
+      <defs>
+        <mask id="mask-check" maskUnits="userSpaceOnUse" x="0" y="0" width="14" height="14">
+          <rect width="14" height="14" fill="#fff" />
+          <path
+            d="M4.3 7.2l1.8 1.8 3.6-3.7"
+            fill="none"
+            stroke="#000"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </mask>
+        <mask id="mask-cross" maskUnits="userSpaceOnUse" x="0" y="0" width="14" height="14">
+          <rect width="14" height="14" fill="#fff" />
+          <path d="M5 5l4 4M9 5l-4 4" stroke="#000" stroke-width="1.6" stroke-linecap="round" />
+        </mask>
+      </defs>
+      <symbol id="m-queued" viewBox="0 0 14 14">
+        <circle
+          cx="7"
+          cy="7"
+          r="5.25"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-dasharray="2.06 2.06"
+        />
+      </symbol>
+      <symbol id="m-running" viewBox="0 0 14 14">
+        <circle
+          cx="7"
+          cy="7"
+          r="5.25"
+          fill="none"
+          stroke="currentColor"
+          stroke-opacity=".3"
+          stroke-width="1.5"
+        />
+        <path
+          d="M7 1.75a5.25 5.25 0 0 1 0 10.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+        />
+      </symbol>
+      <symbol id="m-waiting" viewBox="0 0 14 14">
+        <circle cx="7" cy="7" r="5.25" fill="none" stroke="currentColor" stroke-width="1.5" />
+        <path
+          d="M5.6 5.1v3.8M8.4 5.1v3.8"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+        />
+      </symbol>
+      <symbol id="m-done" viewBox="0 0 14 14">
+        <circle cx="7" cy="7" r="6" fill="currentColor" mask="url(#mask-check)" />
+      </symbol>
+      <symbol id="m-failed" viewBox="0 0 14 14">
+        <circle cx="7" cy="7" r="6" fill="currentColor" mask="url(#mask-cross)" />
+      </symbol>
+      <symbol id="m-cancelled" viewBox="0 0 14 14">
+        <circle cx="7" cy="7" r="5.25" fill="none" stroke="currentColor" stroke-width="1.5" />
+        <path d="M3.5 10.5l7-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+      </symbol>
+
+      <symbol id="i-dashboard" viewBox="0 0 16 16">
+        <path d="M1.75 8.5h2.5l1.75-4.5 3 8 1.75-4.5h3.5" />
+      </symbol>
+      <symbol id="i-approvals" viewBox="0 0 16 16">
+        <rect x="2.25" y="2.75" width="11.5" height="10.5" rx="1.75" />
+        <path d="M2.25 9.25h3l.9 1.75h3.7l.9-1.75h3" />
+      </symbol>
+      <symbol id="i-agents" viewBox="0 0 16 16">
+        <rect x="1.75" y="3.25" width="12.5" height="9.5" rx="1.5" />
+        <circle cx="5.5" cy="7" r="1.4" />
+        <path d="M3.6 10.6c.4-.9 1.05-1.35 1.9-1.35s1.5.45 1.9 1.35M9.5 6.5h3M9.5 9.25h2.25" />
+      </symbol>
+      <symbol id="i-tasks" viewBox="0 0 16 16">
+        <path d="M2.5 4.4l1.1 1.1 2-2.1M2.5 10.4l1.1 1.1 2-2.1M8 4.5h5.75M8 10.5h5.75" />
+      </symbol>
+      <symbol id="i-projects" viewBox="0 0 16 16">
+        <path
+          d="M1.75 4.5c0-.7.55-1.25 1.25-1.25h2.6l1.4 1.5h6c.7 0 1.25.55 1.25 1.25v5.75c0 .7-.55 1.25-1.25 1.25H3c-.7 0-1.25-.55-1.25-1.25z"
+        />
+      </symbol>
+      <symbol id="i-library" viewBox="0 0 16 16">
+        <path d="M3.25 2.75v10.5M6.25 2.75v10.5M8.6 3.4l2.75-.75 2.4 9.9-2.75.75z" />
+      </symbol>
+      <symbol id="i-admin" viewBox="0 0 16 16">
+        <path d="M2.5 4.5h4M9.5 4.5h4M2.5 11.5h7M12.5 11.5h1" />
+        <circle cx="8" cy="4.5" r="1.5" />
+        <circle cx="11" cy="11.5" r="1.5" />
+      </symbol>
+      <symbol id="i-help" viewBox="0 0 16 16">
+        <circle cx="8" cy="8" r="6.25" />
+        <path
+          d="M6.35 6.3c.2-.9.85-1.45 1.7-1.45.95 0 1.65.6 1.65 1.5 0 .7-.4 1.05-1 1.4-.5.3-.75.6-.75 1.1v.35"
+        />
+        <path d="M7.95 11.1h.01" stroke-width="2" />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 16 16">
+        <circle cx="7.25" cy="7.25" r="4.5" />
+        <path d="M10.6 10.6l3 3" />
+      </symbol>
+      <symbol id="i-chevron" viewBox="0 0 16 16"><path d="M4.5 6.25L8 9.75l3.5-3.5" /></symbol>
+      <symbol id="i-x" viewBox="0 0 16 16"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" /></symbol>
+      <symbol id="i-check" viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" /></symbol>
+      <symbol id="i-lock" viewBox="0 0 16 16">
+        <rect x="3.25" y="7" width="9.5" height="6.5" rx="1.25" />
+        <path d="M5.25 7V5.25a2.75 2.75 0 0 1 5.5 0V7" />
+      </symbol>
+    </svg>
+
+    <header class="sg-header">
+      <div class="sg-wrap sg-header-row">
+        <div>
+          <h1 class="t-title">Agentome design foundation</h1>
+          <p class="sg-sub">
+            Direction A, ink and paper. Draft for the owner’s review, 21 October 2026.
+          </p>
+        </div>
+        <div class="seg" role="group" aria-label="Theme">
+          <button type="button" data-theme-set="light">Light</button>
+          <button type="button" data-theme-set="dark">Dark</button>
+          <button type="button" data-theme-set="system">System</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="sg-wrap">
+      <!-- Color -->
+      <section class="sg-section" id="color" aria-labelledby="h-color">
+        <h2 class="t-title" id="h-color">Color</h2>
+        <p class="sg-lead">
+          Paper and ink with one accent. Sign-off appears only where an agent is waiting for a
+          person, so the colored pixels on a screen are that person’s to-do list.
+        </p>
+
+        <div class="sg-block">
+          <table class="tbl tbl--bleed">
+            <thead>
+              <tr>
+                <th>Light and dark</th>
+                <th>Name</th>
+                <th>Token</th>
+                <th>Light</th>
+                <th>Dark</th>
+                <th>Used for</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <span class="swatch" style="background: #ffffff"></span
+                  ><span class="swatch" style="background: #1b1d22"></span>
+                </td>
+                <td class="w-500">Paper</td>
+                <td><code>--bg</code></td>
+                <td><code>#FFFFFF</code></td>
+                <td><code>#1B1D22</code></td>
+                <td class="ink-2">Main surface, tables, the agent sheet</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="swatch" style="background: #f5f6f8"></span
+                  ><span class="swatch" style="background: #16181c"></span>
+                </td>
+                <td class="w-500">Desk</td>
+                <td><code>--bg-sunken</code></td>
+                <td><code>#F5F6F8</code></td>
+                <td><code>#16181C</code></td>
+                <td class="ink-2">Sidebar, segmented controls</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="swatch" style="background: #e3e6ea"></span
+                  ><span class="swatch" style="background: #2e3138"></span>
+                </td>
+                <td class="w-500">Rule</td>
+                <td><code>--line</code></td>
+                <td><code>#E3E6EA</code></td>
+                <td><code>#2E3138</code></td>
+                <td class="ink-2">Hairlines between rows and regions</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="swatch" style="background: #555b66"></span
+                  ><span class="swatch" style="background: #a3a9b3"></span>
+                </td>
+                <td class="w-500">Pencil</td>
+                <td><code>--ink-2</code></td>
+                <td><code>#555B66</code></td>
+                <td><code>#A3A9B3</code></td>
+                <td class="ink-2">Secondary text, column headers, done runs</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="swatch" style="background: #1b1e24"></span
+                  ><span class="swatch" style="background: #e7e9ed"></span>
+                </td>
+                <td class="w-500">Ink</td>
+                <td><code>--ink</code></td>
+                <td><code>#1B1E24</code></td>
+                <td><code>#E7E9ED</code></td>
+                <td class="ink-2">Text, primary buttons, focus ring</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="swatch" style="background: #2f47b4"></span
+                  ><span class="swatch" style="background: #96a7f2"></span>
+                </td>
+                <td class="w-500">Sign-off</td>
+                <td><code>--accent</code></td>
+                <td><code>#2F47B4</code></td>
+                <td><code>#96A7F2</code></td>
+                <td class="ink-2">Ask owner policies, approvals, waiting runs</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="sg-block">
+          <h3>Run status</h3>
+          <table class="tbl tbl--bleed">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Light</th>
+                <th>Dark</th>
+                <th>Meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <span class="status status--queued"
+                    ><svg class="mk" aria-hidden="true"><use href="#m-queued" /></svg>Queued</span
+                  >
+                </td>
+                <td><code>#80868F</code></td>
+                <td><code>#737983</code></td>
+                <td class="ink-2">Waiting for a free computer</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="status status--running"
+                    ><svg class="mk mk-running" aria-hidden="true"><use href="#m-running" /></svg
+                    >Running</span
+                  >
+                </td>
+                <td><code>#23756D</code></td>
+                <td><code>#5DB0A5</code></td>
+                <td class="ink-2">
+                  The agent is working. The only marker that moves; it stands still with reduced
+                  motion
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="status status--waiting"
+                    ><svg class="mk" aria-hidden="true"><use href="#m-waiting" /></svg>Waiting
+                    approval</span
+                  >
+                </td>
+                <td><code>#2F47B4</code></td>
+                <td><code>#96A7F2</code></td>
+                <td class="ink-2">
+                  Paused until a person approves a tool call. Sign-off by definition
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="status status--done"
+                    ><svg class="mk" aria-hidden="true"><use href="#m-done" /></svg>Done</span
+                  >
+                </td>
+                <td><code>#555B66</code></td>
+                <td><code>#A3A9B3</code></td>
+                <td class="ink-2">Finished. Quiet on purpose: most rows in history are done</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="status status--failed"
+                    ><svg class="mk" aria-hidden="true"><use href="#m-failed" /></svg>Failed</span
+                  >
+                </td>
+                <td><code>#AE4337</code></td>
+                <td><code>#E58A7E</code></td>
+                <td class="ink-2">Stopped by an error or a limit. Needs a look</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="status status--cancelled"
+                    ><svg class="mk" aria-hidden="true"><use href="#m-cancelled" /></svg
+                    >Cancelled</span
+                  >
+                </td>
+                <td><code>#80868F</code></td>
+                <td><code>#737983</code></td>
+                <td class="ink-2">Stopped by a person</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Type -->
+      <section class="sg-section" id="type" aria-labelledby="h-type">
+        <h2 class="t-title" id="h-type">Type</h2>
+        <p class="sg-lead">
+          IBM Plex Sans for everything, IBM Plex Mono only for strings you could paste into a
+          terminal or a config file. Figures are tabular by default. In the product both families
+          are bundled; this preview loads them from Google Fonts.
+        </p>
+        <div class="sg-block">
+          <table class="tbl tbl--flush type-spec">
+            <tbody>
+              <tr>
+                <td class="type-role">Agent name</td>
+                <td><span class="t-display">Backend developer</span></td>
+                <td class="type-meta">28/34, 600, −1.5%. Agent sheet only</td>
+              </tr>
+              <tr>
+                <td class="type-role">Page title</td>
+                <td><span class="t-title">Approvals</span></td>
+                <td class="type-meta">20/28, 600, −1%</td>
+              </tr>
+              <tr>
+                <td class="type-role">Section</td>
+                <td><span class="t-section">Tools &amp; policies</span></td>
+                <td class="type-meta">15/22, 600</td>
+              </tr>
+              <tr>
+                <td class="type-role">Reading</td>
+                <td>
+                  <p class="t-read" style="max-width: 72ch">
+                    Reproduce the problem with a failing test before changing code. Keep changes
+                    small: one task, one branch, one change request.
+                  </p>
+                </td>
+                <td class="type-meta">14/22, 400, up to 72ch</td>
+              </tr>
+              <tr>
+                <td class="type-role">Interface</td>
+                <td>
+                  <span class="t-ui">Fix flaky retry test in payments-api</span>
+                  <span class="t-ui w-500" style="margin-left: 12px">Save changes</span>
+                </td>
+                <td class="type-meta">13/20, 400 and 500</td>
+              </tr>
+              <tr>
+                <td class="type-role">Small</td>
+                <td><span class="t-small ink-2">Updated by a run on 19 Oct, 14:02</span></td>
+                <td class="type-meta">12/16, 400 and 500</td>
+              </tr>
+              <tr>
+                <td class="type-role">Mono</td>
+                <td>
+                  <span class="t-mono">code_host.open_change_request</span>
+                  <span class="t-mono ink-2" style="margin-left: 12px"
+                    >agent/backend-dev/PAY-412</span
+                  >
+                </td>
+                <td class="type-meta">Plex Mono, 0.92em</td>
+              </tr>
+              <tr>
+                <td class="type-role">Cyrillic content</td>
+                <td>
+                  <span class="t-ui"
+                    >Мария Иванова, PAY-412: исправить нестабильный тест повторов</span
+                  >
+                </td>
+                <td class="type-meta">Names and Jira titles stay in Plex</td>
+              </tr>
+              <tr>
+                <td class="type-role">Figures</td>
+                <td>
+                  <span class="t-ui num" style="display: inline-block; text-align: left"
+                    >$1,284.10&nbsp;&nbsp;&nbsp;$112.40&nbsp;&nbsp;&nbsp;12
+                    min&nbsp;&nbsp;&nbsp;412,118 tokens</span
+                  >
+                </td>
+                <td class="type-meta">Tabular by default</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Controls -->
+      <section class="sg-section" id="controls" aria-labelledby="h-controls">
+        <h2 class="t-title" id="h-controls">Controls</h2>
+        <p class="sg-lead">
+          32 px controls with a 6 px radius. Field and radio borders meet 3:1 so a field reads as a
+          field. Focus is a solid ink ring with a 2 px gap.
+        </p>
+
+        <div class="sg-block">
+          <h3>Buttons</h3>
+          <div class="spec-row">
+            <figure class="spec">
+              <button class="btn btn--primary" type="button">Save changes</button>
+              <figcaption>Primary, ink. One per screen</figcaption>
+            </figure>
+            <figure class="spec">
+              <button class="btn btn--secondary" type="button">Duplicate</button>
+              <figcaption>Secondary</figcaption>
+            </figure>
+            <figure class="spec">
+              <button class="btn btn--quiet" type="button">Discard</button>
+              <figcaption>Quiet</figcaption>
+            </figure>
+            <figure class="spec">
+              <button class="btn btn--decision" type="button">Approve</button>
+              <figcaption>Decision, Sign-off. Only where an agent waits for a person</figcaption>
+            </figure>
+            <figure class="spec">
+              <button class="btn btn--danger" type="button">Revoke access</button>
+              <figcaption>Danger. Irreversible actions, always confirmed</figcaption>
+            </figure>
+            <figure class="spec">
+              <button class="btn btn--primary" type="button" disabled>Save changes</button>
+              <figcaption>Disabled</figcaption>
+            </figure>
+            <figure class="spec">
+              <button class="btn btn--secondary is-focus" type="button">Preview workspace</button>
+              <figcaption>Keyboard focus</figcaption>
+            </figure>
+          </div>
+        </div>
+
+        <div class="sg-block">
+          <h3>Fields</h3>
+          <div class="spec-grid">
+            <div class="field">
+              <label class="field-label" for="sg-name">Name</label>
+              <input class="input" id="sg-name" value="Backend developer" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="sg-name-err">Name</label>
+              <input
+                class="input input--error"
+                id="sg-name-err"
+                value="Reviewer"
+                aria-invalid="true"
+                aria-describedby="sg-name-err-msg"
+              />
+              <p class="field-error" id="sg-name-err-msg">
+                Another agent is already called Reviewer. Use a different name.
+              </p>
+            </div>
+            <div class="field">
+              <label class="field-label" for="sg-model">Model</label>
+              <div class="cselect" data-cselect>
+                <button
+                  class="cselect-trigger"
+                  type="button"
+                  role="combobox"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                  aria-controls="sg-model-list"
+                  id="sg-model"
+                >
+                  <span class="cselect-value">Sonnet 5.5</span
+                  ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+                </button>
+                <div class="cselect-pop" role="listbox" id="sg-model-list" tabindex="-1" hidden>
+                  <div
+                    class="cselect-opt"
+                    role="option"
+                    id="sg-model-o0"
+                    data-label="Sonnet 5.5"
+                    aria-selected="true"
+                  >
+                    <span class="cselect-main">Sonnet 5.5</span
+                    ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                  </div>
+                  <div
+                    class="cselect-opt"
+                    role="option"
+                    id="sg-model-o1"
+                    data-label="Opus 5.5"
+                    aria-selected="false"
+                  >
+                    <span class="cselect-main">Opus 5.5</span
+                    ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                  </div>
+                  <div
+                    class="cselect-opt"
+                    role="option"
+                    id="sg-model-o2"
+                    data-label="Computer default"
+                    aria-selected="false"
+                  >
+                    <span class="cselect-main"
+                      >Computer default<span class="cselect-desc"
+                        >What Claude Code uses on that computer</span
+                      ></span
+                    ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <span class="field-label">Search</span>
+              <span class="search-field"
+                ><svg class="ico" aria-hidden="true"><use href="#i-search" /></svg>Search or jump
+                to…<span class="kbd">⌘K</span></span
+              >
+            </div>
+            <div class="field">
+              <span class="field-label">Segmented</span>
+              <span
+                ><span class="seg" role="group" aria-label="Instructions view"
+                  ><button type="button" aria-pressed="true">Write</button
+                  ><button type="button" aria-pressed="false">Preview</button></span
+                ></span
+              >
+            </div>
+            <div class="field spec-open">
+              <span class="field-label" id="sg-level-l">Select, open</span>
+              <div class="cselect" data-cselect>
+                <button
+                  class="cselect-trigger"
+                  type="button"
+                  role="combobox"
+                  aria-haspopup="listbox"
+                  aria-expanded="true"
+                  aria-controls="sg-level-list"
+                  aria-label="Access level, open specimen"
+                >
+                  <span class="cselect-value">Deputy</span
+                  ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+                </button>
+                <div class="cselect-pop" role="listbox" id="sg-level-list" tabindex="-1">
+                  <div
+                    class="cselect-opt"
+                    role="option"
+                    id="sg-level-o0"
+                    data-label="Deputy"
+                    aria-selected="true"
+                  >
+                    <span class="cselect-main"
+                      >Deputy<span class="cselect-desc"
+                        >Runs and edits it while the owner is away</span
+                      ></span
+                    ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                  </div>
+                  <div
+                    class="cselect-opt"
+                    role="option"
+                    id="sg-level-o1"
+                    data-label="Operator"
+                    aria-selected="false"
+                  >
+                    <span class="cselect-main"
+                      >Operator<span class="cselect-desc">Runs it on their computer</span></span
+                    ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                  </div>
+                  <div
+                    class="cselect-opt"
+                    role="option"
+                    id="sg-level-o2"
+                    data-label="Viewer"
+                    aria-selected="false"
+                  >
+                    <span class="cselect-main"
+                      >Viewer<span class="cselect-desc">Reads the sheet and the history</span></span
+                    ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <span class="field-label">Checkbox and tag</span>
+              <span style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap">
+                <label class="check"
+                  ><input class="checkbox" type="checkbox" checked /> Require the sandbox</label
+                >
+                <span class="tag"
+                  >Payments API<button type="button" aria-label="Remove Payments API">
+                    <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg></button
+                ></span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sg-block">
+          <h3>Policy matrix</h3>
+          <table class="matrix mini-matrix">
+            <thead>
+              <tr>
+                <th scope="col">Tool</th>
+                <th scope="col" class="mx-col">Allow</th>
+                <th scope="col" class="mx-col">Ask owner</th>
+                <th scope="col" class="mx-col">Deny</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">
+                  <span class="mx-tool"><code>code_host.create_branch</code></span
+                  ><span class="mx-desc">Create a branch named agent/*</span>
+                </th>
+                <td>
+                  <input class="radio" type="radio" name="sg-p1" checked aria-label="Allow" />
+                </td>
+                <td>
+                  <input
+                    class="radio radio--ask"
+                    type="radio"
+                    name="sg-p1"
+                    aria-label="Ask owner"
+                  />
+                </td>
+                <td><input class="radio" type="radio" name="sg-p1" aria-label="Deny" /></td>
+              </tr>
+              <tr>
+                <th scope="row">
+                  <span class="mx-tool"><code>code_host.open_change_request</code></span
+                  ><span class="mx-desc">Open a merge request or pull request</span>
+                </th>
+                <td><input class="radio" type="radio" name="sg-p2" aria-label="Allow" /></td>
+                <td>
+                  <input
+                    class="radio radio--ask"
+                    type="radio"
+                    name="sg-p2"
+                    checked
+                    aria-label="Ask owner"
+                  />
+                </td>
+                <td><input class="radio" type="radio" name="sg-p2" aria-label="Deny" /></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Runs table -->
+      <section class="sg-section" id="runs" aria-labelledby="h-runs">
+        <h2 class="t-title" id="h-runs">Runs table</h2>
+        <p class="sg-lead">
+          36 px rows, numbers right-aligned. Done is quiet; color marks what is alive, waiting or
+          broken.
+        </p>
+        <div class="sg-block">
+          <table class="tbl tbl--rows tbl--bleed tbl--fixed runs-table">
+            <colgroup>
+              <col class="c-status" />
+              <col />
+              <col class="c-agent" />
+              <col class="c-by" />
+              <col class="c-computer" />
+              <col class="c-result" />
+              <col class="c-dur" />
+              <col class="c-cost" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Task</th>
+                <th>Agent</th>
+                <th>Started by</th>
+                <th>Computer</th>
+                <th>Result</th>
+                <th class="num">Duration</th>
+                <th class="num">Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <span class="status status--running"
+                    ><svg class="mk mk-running" aria-hidden="true"><use href="#m-running" /></svg
+                    >Running</span
+                  >
+                </td>
+                <td><span class="task-key">PAY-412</span>Fix flaky retry test</td>
+                <td>Backend developer</td>
+                <td class="ink-2">Maria Ivanova</td>
+                <td class="ink-2">Maria’s computer</td>
+                <td class="ink-2">Turn 18 of 80</td>
+                <td class="num">12 min</td>
+                <td class="num">$1.84</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="status status--waiting"
+                    ><svg class="mk" aria-hidden="true"><use href="#m-waiting" /></svg>Waiting
+                    approval</span
+                  >
+                </td>
+                <td><span class="task-key">!482</span>Idempotency keys for refunds</td>
+                <td>Reviewer</td>
+                <td class="ink-2">GitLab webhook</td>
+                <td class="ink-2">Maria’s computer</td>
+                <td class="ink-2">Waiting for Maria Ivanova</td>
+                <td class="num">4 min</td>
+                <td class="num">$0.40</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="status status--queued"
+                    ><svg class="mk" aria-hidden="true"><use href="#m-queued" /></svg>Queued</span
+                  >
+                </td>
+                <td><span class="task-key">BIL-91</span>Release notes for 2.14</td>
+                <td>Release notes writer</td>
+                <td class="ink-2">Schedule</td>
+                <td class="ink-2"></td>
+                <td class="ink-2">Next free computer</td>
+                <td class="num"></td>
+                <td class="num"></td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="status status--done"
+                    ><svg class="mk" aria-hidden="true"><use href="#m-done" /></svg>Done</span
+                  >
+                </td>
+                <td><span class="task-key">PAY-405</span>Retry settlement export</td>
+                <td>Backend developer</td>
+                <td class="ink-2">Maria Ivanova</td>
+                <td class="ink-2">Maria’s computer</td>
+                <td class="ink-2">Merge request !479</td>
+                <td class="num">18 min</td>
+                <td class="num">$3.92</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="status status--failed"
+                    ><svg class="mk" aria-hidden="true"><use href="#m-failed" /></svg>Failed</span
+                  >
+                </td>
+                <td><span class="task-key">PAY-409</span>Fix checkout e2e suite</td>
+                <td>QA engineer</td>
+                <td class="ink-2">Ilya Smirnov</td>
+                <td class="ink-2">Ilya’s computer</td>
+                <td class="ink-2">Turn limit reached</td>
+                <td class="num">22 min</td>
+                <td class="num">$2.75</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="status status--done"
+                    ><svg class="mk" aria-hidden="true"><use href="#m-done" /></svg>Done</span
+                  >
+                </td>
+                <td>Weekly payments report</td>
+                <td>Analyst</td>
+                <td class="ink-2">Schedule</td>
+                <td class="ink-2">Olga’s computer</td>
+                <td class="ink-2">Report attached</td>
+                <td class="num">9 min</td>
+                <td class="num">$1.12</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="status status--cancelled"
+                    ><svg class="mk" aria-hidden="true"><use href="#m-cancelled" /></svg
+                    >Cancelled</span
+                  >
+                </td>
+                <td><span class="task-key">BIL-87</span>Regenerate the API client</td>
+                <td>Backend developer</td>
+                <td class="ink-2">Maria Ivanova</td>
+                <td class="ink-2">Maria’s computer</td>
+                <td class="ink-2">Cancelled by Maria Ivanova</td>
+                <td class="num">3 min</td>
+                <td class="num">$0.21</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="status status--done"
+                    ><svg class="mk" aria-hidden="true"><use href="#m-done" /></svg>Done</span
+                  >
+                </td>
+                <td><span class="task-key">PAY-401</span>Add refund reason codes</td>
+                <td>Backend developer</td>
+                <td class="ink-2">Maria Ivanova</td>
+                <td class="ink-2">Maria’s computer</td>
+                <td class="ink-2">Pull request #212</td>
+                <td class="num">26 min</td>
+                <td class="num">$5.40</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="mock-intro" aria-labelledby="h-mock">
+        <h2 class="t-title" id="h-mock">Agent editor</h2>
+        <p class="sg-lead">
+          Full-size mock, designed at 1440. Sections on the left, the agent sheet on the right, in
+          its second iteration: two variants of the same data. One unsaved change: commenting in
+          Jira moved from Allow to Ask owner.
+        </p>
+        <div class="variant-switch">
+          <span class="ink-2">Agent sheet</span>
+          <span class="seg" role="group" aria-label="Agent sheet variant">
+            <button type="button" data-sheet-set="v1" aria-pressed="true">V1 Pass</button>
+            <button type="button" data-sheet-set="v2" aria-pressed="false">V2 Compact rail</button>
+          </span>
+        </div>
+      </section>
+    </main>
+
+    <!-- ================= Agent editor mock ================= -->
+    <section class="mock" id="mock" aria-label="Agent editor mock">
+      <div class="app" data-sheet="v1">
+        <nav class="sidebar" aria-label="Main">
+          <div class="sidebar-in">
+            <div class="org"><span class="lbl lbl-full">Northfold</span></div>
+            <button class="search-btn" type="button" aria-label="Search or jump to">
+              <svg class="ico" aria-hidden="true"><use href="#i-search" /></svg
+              ><span class="lbl">Search</span><span class="kbd">⌘K</span>
+            </button>
+            <ul class="nav">
+              <li>
+                <a class="nav-item" href="#mock"
+                  ><svg class="ico" aria-hidden="true"><use href="#i-dashboard" /></svg
+                  ><span class="lbl">Dashboard</span></a
+                >
+              </li>
+              <li>
+                <a class="nav-item" href="#mock"
+                  ><svg class="ico" aria-hidden="true"><use href="#i-approvals" /></svg
+                  ><span class="lbl">Approvals</span
+                  ><span class="nav-count nav-count--accent" aria-label="3 waiting">3</span></a
+                >
+              </li>
+              <li>
+                <a class="nav-item" href="#mock" aria-current="true"
+                  ><svg class="ico" aria-hidden="true"><use href="#i-agents" /></svg
+                  ><span class="lbl">Agents</span></a
+                >
+              </li>
+              <li>
+                <a class="nav-item" href="#mock"
+                  ><svg class="ico" aria-hidden="true"><use href="#i-tasks" /></svg
+                  ><span class="lbl">Tasks</span></a
+                >
+              </li>
+              <li>
+                <a class="nav-item" href="#mock"
+                  ><svg class="ico" aria-hidden="true"><use href="#i-projects" /></svg
+                  ><span class="lbl">Projects</span></a
+                >
+              </li>
+              <li>
+                <a class="nav-item" href="#mock"
+                  ><svg class="ico" aria-hidden="true"><use href="#i-library" /></svg
+                  ><span class="lbl">Library</span></a
+                >
+              </li>
+            </ul>
+            <div class="agents-group">
+              <p class="nav-label">Your agents</p>
+              <ul class="nav">
+                <li>
+                  <a class="agent-link" href="#mock"
+                    ><svg class="mk" aria-hidden="true" style="color: var(--accent)">
+                      <use href="#m-waiting" /></svg
+                    ><span class="lbl">Reviewer</span></a
+                  >
+                </li>
+                <li>
+                  <a class="agent-link" href="#mock"
+                    ><svg class="mk mk-running" aria-hidden="true" style="color: var(--running)">
+                      <use href="#m-running" /></svg
+                    ><span class="lbl">Release notes writer</span></a
+                  >
+                </li>
+                <li>
+                  <a class="agent-link" href="#mock" aria-current="page"
+                    ><span class="mk-blank"></span><span class="lbl">Backend developer</span></a
+                  >
+                </li>
+              </ul>
+            </div>
+            <div class="sidebar-foot">
+              <a class="nav-item" href="#mock"
+                ><svg class="ico" aria-hidden="true"><use href="#i-admin" /></svg
+                ><span class="lbl">Admin</span></a
+              >
+              <a class="nav-item" href="#mock"
+                ><svg class="ico" aria-hidden="true"><use href="#i-help" /></svg
+                ><span class="lbl">Help</span></a
+              >
+              <div class="seat">
+                <svg class="mk mk-running" aria-hidden="true"><use href="#m-running" /></svg>
+                <div>
+                  <p class="seat-name">This computer</p>
+                  <p class="t-small ink-3">Running Release notes writer</p>
+                </div>
+              </div>
+              <div class="me">
+                <span>Maria Ivanova</span
+                ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+              </div>
+            </div>
+          </div>
+        </nav>
+
+        <div class="main">
+          <header class="page-header">
+            <div class="container header-row">
+              <nav class="crumbs" aria-label="Breadcrumb">
+                <a href="#mock">Agents</a><span class="sep" aria-hidden="true">/</span
+                ><span aria-current="page">Backend developer</span>
+              </nav>
+              <div class="header-actions">
+                <span class="save-state" role="status">1 unsaved change</span>
+                <button class="btn btn--quiet" type="button">Discard</button>
+                <button class="btn btn--primary" type="button">Save changes</button>
+              </div>
+            </div>
+            <div class="container">
+              <nav class="anchors" aria-label="Sections">
+                <a class="anchor" href="#sec-identity" aria-current="true">Identity</a>
+                <a class="anchor" href="#sec-instructions">Instructions</a>
+                <a class="anchor" href="#sec-skills">Skills</a>
+                <a class="anchor" href="#sec-tools">Tools &amp; policies</a>
+                <a class="anchor" href="#sec-memory">Memory</a>
+                <a class="anchor" href="#sec-access">Access</a>
+                <a class="anchor" href="#sec-budget">Budget</a>
+                <a class="anchor" href="#sec-engine">Engine &amp; model</a>
+              </nav>
+            </div>
+          </header>
+
+          <div class="container editor">
+            <div class="form">
+              <section class="fsec" id="sec-identity" aria-labelledby="h-identity">
+                <div class="fsec-head"><h2 id="h-identity">Identity</h2></div>
+                <div class="fgrid">
+                  <label class="flabel" for="f-name">Name</label>
+                  <input class="input" id="f-name" value="Backend developer" />
+                  <label class="flabel" for="f-role">Role title</label>
+                  <input class="input" id="f-role" value="Senior backend engineer, Payments" />
+                  <span class="flabel">Projects</span>
+                  <div class="tags">
+                    <span class="tag"
+                      >Payments API<button type="button" aria-label="Remove Payments API">
+                        <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg></button
+                    ></span>
+                    <span class="tag"
+                      >Billing service<button type="button" aria-label="Remove Billing service">
+                        <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg></button
+                    ></span>
+                    <button class="btn btn--quiet btn--sm" type="button">Add project</button>
+                  </div>
+                  <span class="flabel">Template</span>
+                  <div class="static">Backend developer, version 3</div>
+                </div>
+              </section>
+
+              <section class="fsec" id="sec-instructions" aria-labelledby="h-instructions">
+                <div class="fsec-head">
+                  <h2 id="h-instructions">Instructions</h2>
+                  <span class="seg push" role="group" aria-label="Instructions view"
+                    ><button type="button" aria-pressed="false">Write</button
+                    ><button type="button" aria-pressed="true">Preview</button></span
+                  >
+                </div>
+                <div class="md md--preview prose" aria-labelledby="h-instructions">
+                  <p>
+                    You are the backend developer for the Payments team at Northfold. You work in
+                    payments-api (GitLab) and billing-service (GitHub).
+                  </p>
+                  <h3>How you work</h3>
+                  <ul>
+                    <li>
+                      Start from the Jira issue and the project context. Restate the task in two
+                      sentences before you change anything.
+                    </li>
+                    <li>Reproduce a bug with a failing test first, then fix it.</li>
+                    <li>Keep changes small: one task, one branch, one change request.</li>
+                    <li>
+                      Run <code>pnpm test</code> and <code>pnpm lint</code> before you finish. Never
+                      finish with failing tests.
+                    </li>
+                  </ul>
+                  <h3>Conventions</h3>
+                  <ul>
+                    <li>Branches: <code>agent/backend-dev/&lt;ISSUE-KEY&gt;</code>.</li>
+                    <li>Commits and change request titles follow Conventional Commits.</li>
+                    <li>Migrations go forward only. Never edit an applied migration.</li>
+                  </ul>
+                  <h3>Ask first</h3>
+                  <ul>
+                    <li>
+                      Use <code>ask_owner</code> before changing a public API contract or anything
+                      in <code>src/ledger/</code>, and before adding a dependency.
+                    </li>
+                  </ul>
+                  <p>
+                    When you learn how part of the system works, write it down in
+                    memory/payments-architecture.md.
+                  </p>
+                </div>
+                <div class="md-foot">
+                  <span>Markdown, becomes CLAUDE.md in the workspace</span
+                  ><span class="num">320 tokens</span>
+                </div>
+              </section>
+
+              <section class="fsec" id="sec-skills" aria-labelledby="h-skills">
+                <div class="fsec-head">
+                  <h2 id="h-skills">Skills</h2>
+                  <button class="btn btn--secondary btn--sm push" type="button">Add skill</button>
+                </div>
+                <div class="rows">
+                  <div class="skill-row">
+                    <span class="skill-name">Test-driven fix</span
+                    ><span class="ink-2 truncate"
+                      >Reproduce the bug with a failing test, then fix</span
+                    ><span class="num">1.4.0</span><span class="ink-3 truncate">Org library</span
+                    ><button class="icon-btn" type="button" aria-label="Remove Test-driven fix">
+                      <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                  <div class="skill-row">
+                    <span class="skill-name">Conventional commits</span
+                    ><span class="ink-2 truncate">Commit and change request titles</span
+                    ><span class="num">2.0.1</span><span class="ink-3 truncate">Org library</span
+                    ><button
+                      class="icon-btn"
+                      type="button"
+                      aria-label="Remove Conventional commits"
+                    >
+                      <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                  <div class="skill-row">
+                    <span class="skill-name">Drizzle migrations</span
+                    ><span class="ink-2 truncate">Forward-only PostgreSQL migrations</span
+                    ><span class="num">1.1.0</span><span class="ink-3 truncate">Org library</span
+                    ><button class="icon-btn" type="button" aria-label="Remove Drizzle migrations">
+                      <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                  <div class="skill-row">
+                    <span class="skill-name">Payments domain</span
+                    ><span class="ink-2 truncate">Ledger, settlement and refund rules</span
+                    ><span class="num">0.9.2</span
+                    ><span class="ink-3 truncate">Private, Maria Ivanova</span
+                    ><button class="icon-btn" type="button" aria-label="Remove Payments domain">
+                      <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="fsec" id="sec-tools" aria-labelledby="h-tools">
+                <div class="fsec-head">
+                  <h2 id="h-tools">Tools &amp; policies</h2>
+                  <button class="btn btn--secondary btn--sm push" type="button">Add tool</button>
+                </div>
+                <p class="fsec-desc">
+                  Ask owner pauses the run until the owner approves the call on the Approvals page.
+                </p>
+                <table class="matrix">
+                  <thead>
+                    <tr>
+                      <th scope="col">Tool</th>
+                      <th scope="col" class="mx-col">Allow</th>
+                      <th scope="col" class="mx-col">Ask owner</th>
+                      <th scope="col" class="mx-col">Deny</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="mx-group">
+                      <th colspan="4" scope="colgroup">Workspace</th>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        <span class="mx-tool"
+                          ><code>Read</code>, <code>Edit</code>, <code>Write</code></span
+                        ><span class="mx-desc">Read and edit files in its workspace</span>
+                      </th>
+                      <td>
+                        <input
+                          class="radio"
+                          type="radio"
+                          name="p-files"
+                          checked
+                          aria-label="Allow"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-files"
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td><input class="radio" type="radio" name="p-files" aria-label="Deny" /></td>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        <span class="mx-tool"><code>Bash(pnpm *, git *, node *)</code></span
+                        ><span class="mx-desc">Run pnpm, git and node</span>
+                      </th>
+                      <td>
+                        <input
+                          class="radio"
+                          type="radio"
+                          name="p-bash"
+                          checked
+                          aria-label="Allow"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-bash"
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td><input class="radio" type="radio" name="p-bash" aria-label="Deny" /></td>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        <span class="mx-tool"><code>WebFetch</code></span
+                        ><span class="mx-desc">Fetch web pages</span>
+                      </th>
+                      <td><input class="radio" type="radio" name="p-web" aria-label="Allow" /></td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-web"
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td>
+                        <input class="radio" type="radio" name="p-web" checked aria-label="Deny" />
+                      </td>
+                    </tr>
+
+                    <tr class="mx-group">
+                      <th colspan="4" scope="colgroup">Code host, GitLab and GitHub</th>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        <span class="mx-tool"><code>code_host.create_branch</code></span
+                        ><span class="mx-desc">Create a branch named agent/*</span>
+                      </th>
+                      <td>
+                        <input
+                          class="radio"
+                          type="radio"
+                          name="p-branch"
+                          checked
+                          aria-label="Allow"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-branch"
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td>
+                        <input class="radio" type="radio" name="p-branch" aria-label="Deny" />
+                      </td>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        <span class="mx-tool"><code>code_host.open_change_request</code></span
+                        ><span class="mx-desc">Open a merge request or pull request</span>
+                      </th>
+                      <td><input class="radio" type="radio" name="p-cr" aria-label="Allow" /></td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-cr"
+                          checked
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td><input class="radio" type="radio" name="p-cr" aria-label="Deny" /></td>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        <span class="mx-tool"><code>code_host.get_pipeline_failures</code></span
+                        ><span class="mx-desc">Read failed pipeline jobs</span>
+                      </th>
+                      <td>
+                        <input
+                          class="radio"
+                          type="radio"
+                          name="p-pipe"
+                          checked
+                          aria-label="Allow"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-pipe"
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td><input class="radio" type="radio" name="p-pipe" aria-label="Deny" /></td>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        <span class="mx-tool"><code>code_host.reply_to_review</code></span
+                        ><span class="mx-desc">Reply to review comments</span>
+                      </th>
+                      <td>
+                        <input
+                          class="radio"
+                          type="radio"
+                          name="p-review"
+                          checked
+                          aria-label="Allow"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-review"
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td>
+                        <input class="radio" type="radio" name="p-review" aria-label="Deny" />
+                      </td>
+                    </tr>
+
+                    <tr class="mx-group">
+                      <th colspan="4" scope="colgroup">Jira</th>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        <span class="mx-tool"><code>jira.get_issue</code></span
+                        ><span class="mx-desc">Read issues and their comments</span>
+                      </th>
+                      <td>
+                        <input
+                          class="radio"
+                          type="radio"
+                          name="p-issue"
+                          checked
+                          aria-label="Allow"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-issue"
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td><input class="radio" type="radio" name="p-issue" aria-label="Deny" /></td>
+                    </tr>
+                    <tr class="is-changed">
+                      <th scope="row">
+                        <span class="mx-tool"
+                          ><code>jira.add_comment</code
+                          ><span class="was t-small">was Allow</span></span
+                        ><span class="mx-desc">Comment on an issue</span>
+                      </th>
+                      <td>
+                        <input class="radio" type="radio" name="p-comment" aria-label="Allow" />
+                      </td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-comment"
+                          checked
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td>
+                        <input class="radio" type="radio" name="p-comment" aria-label="Deny" />
+                      </td>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        <span class="mx-tool"><code>jira.transition_issue</code></span
+                        ><span class="mx-desc">Move an issue to another status</span>
+                      </th>
+                      <td><input class="radio" type="radio" name="p-move" aria-label="Allow" /></td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-move"
+                          checked
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td><input class="radio" type="radio" name="p-move" aria-label="Deny" /></td>
+                    </tr>
+
+                    <tr class="mx-group">
+                      <th colspan="4" scope="colgroup">Knowledge and memory</th>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        <span class="mx-tool"
+                          ><code>knowledge.search</code>, <code>knowledge.read</code></span
+                        ><span class="mx-desc">Search and read project knowledge</span>
+                      </th>
+                      <td>
+                        <input
+                          class="radio"
+                          type="radio"
+                          name="p-know"
+                          checked
+                          aria-label="Allow"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-know"
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td><input class="radio" type="radio" name="p-know" aria-label="Deny" /></td>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        <span class="mx-tool"
+                          ><code>memory.read</code>, <code>memory.write</code></span
+                        ><span class="mx-desc">Read and update its memory</span>
+                      </th>
+                      <td>
+                        <input class="radio" type="radio" name="p-mem" checked aria-label="Allow" />
+                      </td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-mem"
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td><input class="radio" type="radio" name="p-mem" aria-label="Deny" /></td>
+                    </tr>
+
+                    <tr class="mx-group">
+                      <th colspan="4" scope="colgroup">Platform rules</th>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        <span class="mx-tool"
+                          ><code>git push</code> to <code>main</code>, force-push</span
+                        ><span class="mx-desc mx-lock"
+                          ><svg class="ico" aria-hidden="true"><use href="#i-lock" /></svg>Enforced
+                          by the git proxy for every agent</span
+                        >
+                      </th>
+                      <td>
+                        <input
+                          class="radio"
+                          type="radio"
+                          name="p-main"
+                          disabled
+                          aria-label="Allow"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          class="radio radio--ask"
+                          type="radio"
+                          name="p-main"
+                          disabled
+                          aria-label="Ask owner"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          class="radio"
+                          type="radio"
+                          name="p-main"
+                          checked
+                          disabled
+                          aria-label="Deny"
+                        />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              <section class="fsec" id="sec-memory" aria-labelledby="h-memory">
+                <div class="fsec-head">
+                  <h2 id="h-memory">Memory</h2>
+                  <button class="btn btn--secondary btn--sm push" type="button">
+                    New document
+                  </button>
+                </div>
+                <table class="tbl tbl--flush">
+                  <thead>
+                    <tr>
+                      <th>Document</th>
+                      <th class="num">Version</th>
+                      <th>Last change</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>MEMORY.md</code></td>
+                      <td class="num">14</td>
+                      <td class="ink-2">A run on 19 Oct, 14:02</td>
+                    </tr>
+                    <tr>
+                      <td><code>memory/payments-architecture.md</code></td>
+                      <td class="num">6</td>
+                      <td class="ink-2">Maria Ivanova on 9 Oct</td>
+                    </tr>
+                    <tr>
+                      <td><code>memory/flaky-tests.md</code></td>
+                      <td class="num">3</td>
+                      <td class="ink-2">A run on 4 Oct, 10:15</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              <section class="fsec" id="sec-access" aria-labelledby="h-access">
+                <div class="fsec-head">
+                  <h2 id="h-access">Access</h2>
+                  <button class="btn btn--secondary btn--sm push" type="button">Share</button>
+                </div>
+                <table class="tbl tbl--flush">
+                  <thead>
+                    <tr>
+                      <th>Person</th>
+                      <th>Access</th>
+                      <th>Until</th>
+                      <th>
+                        <span class="ink-3" style="position: absolute; left: -9999px">Remove</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Maria Ivanova <span class="ink-3">(you)</span></td>
+                      <td>Owner</td>
+                      <td class="ink-3"></td>
+                      <td></td>
+                    </tr>
+                    <tr>
+                      <td>Ilya Smirnov</td>
+                      <td>
+                        <div
+                          class="cselect cselect--sm cselect--quiet"
+                          data-cselect
+                          style="width: 136px"
+                        >
+                          <button
+                            class="cselect-trigger"
+                            type="button"
+                            role="combobox"
+                            aria-haspopup="listbox"
+                            aria-expanded="false"
+                            aria-controls="acc-ilya-list"
+                            aria-label="Access for Ilya Smirnov"
+                          >
+                            <span class="cselect-value">Deputy</span
+                            ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+                          </button>
+                          <div
+                            class="cselect-pop"
+                            role="listbox"
+                            id="acc-ilya-list"
+                            tabindex="-1"
+                            hidden
+                          >
+                            <div
+                              class="cselect-opt"
+                              role="option"
+                              id="acc-ilya-o0"
+                              data-label="Deputy"
+                              aria-selected="true"
+                            >
+                              <span class="cselect-main"
+                                >Deputy<span class="cselect-desc"
+                                  >Runs and edits it while the owner is away</span
+                                ></span
+                              ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                            </div>
+                            <div
+                              class="cselect-opt"
+                              role="option"
+                              id="acc-ilya-o1"
+                              data-label="Operator"
+                              aria-selected="false"
+                            >
+                              <span class="cselect-main"
+                                >Operator<span class="cselect-desc"
+                                  >Runs it on their computer</span
+                                ></span
+                              ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                            </div>
+                            <div
+                              class="cselect-opt"
+                              role="option"
+                              id="acc-ilya-o2"
+                              data-label="Viewer"
+                              aria-selected="false"
+                            >
+                              <span class="cselect-main"
+                                >Viewer<span class="cselect-desc"
+                                  >Reads the sheet and the history</span
+                                ></span
+                              ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>3 Nov 2026</td>
+                      <td class="num">
+                        <button class="icon-btn" type="button" aria-label="Remove Ilya Smirnov">
+                          <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>
+                        </button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Olga Kim</td>
+                      <td>
+                        <div
+                          class="cselect cselect--sm cselect--quiet"
+                          data-cselect
+                          style="width: 136px"
+                        >
+                          <button
+                            class="cselect-trigger"
+                            type="button"
+                            role="combobox"
+                            aria-haspopup="listbox"
+                            aria-expanded="false"
+                            aria-controls="acc-olga-list"
+                            aria-label="Access for Olga Kim"
+                          >
+                            <span class="cselect-value">Operator</span
+                            ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+                          </button>
+                          <div
+                            class="cselect-pop"
+                            role="listbox"
+                            id="acc-olga-list"
+                            tabindex="-1"
+                            hidden
+                          >
+                            <div
+                              class="cselect-opt"
+                              role="option"
+                              id="acc-olga-o0"
+                              data-label="Deputy"
+                              aria-selected="false"
+                            >
+                              <span class="cselect-main"
+                                >Deputy<span class="cselect-desc"
+                                  >Runs and edits it while the owner is away</span
+                                ></span
+                              ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                            </div>
+                            <div
+                              class="cselect-opt"
+                              role="option"
+                              id="acc-olga-o1"
+                              data-label="Operator"
+                              aria-selected="true"
+                            >
+                              <span class="cselect-main"
+                                >Operator<span class="cselect-desc"
+                                  >Runs it on their computer</span
+                                ></span
+                              ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                            </div>
+                            <div
+                              class="cselect-opt"
+                              role="option"
+                              id="acc-olga-o2"
+                              data-label="Viewer"
+                              aria-selected="false"
+                            >
+                              <span class="cselect-main"
+                                >Viewer<span class="cselect-desc"
+                                  >Reads the sheet and the history</span
+                                ></span
+                              ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="ink-3">No end date</td>
+                      <td class="num">
+                        <button class="icon-btn" type="button" aria-label="Remove Olga Kim">
+                          <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>
+                        </button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Daniil Orlov</td>
+                      <td>
+                        <div
+                          class="cselect cselect--sm cselect--quiet"
+                          data-cselect
+                          style="width: 136px"
+                        >
+                          <button
+                            class="cselect-trigger"
+                            type="button"
+                            role="combobox"
+                            aria-haspopup="listbox"
+                            aria-expanded="false"
+                            aria-controls="acc-daniil-list"
+                            aria-label="Access for Daniil Orlov"
+                          >
+                            <span class="cselect-value">Viewer</span
+                            ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+                          </button>
+                          <div
+                            class="cselect-pop"
+                            role="listbox"
+                            id="acc-daniil-list"
+                            tabindex="-1"
+                            hidden
+                          >
+                            <div
+                              class="cselect-opt"
+                              role="option"
+                              id="acc-daniil-o0"
+                              data-label="Deputy"
+                              aria-selected="false"
+                            >
+                              <span class="cselect-main"
+                                >Deputy<span class="cselect-desc"
+                                  >Runs and edits it while the owner is away</span
+                                ></span
+                              ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                            </div>
+                            <div
+                              class="cselect-opt"
+                              role="option"
+                              id="acc-daniil-o1"
+                              data-label="Operator"
+                              aria-selected="false"
+                            >
+                              <span class="cselect-main"
+                                >Operator<span class="cselect-desc"
+                                  >Runs it on their computer</span
+                                ></span
+                              ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                            </div>
+                            <div
+                              class="cselect-opt"
+                              role="option"
+                              id="acc-daniil-o2"
+                              data-label="Viewer"
+                              aria-selected="true"
+                            >
+                              <span class="cselect-main"
+                                >Viewer<span class="cselect-desc"
+                                  >Reads the sheet and the history</span
+                                ></span
+                              ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="ink-3">No end date</td>
+                      <td class="num">
+                        <button class="icon-btn" type="button" aria-label="Remove Daniil Orlov">
+                          <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              <section class="fsec" id="sec-budget" aria-labelledby="h-budget">
+                <div class="fsec-head"><h2 id="h-budget">Budget</h2></div>
+                <div class="fgrid">
+                  <label class="flabel" for="f-limit">Monthly limit</label>
+                  <div class="inline-fields">
+                    <span class="search-field" style="width: 144px; color: var(--ink)"
+                      ><span class="ink-3">$</span
+                      ><input
+                        id="f-limit"
+                        value="250"
+                        style="
+                          border: 0;
+                          outline: 0;
+                          background: transparent;
+                          width: 100%;
+                          height: 30px;
+                          padding: 0;
+                          font-variant-numeric: tabular-nums;
+                        "
+                    /></span>
+                    <span class="ink-2">$112.40 spent this month, 38 runs</span>
+                  </div>
+                  <label class="flabel" for="f-at-limit">At the limit</label>
+                  <div class="cselect" data-cselect style="width: 220px">
+                    <button
+                      class="cselect-trigger"
+                      type="button"
+                      role="combobox"
+                      aria-haspopup="listbox"
+                      aria-expanded="false"
+                      aria-controls="f-at-limit-list"
+                      id="f-at-limit"
+                    >
+                      <span class="cselect-value">Stop new runs</span
+                      ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+                    </button>
+                    <div
+                      class="cselect-pop"
+                      role="listbox"
+                      id="f-at-limit-list"
+                      tabindex="-1"
+                      hidden
+                    >
+                      <div
+                        class="cselect-opt"
+                        role="option"
+                        id="f-at-limit-o0"
+                        data-label="Stop new runs"
+                        aria-selected="true"
+                      >
+                        <span class="cselect-main"
+                          >Stop new runs<span class="cselect-desc"
+                            >Runs in progress finish</span
+                          ></span
+                        ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                      </div>
+                      <div
+                        class="cselect-opt"
+                        role="option"
+                        id="f-at-limit-o1"
+                        data-label="Warn me"
+                        aria-selected="false"
+                      >
+                        <span class="cselect-main"
+                          >Warn me<span class="cselect-desc"
+                            >Runs continue, you get a notification</span
+                          ></span
+                        ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                      </div>
+                    </div>
+                  </div>
+                  <span class="flabel">Each run</span>
+                  <div class="inline-fields">
+                    <label class="search-field" style="width: 120px; color: var(--ink)"
+                      ><input
+                        value="45"
+                        aria-label="Time limit in minutes"
+                        style="
+                          border: 0;
+                          outline: 0;
+                          background: transparent;
+                          width: 100%;
+                          height: 30px;
+                          padding: 0;
+                          font-variant-numeric: tabular-nums;
+                        "
+                      /><span class="ink-3">min</span></label
+                    >
+                    <label class="search-field" style="width: 120px; color: var(--ink)"
+                      ><input
+                        value="80"
+                        aria-label="Turn limit"
+                        style="
+                          border: 0;
+                          outline: 0;
+                          background: transparent;
+                          width: 100%;
+                          height: 30px;
+                          padding: 0;
+                          font-variant-numeric: tabular-nums;
+                        "
+                      /><span class="ink-3">turns</span></label
+                    >
+                    <label class="search-field" style="width: 160px; color: var(--ink)"
+                      ><input
+                        value="3,000,000"
+                        aria-label="Token limit"
+                        style="
+                          border: 0;
+                          outline: 0;
+                          background: transparent;
+                          width: 100%;
+                          height: 30px;
+                          padding: 0;
+                          font-variant-numeric: tabular-nums;
+                        "
+                      /><span class="ink-3">tokens</span></label
+                    >
+                  </div>
+                </div>
+              </section>
+
+              <section class="fsec" id="sec-engine" aria-labelledby="h-engine">
+                <div class="fsec-head"><h2 id="h-engine">Engine &amp; model</h2></div>
+                <div class="fgrid">
+                  <span class="flabel">Engine</span>
+                  <div class="static">Claude Code</div>
+                  <label class="flabel" for="f-model">Model</label>
+                  <div class="cselect" data-cselect style="width: 220px">
+                    <button
+                      class="cselect-trigger"
+                      type="button"
+                      role="combobox"
+                      aria-haspopup="listbox"
+                      aria-expanded="false"
+                      aria-controls="f-model-list"
+                      id="f-model"
+                    >
+                      <span class="cselect-value">Sonnet 5.5</span
+                      ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+                    </button>
+                    <div class="cselect-pop" role="listbox" id="f-model-list" tabindex="-1" hidden>
+                      <div
+                        class="cselect-opt"
+                        role="option"
+                        id="f-model-o0"
+                        data-label="Sonnet 5.5"
+                        aria-selected="true"
+                      >
+                        <span class="cselect-main">Sonnet 5.5</span
+                        ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                      </div>
+                      <div
+                        class="cselect-opt"
+                        role="option"
+                        id="f-model-o1"
+                        data-label="Opus 5.5"
+                        aria-selected="false"
+                      >
+                        <span class="cselect-main">Opus 5.5</span
+                        ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                      </div>
+                      <div
+                        class="cselect-opt"
+                        role="option"
+                        id="f-model-o2"
+                        data-label="Computer default"
+                        aria-selected="false"
+                      >
+                        <span class="cselect-main"
+                          >Computer default<span class="cselect-desc"
+                            >What Claude Code uses on that computer</span
+                          ></span
+                        ><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>
+                      </div>
+                    </div>
+                  </div>
+                  <span class="flabel">Sandbox</span>
+                  <label class="check"
+                    ><input class="checkbox" type="checkbox" checked /> Require the Claude Code
+                    sandbox</label
+                  >
+                </div>
+              </section>
+            </div>
+
+            <!-- The agent sheet, iteration 2. V1 Pass and V2 Compact rail share the same data; one is shown at a time. -->
+            <aside class="sheet-col" aria-label="Agent sheet">
+              <div class="sheet sheet--v1">
+                <div class="sheet-in">
+                  <div class="pass-top">
+                    <h2 class="pass-name">Backend developer</h2>
+                    <code class="pass-id" title="Agent ID for the API and the management MCP"
+                      >7f3a9c21</code
+                    >
+                  </div>
+                  <p class="pass-role">Senior backend engineer, Payments</p>
+                  <dl class="pass-grid">
+                    <div>
+                      <dt>Owner</dt>
+                      <dd>Maria Ivanova</dd>
+                    </div>
+                    <div>
+                      <dt>Since</dt>
+                      <dd>12 Mar 2026</dd>
+                    </div>
+                    <div>
+                      <dt>Template</dt>
+                      <dd>Backend developer <span class="ink-3">v3</span></dd>
+                    </div>
+                    <div>
+                      <dt>Last run</dt>
+                      <dd>
+                        <span class="status status--done"
+                          ><svg class="mk" aria-hidden="true"><use href="#m-done" /></svg>Done, 2 h
+                          ago</span
+                        >
+                      </dd>
+                    </div>
+                    <div class="wide">
+                      <dt>Runs on</dt>
+                      <dd class="seat-line">
+                        <span class="chip" title="Running Release notes writer"
+                          ><span class="dot dot--busy" aria-hidden="true"></span>Maria’s
+                          computer</span
+                        ><span class="ink-3">Busy</span>
+                      </dd>
+                    </div>
+                    <div class="wide">
+                      <dt>Works on</dt>
+                      <dd class="dd-chips">
+                        <ul class="chips">
+                          <li class="chip" title="GitLab: payments/payments-api">
+                            <span class="host">GL</span>Payments API
+                          </li>
+                          <li class="chip" title="GitHub: northfold/billing-service">
+                            <span class="host">GH</span>Billing service
+                          </li>
+                        </ul>
+                      </dd>
+                    </div>
+                  </dl>
+                  <div class="sheet-actions">
+                    <button class="btn btn--secondary" type="button">Run</button>
+                    <button class="btn btn--secondary" type="button">Duplicate</button>
+                    <button class="btn btn--secondary" type="button">Export</button>
+                  </div>
+
+                  <section class="blk" aria-labelledby="v1-tools">
+                    <p class="blk-h" id="v1-tools"><b>13</b> tools</p>
+                    <div class="pbar" role="img" aria-label="13 tools: 8 can, 3 ask owner, 2 never">
+                      <span class="pbar-can" style="flex-grow: 8" title="8 can"></span
+                      ><span class="pbar-ask" style="flex-grow: 3" title="3 ask owner"></span
+                      ><span class="pbar-never" style="flex-grow: 2" title="2 never"></span>
+                    </div>
+                    <ul class="legend" aria-hidden="true">
+                      <li><i class="sw sw-can"></i><b>8</b> can</li>
+                      <li><i class="sw sw-ask"></i><b>3</b> ask owner</li>
+                      <li><i class="sw sw-never"></i><b>2</b> never</li>
+                    </ul>
+                    <table class="cmx">
+                      <thead>
+                        <tr>
+                          <th scope="col"><span class="sr">Connector</span></th>
+                          <th scope="col" class="cmx-c">Can</th>
+                          <th scope="col" class="cmx-a">Ask owner</th>
+                          <th scope="col" class="cmx-n">Never</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <th scope="row">
+                            Code host<span class="host" title="GitLab">GL</span
+                            ><span class="host" title="GitHub">GH</span>
+                          </th>
+                          <td title="Code host: 3 can">
+                            <i class="d d-can"></i><i class="d d-can"></i><i class="d d-can"></i>
+                          </td>
+                          <td title="Code host: 1 ask owner"><i class="d d-ask"></i></td>
+                          <td title="Code host: 1 never"><i class="d d-never"></i></td>
+                        </tr>
+                        <tr class="is-changed">
+                          <th scope="row">Jira</th>
+                          <td title="Jira: 1 can"><i class="d d-can"></i></td>
+                          <td title="Jira: 2 ask owner, 1 unsaved">
+                            <i class="d d-ask"></i><i class="d d-ask"></i>
+                          </td>
+                          <td></td>
+                        </tr>
+                        <tr>
+                          <th scope="row">Knowledge</th>
+                          <td title="Knowledge: 1 can"><i class="d d-can"></i></td>
+                          <td></td>
+                          <td></td>
+                        </tr>
+                        <tr>
+                          <th scope="row">Memory</th>
+                          <td title="Memory: 1 can"><i class="d d-can"></i></td>
+                          <td></td>
+                          <td></td>
+                        </tr>
+                        <tr>
+                          <th scope="row">Workspace</th>
+                          <td title="Workspace: 2 can">
+                            <i class="d d-can"></i><i class="d d-can"></i>
+                          </td>
+                          <td></td>
+                          <td title="Workspace: 1 never"><i class="d d-never"></i></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <details class="more">
+                      <summary>
+                        <svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg
+                        ><span class="when-closed">Show all 13</span
+                        ><span class="when-open">Hide the list</span>
+                      </summary>
+                      <div class="all">
+                        <p class="all-h">Code host</p>
+                        <ul>
+                          <li><i class="d d-can"></i>Create <code>agent/*</code> branches</li>
+                          <li><i class="d d-can"></i>Read failed pipeline jobs</li>
+                          <li><i class="d d-can"></i>Reply to review comments</li>
+                          <li><i class="d d-ask"></i>Open a merge request or pull request</li>
+                          <li>
+                            <i class="d d-never"></i>Push to main or force-push
+                            <span class="note">Platform rule</span>
+                          </li>
+                        </ul>
+                        <p class="all-h">Jira</p>
+                        <ul>
+                          <li><i class="d d-can"></i>Read issues and their comments</li>
+                          <li class="is-changed">
+                            <i class="d d-ask"></i>Comment on an issue
+                            <span class="note">Unsaved</span>
+                          </li>
+                          <li><i class="d d-ask"></i>Move an issue to another status</li>
+                        </ul>
+                        <p class="all-h">Knowledge</p>
+                        <ul>
+                          <li><i class="d d-can"></i>Search and read project knowledge</li>
+                        </ul>
+                        <p class="all-h">Memory</p>
+                        <ul>
+                          <li><i class="d d-can"></i>Read and update its memory</li>
+                        </ul>
+                        <p class="all-h">Workspace</p>
+                        <ul>
+                          <li><i class="d d-can"></i>Read and edit files</li>
+                          <li><i class="d d-can"></i>Run pnpm, git and node</li>
+                          <li><i class="d d-never"></i>Fetch web pages</li>
+                        </ul>
+                      </div>
+                    </details>
+                  </section>
+
+                  <section class="blk" aria-labelledby="v1-access">
+                    <p class="blk-h" id="v1-access">Access</p>
+                    <ul class="people">
+                      <li title="Maria Ivanova">
+                        <span class="ini ini--owner">MI</span><span class="role">Owner</span>
+                      </li>
+                      <li title="Ilya Smirnov, deputy until 3 Nov 2026">
+                        <span class="ini ini--deputy">IS</span
+                        ><span class="role">Deputy<span class="until">until 3 Nov</span></span>
+                      </li>
+                      <li title="Olga Kim">
+                        <span class="ini ini--operator">OK</span><span class="role">Operator</span>
+                      </li>
+                      <li title="Daniil Orlov">
+                        <span class="ini ini--viewer">DO</span><span class="role">Viewer</span>
+                      </li>
+                    </ul>
+                  </section>
+
+                  <section class="blk" aria-labelledby="v1-cost">
+                    <p class="blk-h" id="v1-cost">Cost</p>
+                    <p class="cost-row">
+                      <span class="cost-v">$112.40</span
+                      ><span class="ink-3">of $250 this month</span>
+                    </p>
+                    <div
+                      class="meter"
+                      role="meter"
+                      aria-label="Spent this month"
+                      aria-valuemin="0"
+                      aria-valuemax="250"
+                      aria-valuenow="112.4"
+                      title="45% of the monthly budget"
+                    >
+                      <span style="width: 45%"></span>
+                    </div>
+                    <p class="cost-sub">
+                      <span>$2.40–$6.10 per task</span><span class="ink-3">38 runs</span>
+                    </p>
+                  </section>
+
+                  <section class="blk" aria-labelledby="v1-knows">
+                    <p class="blk-h" id="v1-knows">Knows</p>
+                    <ul class="chips">
+                      <li class="chip">Test-driven fix<span class="chip-v">1.4.0</span></li>
+                      <li class="chip">Conventional commits<span class="chip-v">2.0.1</span></li>
+                      <li class="chip">Drizzle migrations<span class="chip-v">1.1.0</span></li>
+                      <li class="chip" title="Private skill of Maria Ivanova">
+                        <svg class="ico" aria-hidden="true"><use href="#i-lock" /></svg>Payments
+                        domain<span class="chip-v">0.9.2</span>
+                      </li>
+                    </ul>
+                  </section>
+
+                  <div class="sheet-ws">
+                    <button class="btn btn--secondary" type="button">Preview workspace</button>
+                    <p>CLAUDE.md, 4 skills, 11 tools and 3 memory documents go into each run.</p>
+                  </div>
+                  <div class="sheet-foot">
+                    <button class="btn btn--quiet" type="button">Transfer ownership</button>
+                    <button class="btn btn--quiet" type="button">Archive</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sheet sheet--v2">
+                <div class="sheet-in">
+                  <div class="pass-top">
+                    <h2 class="pass-name pass-name--sm">Backend developer</h2>
+                    <code class="pass-id" title="Agent ID for the API and the management MCP"
+                      >7f3a9c21</code
+                    >
+                  </div>
+                  <p class="pass-role">Senior backend engineer, Payments</p>
+                  <dl class="rail-id">
+                    <dt>Owner</dt>
+                    <dd>Maria Ivanova</dd>
+                    <dt>Since</dt>
+                    <dd>12 Mar 2026</dd>
+                    <dt>Template</dt>
+                    <dd>Backend developer <span class="ink-3">v3</span></dd>
+                    <dt>Last run</dt>
+                    <dd>
+                      <span class="status status--done"
+                        ><svg class="mk" aria-hidden="true"><use href="#m-done" /></svg>Done, 2 h
+                        ago</span
+                      >
+                    </dd>
+                    <dt>Runs on</dt>
+                    <dd class="seat-line">
+                      <span class="chip" title="Running Release notes writer"
+                        ><span class="dot dot--busy" aria-hidden="true"></span>Maria’s computer</span
+                      ><span class="ink-3">Busy</span>
+                    </dd>
+                  </dl>
+                  <div class="sheet-actions">
+                    <button class="btn btn--secondary" type="button">Run</button>
+                    <button class="btn btn--secondary" type="button">Duplicate</button>
+                    <button class="btn btn--secondary" type="button">Export</button>
+                  </div>
+
+                  <section class="blk" aria-labelledby="v2-tools">
+                    <p class="blk-h" id="v2-tools"><b>13</b> tools</p>
+                    <div class="pbar" role="img" aria-label="13 tools: 8 can, 3 ask owner, 2 never">
+                      <span class="pbar-can" style="flex-grow: 8" title="8 can"></span
+                      ><span class="pbar-ask" style="flex-grow: 3" title="3 ask owner"></span
+                      ><span class="pbar-never" style="flex-grow: 2" title="2 never"></span>
+                    </div>
+                    <ul class="legend" aria-hidden="true">
+                      <li><i class="sw sw-can"></i><b>8</b> can</li>
+                      <li><i class="sw sw-ask"></i><b>3</b> ask owner</li>
+                      <li><i class="sw sw-never"></i><b>2</b> never</li>
+                    </ul>
+                  </section>
+
+                  <div class="rows2">
+                    <details class="row2 is-changed">
+                      <summary>
+                        <span class="row2-l">Connectors</span
+                        ><span class="row2-v">Code host, Jira, +3</span
+                        ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+                      </summary>
+                      <div class="row2-body">
+                        <table class="cmx">
+                          <thead>
+                            <tr>
+                              <th scope="col"><span class="sr">Connector</span></th>
+                              <th scope="col" class="cmx-c">Can</th>
+                              <th scope="col" class="cmx-a">Ask owner</th>
+                              <th scope="col" class="cmx-n">Never</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <th scope="row">
+                                Code host<span class="host" title="GitLab">GL</span
+                                ><span class="host" title="GitHub">GH</span>
+                              </th>
+                              <td title="Code host: 3 can">
+                                <i class="d d-can"></i><i class="d d-can"></i
+                                ><i class="d d-can"></i>
+                              </td>
+                              <td title="Code host: 1 ask owner"><i class="d d-ask"></i></td>
+                              <td title="Code host: 1 never"><i class="d d-never"></i></td>
+                            </tr>
+                            <tr class="is-changed">
+                              <th scope="row">Jira</th>
+                              <td title="Jira: 1 can"><i class="d d-can"></i></td>
+                              <td title="Jira: 2 ask owner, 1 unsaved">
+                                <i class="d d-ask"></i><i class="d d-ask"></i>
+                              </td>
+                              <td></td>
+                            </tr>
+                            <tr>
+                              <th scope="row">Knowledge</th>
+                              <td title="Knowledge: 1 can"><i class="d d-can"></i></td>
+                              <td></td>
+                              <td></td>
+                            </tr>
+                            <tr>
+                              <th scope="row">Memory</th>
+                              <td title="Memory: 1 can"><i class="d d-can"></i></td>
+                              <td></td>
+                              <td></td>
+                            </tr>
+                            <tr>
+                              <th scope="row">Workspace</th>
+                              <td title="Workspace: 2 can">
+                                <i class="d d-can"></i><i class="d d-can"></i>
+                              </td>
+                              <td></td>
+                              <td title="Workspace: 1 never"><i class="d d-never"></i></td>
+                            </tr>
+                          </tbody>
+                        </table>
+                        <details class="more">
+                          <summary>
+                            <svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg
+                            ><span class="when-closed">Show all 13</span
+                            ><span class="when-open">Hide the list</span>
+                          </summary>
+                          <div class="all">
+                            <p class="all-h">Code host</p>
+                            <ul>
+                              <li><i class="d d-can"></i>Create <code>agent/*</code> branches</li>
+                              <li><i class="d d-can"></i>Read failed pipeline jobs</li>
+                              <li><i class="d d-can"></i>Reply to review comments</li>
+                              <li><i class="d d-ask"></i>Open a merge request or pull request</li>
+                              <li>
+                                <i class="d d-never"></i>Push to main or force-push
+                                <span class="note">Platform rule</span>
+                              </li>
+                            </ul>
+                            <p class="all-h">Jira</p>
+                            <ul>
+                              <li><i class="d d-can"></i>Read issues and their comments</li>
+                              <li class="is-changed">
+                                <i class="d d-ask"></i>Comment on an issue
+                                <span class="note">Unsaved</span>
+                              </li>
+                              <li><i class="d d-ask"></i>Move an issue to another status</li>
+                            </ul>
+                            <p class="all-h">Knowledge</p>
+                            <ul>
+                              <li><i class="d d-can"></i>Search and read project knowledge</li>
+                            </ul>
+                            <p class="all-h">Memory</p>
+                            <ul>
+                              <li><i class="d d-can"></i>Read and update its memory</li>
+                            </ul>
+                            <p class="all-h">Workspace</p>
+                            <ul>
+                              <li><i class="d d-can"></i>Read and edit files</li>
+                              <li><i class="d d-can"></i>Run pnpm, git and node</li>
+                              <li><i class="d d-never"></i>Fetch web pages</li>
+                            </ul>
+                          </div>
+                        </details>
+                      </div>
+                    </details>
+                    <details class="row2">
+                      <summary>
+                        <span class="row2-l">Works on</span
+                        ><span class="row2-v"
+                          ><span class="host">GL</span><span class="host">GH</span>2 projects</span
+                        ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+                      </summary>
+                      <div class="row2-body">
+                        <ul class="chips">
+                          <li class="chip" title="GitLab: payments/payments-api">
+                            <span class="host">GL</span>Payments API
+                          </li>
+                          <li class="chip" title="GitHub: northfold/billing-service">
+                            <span class="host">GH</span>Billing service
+                          </li>
+                        </ul>
+                      </div>
+                    </details>
+                    <details class="row2">
+                      <summary>
+                        <span class="row2-l">Access</span
+                        ><span class="row2-v" title="Owner, deputy, operator, viewer"
+                          ><span class="ini ini--sm ini--owner">MI</span
+                          ><span class="ini ini--sm ini--deputy">IS</span
+                          ><span class="ini ini--sm ini--operator">OK</span
+                          ><span class="ini ini--sm ini--viewer">DO</span></span
+                        ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+                      </summary>
+                      <div class="row2-body">
+                        <ul class="people">
+                          <li title="Maria Ivanova">
+                            <span class="ini ini--owner">MI</span><span class="role">Owner</span>
+                          </li>
+                          <li title="Ilya Smirnov, deputy until 3 Nov 2026">
+                            <span class="ini ini--deputy">IS</span
+                            ><span class="role">Deputy<span class="until">until 3 Nov</span></span>
+                          </li>
+                          <li title="Olga Kim">
+                            <span class="ini ini--operator">OK</span
+                            ><span class="role">Operator</span>
+                          </li>
+                          <li title="Daniil Orlov">
+                            <span class="ini ini--viewer">DO</span><span class="role">Viewer</span>
+                          </li>
+                        </ul>
+                      </div>
+                    </details>
+                    <details class="row2">
+                      <summary>
+                        <span class="row2-l">Cost</span
+                        ><span class="row2-v"
+                          ><b class="w-500">$112.40</b
+                          ><span class="meter meter--inline" aria-hidden="true"
+                            ><span style="width: 45%"></span></span
+                          ><span class="ink-3">of $250</span></span
+                        ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+                      </summary>
+                      <div class="row2-body">
+                        <p class="cost-row">
+                          <span class="cost-v">$112.40</span
+                          ><span class="ink-3">of $250 this month</span>
+                        </p>
+                        <div
+                          class="meter"
+                          role="meter"
+                          aria-label="Spent this month"
+                          aria-valuemin="0"
+                          aria-valuemax="250"
+                          aria-valuenow="112.4"
+                          title="45% of the monthly budget"
+                        >
+                          <span style="width: 45%"></span>
+                        </div>
+                        <p class="cost-sub">
+                          <span>$2.40–$6.10 per task</span><span class="ink-3">38 runs</span>
+                        </p>
+                      </div>
+                    </details>
+                    <details class="row2">
+                      <summary>
+                        <span class="row2-l">Knows</span
+                        ><span class="row2-v"
+                          >4 skills<span class="ink-3 lockline"
+                            ><svg class="ico" aria-hidden="true"><use href="#i-lock" /></svg>1
+                            private</span
+                          ></span
+                        ><svg class="ico" aria-hidden="true"><use href="#i-chevron" /></svg>
+                      </summary>
+                      <div class="row2-body">
+                        <ul class="chips">
+                          <li class="chip">Test-driven fix<span class="chip-v">1.4.0</span></li>
+                          <li class="chip">
+                            Conventional commits<span class="chip-v">2.0.1</span>
+                          </li>
+                          <li class="chip">Drizzle migrations<span class="chip-v">1.1.0</span></li>
+                          <li class="chip" title="Private skill of Maria Ivanova">
+                            <svg class="ico" aria-hidden="true"><use href="#i-lock" /></svg>Payments
+                            domain<span class="chip-v">0.9.2</span>
+                          </li>
+                        </ul>
+                      </div>
+                    </details>
+                  </div>
+
+                  <div class="sheet-ws">
+                    <button class="btn btn--secondary" type="button">Preview workspace</button>
+                    <p>CLAUDE.md, 4 skills, 11 tools and 3 memory documents go into each run.</p>
+                  </div>
+                  <div class="sheet-foot">
+                    <button class="btn btn--quiet" type="button">Transfer ownership</button>
+                    <button class="btn btn--quiet" type="button">Archive</button>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script>
+      // Theme switch: Light, Dark or System. Saved per viewer; the page works without storage.
+      (function () {
+        var root = document.documentElement;
+        var buttons = document.querySelectorAll('[data-theme-set]');
+        function current() {
+          var t = root.getAttribute('data-theme');
+          return t === 'light' || t === 'dark' ? t : 'system';
+        }
+        function mark() {
+          var mode = current();
+          buttons.forEach(function (b) {
+            b.setAttribute('aria-pressed', String(b.getAttribute('data-theme-set') === mode));
+          });
+        }
+        buttons.forEach(function (b) {
+          b.addEventListener('click', function () {
+            var mode = b.getAttribute('data-theme-set');
+            if (mode === 'system') root.removeAttribute('data-theme');
+            else root.setAttribute('data-theme', mode);
+            try {
+              localStorage.setItem('agentome-preview-theme', mode);
+            } catch (e) {}
+            mark();
+          });
+        });
+        mark();
+      })();
+
+      // Agent sheet variant: V1 Pass or V2 Compact rail. ?sheet=v2 opens the second one.
+      (function () {
+        var app = document.querySelector('.app');
+        var buttons = document.querySelectorAll('[data-sheet-set]');
+        function apply(v) {
+          app.setAttribute('data-sheet', v);
+          buttons.forEach(function (b) {
+            b.setAttribute('aria-pressed', String(b.getAttribute('data-sheet-set') === v));
+          });
+        }
+        var v = null;
+        try {
+          v = new URLSearchParams(location.search).get('sheet');
+        } catch (e) {}
+        apply(v === 'v2' ? 'v2' : 'v1');
+        buttons.forEach(function (b) {
+          b.addEventListener('click', function () {
+            apply(b.getAttribute('data-sheet-set'));
+          });
+        });
+      })();
+
+      // Select: our own listbox, the way Radix Select behaves. Click or arrow keys open it, Enter picks, Escape closes.
+      (function () {
+        var selects = Array.prototype.slice.call(document.querySelectorAll('[data-cselect]'));
+        function parts(sel) {
+          return { t: sel.querySelector('.cselect-trigger'), p: sel.querySelector('.cselect-pop') };
+        }
+        function opts(p) {
+          return Array.prototype.slice.call(p.querySelectorAll('[role="option"]'));
+        }
+        function activate(p, o) {
+          opts(p).forEach(function (x) {
+            x.classList.toggle('is-active', x === o);
+          });
+          if (o) p.setAttribute('aria-activedescendant', o.id);
+        }
+        function close(sel, focus) {
+          var x = parts(sel);
+          x.p.hidden = true;
+          x.t.setAttribute('aria-expanded', 'false');
+          if (focus) x.t.focus();
+        }
+        function open(sel) {
+          selects.forEach(function (o) {
+            if (o !== sel) close(o);
+          });
+          var x = parts(sel);
+          x.p.hidden = false;
+          x.t.setAttribute('aria-expanded', 'true');
+          activate(x.p, x.p.querySelector('[aria-selected="true"]') || opts(x.p)[0]);
+          x.p.focus();
+        }
+        function choose(sel, o) {
+          var x = parts(sel);
+          opts(x.p).forEach(function (y) {
+            y.setAttribute('aria-selected', String(y === o));
+          });
+          sel.querySelector('.cselect-value').textContent = o.getAttribute('data-label');
+          close(sel, true);
+        }
+        selects.forEach(function (sel) {
+          var x = parts(sel);
+          x.t.addEventListener('click', function () {
+            if (x.p.hidden) open(sel);
+            else close(sel, true);
+          });
+          x.t.addEventListener('keydown', function (e) {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+              e.preventDefault();
+              open(sel);
+            }
+          });
+          x.p.addEventListener('click', function (e) {
+            var o = e.target.closest('[role="option"]');
+            if (o) choose(sel, o);
+          });
+          x.p.addEventListener('mousemove', function (e) {
+            var o = e.target.closest('[role="option"]');
+            if (o) activate(x.p, o);
+          });
+          x.p.addEventListener('keydown', function (e) {
+            var list = opts(x.p),
+              i = list.indexOf(x.p.querySelector('.is-active'));
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              activate(x.p, list[Math.min(i + 1, list.length - 1)]);
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              activate(x.p, list[Math.max(i - 1, 0)]);
+            } else if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              if (list[i]) choose(sel, list[i]);
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              close(sel, true);
+            } else if (e.key === 'Tab') {
+              close(sel, false);
+            }
+          });
+        });
+        document.addEventListener('pointerdown', function (e) {
+          selects.forEach(function (sel) {
+            if (!sel.contains(e.target)) close(sel, false);
+          });
+        });
+      })();
+
+      // Section anchors follow the scroll position, like the product's editor.
+      (function () {
+        var links = Array.prototype.slice.call(document.querySelectorAll('.anchor'));
+        var sections = links.map(function (a) {
+          return document.querySelector(a.getAttribute('href'));
+        });
+        function update() {
+          var offset = 93 + 40;
+          var active = 0;
+          sections.forEach(function (s, i) {
+            if (s && s.getBoundingClientRect().top - offset <= 0) active = i;
+          });
+          links.forEach(function (a, i) {
+            if (i === active) a.setAttribute('aria-current', 'true');
+            else a.removeAttribute('aria-current');
+          });
+        }
+        window.addEventListener('scroll', update, { passive: true });
+        update();
+      })();
+    </script>
+  </body>
+</html>

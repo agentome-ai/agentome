@@ -1,0 +1,34 @@
+# HTTPS at the address people open. The host comes from AGENTOME_PUBLIC_URL in
+# kustomization.yaml, so the two cannot differ; agentome.example.com here is replaced.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: agentome
+  labels:
+    app.kubernetes.io/name: agentome
+  annotations:
+    # For ingress-nginx, which takes request bodies up to 1 MB by default: a `git push`
+    # through the server and the events a computer sends about a run are larger. The server
+    # sets its own limits. Other controllers ignore this; give them the same.
+    nginx.ingress.kubernetes.io/proxy-body-size: '0'
+    # With cert-manager, name your issuer and it fills the TLS secret below:
+    # cert-manager.io/cluster-issuer: <issuer>
+spec:
+  # The class of your Ingress controller, when the cluster has no default one.
+  # ingressClassName: nginx
+  tls:
+    - hosts:
+        - agentome.example.com
+      # The certificate and key for the host, as a kubernetes.io/tls Secret.
+      secretName: agentome-tls
+  rules:
+    - host: agentome.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: agentome
+                port:
+                  name: http

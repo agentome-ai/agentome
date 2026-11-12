@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.env*
+!.env.example
+.data/
+.claude/settings.local.json
+.DS_Store
+*.log
+.claude/worktrees/
+apps/site/public/install.sh
+apps/web/e2e/site-record/
+apps/web/site-record/

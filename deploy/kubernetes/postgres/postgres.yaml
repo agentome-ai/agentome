@@ -1,0 +1,104 @@
+# PostgreSQL 16 for Agentome alone, with its data on a volume of its own. Only pods in the
+# namespace reach it, by the name `postgres`; the password is PGPASSWORD of the Secret
+# `agentome`, which PostgreSQL applies only when it creates the volume.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: agentome
+spec:
+  # Headless: the name resolves to the pod itself, as a StatefulSet expects.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: agentome
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: agentome
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+      app.kubernetes.io/part-of: agentome
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: agentome
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # The image's own `postgres` user (uid and gid 70), so nothing runs as root.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              value: agentome
+            - name: POSTGRES_DB
+              value: agentome
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agentome
+                  key: PGPASSWORD
+            # A folder below the mount: a fresh volume often holds lost+found, and initdb
+            # wants an empty directory.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          # Over TCP: the socket answers already while the temporary server of initdb runs.
+          readinessProbe:
+            exec:
+              command: [pg_isready, -h, 127.0.0.1, -U, agentome, -d, agentome]
+            periodSeconds: 10
+            timeoutSeconds: 3
+          # No liveness probe: PostgreSQL exits on a fatal error by itself, and a probe that
+          # restarts it during a long recovery would only start the recovery again.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: postgres
+          app.kubernetes.io/part-of: agentome
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 10Gi
