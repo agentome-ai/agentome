@@ -91,6 +91,64 @@ describe('the projects list', () => {
     ).toBe('true');
   });
 
+  it("shows its devcontainer's services, and an admin approves exactly that list", async () => {
+    const environment = {
+      repository: 'https://github.com/acme/payments',
+      devcontainer: '.devcontainer/devcontainer.json',
+      services: [{ name: 'db', image: 'postgres:16', environment: {}, volumes: [] }],
+      problems: ['mail: left out, it asks for privileged'],
+      readAt: new Date().toISOString(),
+      hash: 'c'.repeat(64),
+      approved: false,
+    };
+    const withServices = {
+      ...view,
+      repositories: ['https://github.com/acme/payments'],
+      environment,
+    };
+    const { user, calls } = open('/projects/p1', {
+      'GET /api/projects/p1': withServices,
+      'POST /api/projects/p1/environment/approve': {
+        ...withServices,
+        environment: { ...environment, approved: true },
+      },
+    });
+    const list = await screen.findByRole('list', { name: 'Services' });
+    expect(within(list).getByText('postgres:16')).toBeTruthy();
+    expect(screen.getByText('mail: left out, it asks for privileged')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Approve services' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Approve these services?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Approve services' }));
+    expect(
+      calls.find((call) => call.route === 'POST /api/projects/p1/environment/approve')?.body,
+    ).toEqual({ hash: 'c'.repeat(64) });
+    expect(await screen.findByText(/^Approved: people’s places run these/)).toBeTruthy();
+  });
+
+  it('offers a member no approval of the services', async () => {
+    open(
+      '/projects/p1',
+      {
+        'GET /api/projects/p1': {
+          ...view,
+          repositories: ['https://github.com/acme/payments'],
+          environment: {
+            repository: 'https://github.com/acme/payments',
+            devcontainer: '.devcontainer/devcontainer.json',
+            services: [{ name: 'db', image: 'postgres:16', environment: {}, volumes: [] }],
+            problems: [],
+            readAt: new Date().toISOString(),
+            hash: 'c'.repeat(64),
+            approved: false,
+          },
+        },
+      },
+      member,
+    );
+    await screen.findByRole('list', { name: 'Services' });
+    expect(screen.queryByRole('button', { name: 'Approve services' })).toBeNull();
+  });
+
   it('sets the project’s monthly limit from its chip', async () => {
     const { user, calls } = open('/projects/p1', {
       'GET /api/projects/p1': view,

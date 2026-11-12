@@ -94,7 +94,12 @@ const Env = z.object({
   AGENTOME_SETUP_ADMIN_PASSWORD_FILE: z.string().optional(),
   AGENTOME_SETUP_ORG_NAME: z.string().trim().min(1).default('Agentome'),
   // Behind a reverse proxy: take the client's address from X-Forwarded-For.
-  AGENTOME_TRUST_PROXY: z.stringbool().default(false),
+  // `true` is the one proxy in front, as compose and the manifests have it: the client's address
+  // is the last one that proxy added. A number trusts that many proxies; `false`, none.
+  AGENTOME_TRUST_PROXY: z
+    .union([z.stringbool(), z.coerce.number().int().min(1).max(10)])
+    .default(false)
+    .transform((value) => (value === true ? 1 : value)),
   // Sign-in with the company's Keycloak: the realm's address, as its issuer, and the
   // client Agentome is in it.
   AGENTOME_KEYCLOAK_ISSUER: z
@@ -103,6 +108,14 @@ const Env = z.object({
     .transform((value) => value?.replace(/\/$/, '')),
   AGENTOME_KEYCLOAK_CLIENT_ID: z.string().trim().min(1).optional(),
   AGENTOME_KEYCLOAK_CLIENT_SECRET: z.string().trim().min(1).optional(),
+  // The place launcher (`agentome place-launcher`): with it, people make their own place on
+  // the server from Computers. Unset, there are no places.
+  AGENTOME_PLACE_LAUNCHER_URL: z
+    .url({ protocol: /^https?$/ })
+    .optional()
+    .transform((value) => value?.replace(/\/$/, '')),
+  // The launcher's: the seat image a place runs, when not this release's.
+  AGENTOME_PLACE_IMAGE: z.string().trim().min(1).optional(),
   // Admin's browser asks GitHub once a day whether a newer release is out; off for an
   // installation whose people must not reach outside.
   AGENTOME_UPDATE_CHECK: z.stringbool().default(true),
@@ -160,10 +173,37 @@ export function loadConfig(env: Record<string, string | undefined>) {
     keycloak: readKeycloak(values),
     updateCheck: values.AGENTOME_UPDATE_CHECK,
     build: { version: values.AGENTOME_BUILD_VERSION, commit: values.AGENTOME_BUILD_COMMIT },
+    placeLauncherUrl: values.AGENTOME_PLACE_LAUNCHER_URL,
   };
 }
 
 export type Config = ReturnType<typeof loadConfig>;
+
+const LauncherEnv = Env.pick({
+  AGENTOME_DATA_DIR: true,
+  AGENTOME_SECRET_KEY: true,
+  AGENTOME_SECRET_KEY_FILE: true,
+  AGENTOME_PLACE_IMAGE: true,
+  AGENTOME_BUILD_VERSION: true,
+});
+
+/**
+ * What the place launcher reads: the installation's key, which the app made at its first start
+ * (the launcher reads it and never makes one), and the seat image of this release.
+ */
+export function loadLauncherConfig(env: Record<string, string | undefined>) {
+  const values = parse(LauncherEnv, env);
+  const dataDir = resolve(values.AGENTOME_DATA_DIR);
+  const keyFile = values.AGENTOME_SECRET_KEY_FILE ?? join(dataDir, 'secrets', 'secret.key');
+  if (values.AGENTOME_SECRET_KEY === undefined && !existsSync(keyFile)) {
+    throw new ConfigError(`The installation's key is not in ${keyFile} yet: start the app first.`);
+  }
+  const version = values.AGENTOME_BUILD_VERSION ?? 'latest';
+  return {
+    secretKey: values.AGENTOME_SECRET_KEY ?? readKeyFile(resolve(keyFile), 'AGENTOME_DATA_DIR'),
+    image: values.AGENTOME_PLACE_IMAGE ?? `docker.io/agentome/agentome-seat:${version}`,
+  };
+}
 
 /** The database and the data directory only, for the CLI. */
 export function loadStorageConfig(env: Record<string, string | undefined>) {

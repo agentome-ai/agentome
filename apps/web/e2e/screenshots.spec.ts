@@ -890,6 +890,25 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
+// A project's services from its devcontainer, and an admin approving them.
+for (const theme of ['light', 'dark'] as const) {
+  test(`project services ${theme}`, async ({ page }) => {
+    await page.addInitScript((value) => localStorage.setItem('agentome-theme', value), theme);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await mockApi(page);
+    await page.goto('/projects/p1');
+    const services = page.getByRole('list', { name: 'Services' });
+    await services.getByText('postgres:16-alpine').waitFor();
+    await services.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(300);
+    await shoot(page, `project-services-${theme}-1280`);
+    await page.getByRole('button', { name: 'Approve services' }).click();
+    await page.getByRole('dialog', { name: 'Approve these services?' }).waitFor();
+    await settle(page);
+    await shoot(page, `project-services-approve-${theme}-1280`);
+  });
+}
+
 // A project's repositories, and New task starting in the agent's main one.
 for (const theme of ['light', 'dark'] as const) {
   test(`project repositories ${theme}`, async ({ page }) => {

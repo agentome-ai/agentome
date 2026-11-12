@@ -9,7 +9,13 @@ import { posix, win32 } from 'node:path';
 // has allowed it to run them without one (Admin, Computers).
 
 /** Whether this computer runs the agent's commands without a sandbox: Windows has none. */
-export const unsandboxed = (platform: NodeJS.Platform = process.platform) => platform === 'win32';
+export const unsandboxed = (
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+) =>
+  // A person's place on the server: the CLIs' sandbox cannot be made in an unprivileged
+  // container, and the container, the platform's, is the boundary.
+  platform === 'win32' || env.AGENTOME_WORKER_PLACE?.trim() === '1';
 
 /**
  * How a CLI is started: as the leader of a process group of its own, so that a stop reaches what
@@ -66,7 +72,11 @@ export function cliCommand(
     env.USERPROFILE && win32.join(env.USERPROFILE, '.local', 'bin'),
     env.APPDATA && win32.join(env.APPDATA, 'npm'),
   ];
-  for (const dir of [...path, ...home].filter((entry): entry is string => !!entry)) {
+  // Only absolute folders: a relative entry, `.` say, is the working directory, which is the
+  // task's repository for git and would run a program the repository holds.
+  for (const dir of [...path, ...home].filter(
+    (entry): entry is string => !!entry && win32.isAbsolute(entry),
+  )) {
     const exe = win32.join(dir, `${name}.exe`);
     if (exists(exe)) return [exe];
     const cmd = win32.join(dir, `${name}.cmd`);

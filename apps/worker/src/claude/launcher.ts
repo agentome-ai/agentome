@@ -35,7 +35,8 @@ export type ClaudePermissionMode = (typeof PERMISSION_MODES)[number];
 const INHERITED_VARS = new Set([
   ...['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR', 'TZ'],
   ...['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy'],
-  ...['no_proxy', 'all_proxy', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR'],
+  ...['no_proxy', 'all_proxy', 'NODE_USE_ENV_PROXY'],
+  ...['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR'],
   ...['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR'],
 ]);
 /** The switches of the test double (fixtures/fake-claude.mjs); the real CLI reads none. */
@@ -213,9 +214,11 @@ function claudeArgs(options: ClaudeRunOptions, resume: string | undefined): stri
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
   // The task's repository is an untrusted source of settings: `-p` skips the trust dialog, so
   // its `.claude/settings*.json` (hooks, `apiKeyHelper`) and `.mcp.json` would run on the
-  // computer. Always, with no way to turn it off: settings come only from the profile
-  // (`--settings`), MCP servers only from the platform's `--mcp-config`.
-  args.push('--setting-sources', 'user', '--strict-mcp-config');
+  // computer. Nor are the person's own settings the agent's: their allowed tools, sandbox
+  // exclusions, hooks and plugins would loosen the run. None of the three sources, then: settings
+  // come only from the profile (`--settings`), MCP servers only from the platform's
+  // `--mcp-config`. The sign-in is the keychain's or its file's, not a setting.
+  args.push('--setting-sources', '', '--strict-mcp-config');
   // The transcript lives on the platform: the CLI's own copy under ~/.claude/projects would be
   // the agent's state left on the computer.
   args.push('--no-session-persistence');
@@ -387,6 +390,13 @@ export async function runClaude(
           // The agent's memory is on the platform (memory_write); the CLI's own would stay on
           // the computer, out of the owner's sight.
           CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
+          // The person's own git config is theirs, and on a computer their home folder is closed
+          // to the agent's commands: git that cannot read ~/.gitconfig stops dead. The clone's
+          // own config is what its git uses, as Codex's has it.
+          GIT_CONFIG_GLOBAL: '/dev/null',
+          GIT_CONFIG_COUNT: '1',
+          GIT_CONFIG_KEY_0: 'core.excludesFile',
+          GIT_CONFIG_VALUE_0: '/dev/null',
           // A team member's assignment returns its report, so the team hook knows it reported;
           // in the background the lead would learn of it later, and the hook not at all.
           ...(options.agents ? { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' } : {}),

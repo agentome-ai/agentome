@@ -171,7 +171,7 @@ describe('the agent editor', () => {
       },
     });
     await screen.findByRole('heading', { level: 1, name: 'Payments backend' });
-    await user.click(await screen.findByRole('radio', { name: 'Server' }));
+    await user.click(await screen.findByRole('radio', { name: 'By itself' }));
     await user.click(screen.getByRole('combobox', { name: 'Model connection' }));
     await user.click(await screen.findByRole('option', { name: 'OpenRouter' }));
     await user.click(screen.getByRole('combobox', { name: 'Model' }));
@@ -738,8 +738,8 @@ describe('the policy matrix', () => {
         "An agent's quality needs a license key.",
       ),
     });
-    expect(await screen.findByText(/Agents on the server need a license key/)).toBeTruthy();
-    expect(screen.getByRole('radio', { name: 'Server' })).toHaveProperty('disabled', true);
+    expect(await screen.findByText(/Agents that work by themselves need a license key/)).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'By itself' })).toHaveProperty('disabled', true);
     expect(screen.getByRole('textbox', { name: 'Monthly limit, USD' })).toHaveProperty(
       'disabled',
       true,

@@ -31,7 +31,8 @@ const OUTPUT_CHARS = 4_000;
 const INHERITED_VARS = new Set([
   ...['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR', 'TZ'],
   ...['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy'],
-  ...['no_proxy', 'all_proxy', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR'],
+  ...['no_proxy', 'all_proxy', 'NODE_USE_ENV_PROXY'],
+  ...['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR'],
   'CODEX_HOME',
 ]);
 /** The test double's switches (fixtures/fake-codex.mjs); the real CLI reads none. */

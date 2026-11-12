@@ -23,6 +23,9 @@ export const ENGINES: Record<string, { name: string; signIn: string }> = {
 export const WAITS_FOR_SANDBOX =
   "Windows has no sandbox for the agent's commands: this computer takes runs once an admin allows it to run them without one, in Admin, Computers.";
 
+export const WAITS_FOR_OWNER =
+  "its owner is not at work in Agentome: this place takes their agents' runs while a tab of Agentome is open and in use.";
+
 export const DISCONNECTED =
   'This computer was disconnected; connect it again with a new code from Admin, Computers: agentome-worker connect <code> --server <url>';
 
@@ -61,8 +64,10 @@ async function work(
 ): Promise<'stopped' | 'disconnected'> {
   const { connection, settings, signal, log } = options;
   const { home, keepWorkspaces: keepWorkspace } = settings;
-  // A server seat has no keyboard to wait for: it is always there.
-  const idle = settings.server ? async () => 0 : (options.idle ?? (() => idleMs()));
+  // A server seat has no keyboard to wait for: it is always there. A person's place has none
+  // either: the server gives it a run only while its owner is at work, by the web app.
+  const idle =
+    settings.server || settings.place ? async () => 0 : (options.idle ?? (() => idleMs()));
   const delay = options.backoff ?? backoff;
   // A worker that was killed leaves its run's folder behind; one still alive needs its.
   const previous = readState(home)?.pid;
@@ -127,6 +132,8 @@ async function work(
   };
   // The environment's value until the server names the owner's (with every claim answer).
   let idleMinutes = settings.idleMinutes;
+  let waitingForOwner = false;
+  let waitingForServices = false;
   let failures = 0;
   while (!signal.aborted) {
     // An idle time that cannot be read counts as somebody being there (presence.ts).
@@ -149,6 +156,15 @@ async function work(
       await askSignIn();
       const answer = await client.claim(signal, engines, options.build, signedOut);
       launch = answer.launch;
+      if ((answer.waitsForOwner === true) !== waitingForOwner) {
+        waitingForOwner = answer.waitsForOwner === true;
+        if (waitingForOwner) log('info', WAITS_FOR_OWNER);
+        else log('info', 'its owner is at work again; taking runs');
+      }
+      if ((answer.waitsForServices === true) !== waitingForServices) {
+        waitingForServices = answer.waitsForServices === true;
+        if (waitingForServices) log('info', "the next run's services are starting beside it");
+      }
       if ((answer.waitsForSandbox === true) !== (state.waitsForSandbox === true)) {
         if (answer.waitsForSandbox) log('warn', WAITS_FOR_SANDBOX);
         save({ waitsForSandbox: answer.waitsForSandbox });
@@ -183,6 +199,7 @@ async function work(
       home,
       keepWorkspace,
       server: settings.server,
+      place: settings.place,
       ...options.run,
     };
     const status = await executeRun(launch, deps);

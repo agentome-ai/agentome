@@ -4,7 +4,8 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { IdParams } from '../protocol.js';
 import { repositoryProblem } from '../routes/tasks.js';
-import { Name, Text } from '../routes/validators.js';
+import { HostPattern, Name, Text } from '../routes/validators.js';
+import { AppError } from '../errors.js';
 import { agentFor } from '../agents/service.js';
 import {
   assignAgent,
@@ -18,6 +19,8 @@ import {
   updateProject,
 } from './service.js';
 import { requireEnterprise } from '../license/service.js';
+import { ServiceSpec } from './devcontainer.js';
+import { approveEnvironment, readProjectEnvironment } from './environment.js';
 
 const Iso = z.iso.datetime();
 const Markdown = Text(100_000);
@@ -81,6 +84,21 @@ const ProjectView = ProjectSummary.extend({
   goals: z.string(),
   // The first is the main one: what a task gets when nobody names another.
   repositories: z.array(z.string()),
+  // What a run in a place on the server may reach past Agentome and the model vendors.
+  allowedHosts: z.array(z.string()),
+  // What its main repository's devcontainer asks to run next to an agent in a place.
+  environment: z
+    .object({
+      repository: z.string(),
+      devcontainer: z.string().nullable(),
+      services: z.array(ServiceSpec),
+      problems: z.array(z.string()),
+      readAt: Iso,
+      hash: z.string(),
+      // Whether an admin let this list of services run.
+      approved: z.boolean(),
+    })
+    .nullable(),
   agents: z.array(
     z.object({
       id: z.uuid(),
@@ -104,7 +122,10 @@ const ProjectView = ProjectSummary.extend({
 });
 const Membership = z.object({ id: z.uuid(), agentId: z.uuid() });
 
-export const projectRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }) => {
+export const projectRoutes: FastifyPluginAsyncZod<{ db: Db; key: Buffer }> = async (
+  app,
+  { db, key },
+) => {
   app.get(
     '/api/projects',
     {
@@ -156,13 +177,15 @@ export const projectRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db
       onRequest: app.requireSession,
       schema: {
         summary:
-          "Changes a project. repositories replaces the list, main one first; each must fall under a code-host connection of the project. teamId names the team that takes the project's tasks (its agents join the project); intake auto has its lead take a new task at once",
+          "Changes a project. repositories replaces the list, main one first; each must fall under a code-host connection of the project. teamId names the team that takes the project's tasks (its agents join the project); intake auto has its lead take a new task at once; allowedHosts (an admin's) are what its runs in places on the server may reach",
         params: IdParams,
         body: z.object({
           name: Name.optional(),
           description: Markdown.optional(),
           goals: Markdown.optional(),
           repositories: Repositories.optional(),
+          // The hosts a run in a place on the server may reach: names, *.suffix or IPv4. An admin's.
+          allowedHosts: z.array(HostPattern).max(100).optional(),
           teamId: z.uuid().nullable().optional(),
           intake: z.enum(projectIntakeEnum.enumValues).optional(),
           // What the runs of its tasks may cost in a calendar month; null is no limit.
@@ -178,13 +201,57 @@ export const projectRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db
     },
     async (request) => {
       await requireProjectEditor(db, request.params.id, request.user);
+      // The hosts open the company's network to the agents: an admin's call, like connections.
+      if (request.body.allowedHosts && request.user.role !== 'admin') {
+        throw new AppError('forbidden', 'Only an admin changes the hosts a project may reach');
+      }
       if (request.body.usdPerMonth != null) await requireEnterprise(db, 'budgets');
       if (request.body.teamId) await requireOwnTeam(db, request.body.teamId, request.user);
       // A person names only their own agent as the reviewer, as they put only their own on it.
       if (request.body.reviewerAgentId && request.user.role !== 'admin') {
         await agentFor(db, request.body.reviewerAgentId, request.user.id);
       }
-      return updateProject(db, request.params.id, request.body);
+      const changed = await updateProject(db, request.params.id, request.body);
+      // Another main repository may ask for other services.
+      if (request.body.repositories === undefined) return changed;
+      await readProjectEnvironment(db, key, request.params.id);
+      return projectView(db, request.params.id);
+    },
+  );
+
+  app.post(
+    '/api/projects/:id/environment',
+    {
+      onRequest: app.requireSession,
+      schema: {
+        summary:
+          "Reads the services the project's main repository asks for in its devcontainer (.devcontainer/devcontainer.json and the compose files it names) from its default branch. Only services that run an image as it is come through; what is left out is in problems. A changed list needs an admin's approval before places run it",
+        params: IdParams,
+        response: { 200: ProjectView },
+      },
+    },
+    async (request) => {
+      await requireProjectEditor(db, request.params.id, request.user);
+      await readProjectEnvironment(db, key, request.params.id);
+      return projectView(db, request.params.id);
+    },
+  );
+
+  app.post(
+    '/api/projects/:id/environment/approve',
+    {
+      onRequest: app.requireAdmin,
+      schema: {
+        summary:
+          "Lets the project's services run in people's places on the server: give the hash of the list you read, which is refused if the list has changed since. The images are the repository's, run on the company's server",
+        params: IdParams,
+        body: z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/) }),
+        response: { 200: ProjectView },
+      },
+    },
+    async (request) => {
+      await approveEnvironment(db, request.params.id, request.body.hash);
+      return projectView(db, request.params.id);
     },
   );
 

@@ -11,9 +11,14 @@ import { isWorking, LIVE_RUN_STATUSES } from '../runs/service.js';
 
 export type Policy = 'allow' | 'ask' | 'deny';
 
-/** What every agent gets until its own policy says otherwise: what others read first waits. */
+/**
+ * What every agent gets until its own policy says otherwise: what others read first waits, as
+ * whatever the agent writes outside the platform could carry what it read. Inside it (a task's
+ * comments, the agent's memory) everything is kept and shown, version by version.
+ */
 const DEFAULTS: Record<string, Policy> = {
   code_host_open_change_request: 'ask',
+  code_host_reply_to_review: 'ask',
   jira_add_comment: 'ask',
 };
 

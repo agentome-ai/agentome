@@ -4,6 +4,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { Config } from '../config.js';
 import { AppError } from '../errors.js';
+import { browserOnly } from '../auth.js';
 import { IdParams } from '../protocol.js';
 import { pollConnection } from '../jira/poll.js';
 import { connectionsKey } from './crypto.js';
@@ -79,6 +80,8 @@ export const connectionRoutes: FastifyPluginAsyncZod<{ db: Db; config: Config }>
       },
     },
     async (request, reply) => {
+      // Secrets come in and go out of the browser's session only, never a token's.
+      browserOnly(request);
       const view = await createConnection(db, key, request.user.id, request.body);
       return reply.code(201).send(view);
     },
@@ -104,7 +107,10 @@ export const connectionRoutes: FastifyPluginAsyncZod<{ db: Db; config: Config }>
         response: { 200: Connection },
       },
     },
-    (request) => updateConnection(db, key, request.params.id, request.body),
+    (request) => {
+      browserOnly(request);
+      return updateConnection(db, key, request.params.id, request.body);
+    },
   );
 
   app.delete(
@@ -158,6 +164,9 @@ export const connectionRoutes: FastifyPluginAsyncZod<{ db: Db; config: Config }>
         response: { 200: z.object({ url: z.url(), secret: z.string() }) },
       },
     },
-    (request) => webhookSettings(db, key, request.params.id, config.publicUrl),
+    (request) => {
+      browserOnly(request);
+      return webhookSettings(db, key, request.params.id, config.publicUrl);
+    },
   );
 };

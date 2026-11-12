@@ -23,6 +23,7 @@ import * as M from '../ui/dropdown-menu';
 import { Field, FormError } from '../ui/field';
 import { Textarea } from '../ui/input';
 import { Markdown } from '../ui/markdown';
+import { CallArguments } from './call-arguments';
 import { StatusMarker } from '../ui/status';
 import { AgentTile } from '../ui/tint';
 import { AnswerForm, questionOf } from './answer-form';
@@ -118,8 +119,8 @@ export function ApprovalsPage() {
       if (key === 'j' || key === 'k') {
         const next = list[Math.min(list.length - 1, Math.max(0, index + (key === 'j' ? 1 : -1)))];
         if (next) setPicked(next.id);
-      } else if (current.tool !== 'ask_owner' && key === 'a') void approve(current);
-      else if (current.tool !== 'ask_owner' && key === 'd') setDenying(current);
+        // No key approves: an approval is a click on the button under what it sends.
+      } else if (current.tool !== 'ask_owner' && key === 'd') setDenying(current);
       else return;
       event.preventDefault();
     };
@@ -162,12 +163,10 @@ export function ApprovalsPage() {
                 key={call.id}
                 call={call}
                 current={call.id === current.id}
-                pending={pending === call.id}
                 onPick={() => {
                   setPicked(call.id);
                   setOpened(true);
                 }}
-                onApprove={() => void approve(call)}
                 onDeny={() => setDenying(call)}
               />
             ))}
@@ -222,14 +221,7 @@ function headlineOf(call: Approval) {
     : { text: words.action, refs: words.refs };
 }
 
-function Item(props: {
-  call: Approval;
-  current: boolean;
-  pending: boolean;
-  onPick: () => void;
-  onApprove: () => void;
-  onDeny: () => void;
-}) {
+function Item(props: { call: Approval; current: boolean; onPick: () => void; onDeny: () => void }) {
   const { call } = props;
   const kind = kindOf(call);
   const line = headlineOf(call);
@@ -265,7 +257,8 @@ function Item(props: {
           </span>
         </span>
       </button>
-      {/* On a phone a step is decided in the list; a question needs the room of its own page. */}
+      {/* On a phone a step is denied in the list; it is approved only on its own page, under
+          what it sends, and a question needs that page's room too. */}
       <span className="relative col-start-2 mt-2 flex gap-2 md:hidden">
         {question ? (
           <Button className="flex-1" onClick={props.onPick}>
@@ -276,8 +269,8 @@ function Item(props: {
             <Button className="flex-1" onClick={props.onDeny}>
               Deny
             </Button>
-            <Button className="flex-1" variant="decision" onClick={props.onApprove}>
-              {props.pending ? 'Approving…' : 'Approve'}
+            <Button className="flex-1" variant="decision" onClick={props.onPick}>
+              Review
             </Button>
           </>
         )}
@@ -300,15 +293,6 @@ function Detail(props: {
   const words = describe(call);
   const question = call.tool === 'ask_owner';
   const kind = kindOf(call);
-  const input =
-    call.input && typeof call.input === 'object' ? (call.input as Record<string, unknown>) : {};
-  // The call's own arguments, those a person can read at a glance.
-  const args = Object.entries(input).filter(
-    ([key, value]) =>
-      ['string', 'number', 'boolean'].includes(typeof value) &&
-      !['title', 'description', 'body', 'question'].includes(key) &&
-      String(value).length < 120,
-  );
   return (
     <article aria-label="Request" className={split.body}>
       <div className={split.column}>
@@ -381,17 +365,7 @@ function Detail(props: {
                 )}
               </div>
             )}
-            <dl className="overflow-hidden rounded-lg border border-line">
-              {[['Tool', call.tool] as const, ...args].map(([key, value]) => (
-                <div
-                  key={key}
-                  className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-3 border-line px-3 py-2 not-first:border-t"
-                >
-                  <dt className="truncate text-ink-3">{key === 'Tool' ? 'Tool' : key}</dt>
-                  <dd className="font-mono text-[12.5px] break-all">{String(value)}</dd>
-                </div>
-              ))}
-            </dl>
+            <CallArguments tool={call.tool} input={call.input} />
             <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4.5">
               {/* One answer and its rarer form, as one button: Approve, and under its arrow the
                   approval that also stops the agent asking. Three buttons of three colours in a
@@ -433,7 +407,7 @@ function Detail(props: {
               </div>
               <Button onClick={props.onDeny}>Deny</Button>
               <p className="ml-auto flex items-center gap-1 text-small text-ink-3 max-md:hidden">
-                <Key>A</Key> approve · <Key>D</Key> deny · <Key>J</Key>
+                <Key>D</Key> deny · <Key>J</Key>
                 <Key>K</Key> next
               </p>
             </div>

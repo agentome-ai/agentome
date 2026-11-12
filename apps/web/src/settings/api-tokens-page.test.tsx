@@ -59,7 +59,7 @@ describe('Settings, API tokens', () => {
     await user.click(within(composer).getByRole('button', { name: 'Create token' }));
     expect(await within(composer).findByText('tok_shown_once')).toBeTruthy();
     expect(within(composer).getByText(/claude mcp add --transport http agentome/)).toBeTruthy();
-    expect(calls.find((call) => call.route.startsWith('POST'))?.body).toEqual({
+    expect(calls.find((call) => call.route === 'POST /api/me/tokens')?.body).toEqual({
       name: 'Claude Code',
       scope: 'write',
       expiresInDays: 30,
@@ -108,7 +108,7 @@ describe('Settings, API tokens', () => {
     await user.click(await screen.findByRole('option', { name: /Read only/ }));
     await user.click(within(composer).getByRole('button', { name: 'Create token' }));
     expect(await within(composer).findByText('tok_ci')).toBeTruthy();
-    expect(calls.find((call) => call.route.startsWith('POST'))?.body).toEqual({
+    expect(calls.find((call) => call.route === 'POST /api/me/tokens')?.body).toEqual({
       name: 'CI',
       scope: 'read',
       expiresInDays: 90,

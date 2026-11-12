@@ -114,10 +114,17 @@ async function connect(args: readonly string[], settings: Settings) {
   // A server seat's container has a random hostname: it is named for what it is.
   const name = settings.server
     ? 'Server'
-    : (hostname().replace(/\.local$/, '') || 'computer').slice(0, 100);
+    : settings.place
+      ? 'Place on the server'
+      : (hostname().replace(/\.local$/, '') || 'computer').slice(0, 100);
   let seat: { seatId: string; token: string };
   try {
-    seat = await pair(serverUrl, code, name, settings.server);
+    seat = await pair(
+      serverUrl,
+      code,
+      name,
+      settings.server ? 'server' : settings.place ? 'place' : 'computer',
+    );
   } catch (error) {
     if (error instanceof ServerError) throw new UserError(error.message);
     throw new UserError(

@@ -9,7 +9,7 @@ a short definition and a paragraph on how it relates to the rest. For a hands-on
 An **agent** is an AI employee that the company owns, in any role: what it can do comes from its
 skills and tools. It has an **owner**, a person who answers for it. It works on the **tasks** of the
 **projects** it is on, in their **repositories**. Each attempt at a task is a **run**, which happens
-on its owner's **computer** or on a **server seat**. During a run, the agent's tools go through the
+in its owner's **place** on the server or on their **computer**, or on a **server seat**. During a run, the agent's tools go through the
 **MCP gateway** and its pushes through the **git proxy**, and each tool call follows the agent's
 **policy**: allowed, asked, or denied. A call that asks waits for an **approval**. Between runs the
 agent keeps **memory**; it brings **skills** from the **library**, and reads the project's
@@ -84,7 +84,7 @@ under it. See [Projects and tasks](projects-and-tasks.md).
 
 One attempt of an agent at a task, from start to finish.
 
-A run is **Queued** until a computer or a server seat picks it up, then **Running**, possibly
+A run is **Queued** until a place, a computer or a server seat picks it up, then **Running**, possibly
 **Waiting approval** while a call waits for a person, and ends **Done**, **Failed** or
 **Cancelled**. It keeps its plan, its transcript, the tool calls it made and what it cost. It ends
 with artifacts: a report, a branch, and a merge or pull request when the agent opened one. Each run
@@ -103,6 +103,18 @@ each with a line that says what done looks like. An agent leads one team at most
 leads no team. Teams nest: put the lead of another team in a team, and its lead hands that team
 whole tasks. You arrange them by dragging on the **Teams** chart. Free allows one team; more teams,
 and nested teams, need a license key. See [Teams](teams.md).
+
+## Place
+
+A person's own container on the company's server, made by the platform, that runs their agents.
+
+A place runs the worker under the person's own Claude or ChatGPT subscription, which they sign in to
+once in its terminal in the browser. It takes runs only while the person has Agentome open and in
+use, and sleeps when nothing runs. It keeps the sign-in and each agent's working folder per
+repository between runs, runs the services a project's devcontainer lists beside the agent once an
+admin approves them, and reaches nothing outside but Agentome, the model's vendor and the hosts a
+project allows. Nothing is installed on the person's computer. See
+[Where agents run](computers.md#a-place-on-the-server).
 
 ## Computer
 
@@ -215,8 +227,9 @@ from the team's own docs without cloning them.
 ## How it fits together
 
 A person creates an agent and puts it on a project. Someone files a task in that project for the
-agent, or for a team whose lead splits it. A run starts on a connected computer of the agent's owner
-while the owner is at it, or on the server seat when the agent works by itself. The worker clones
+agent, or for a team whose lead splits it. A run starts in the place of the agent's owner, or on a
+computer they connected, while the owner is at work, or on the server seat when the agent works by
+itself. The worker clones
 the task's repository through the git proxy, and the engine works there with the instructions,
 skills and memory the platform hands it. Every tool call goes through the MCP gateway, which applies
 the agent's policy; a call that asks waits in **Approvals**. When the run ends, its report, branch

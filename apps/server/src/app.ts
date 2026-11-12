@@ -20,6 +20,8 @@ import { manageRoutes, routeCatalog } from './mcp/manage.js';
 import type { FetchLike } from './mcp/remote.js';
 import { mcpRoutes } from './mcp/routes.js';
 import { projectRoutes } from './projects/routes.js';
+import { connectionsKey } from './connections/crypto.js';
+import { addSecurityHeaders } from './headers.js';
 import { pushRoutes } from './push/routes.js';
 import { vapidKeys } from './push/service.js';
 import { errorHandler, notFoundHandler } from './errors.js';
@@ -35,6 +37,11 @@ import {
 } from './license/service.js';
 import { logRoutes } from './logs/routes.js';
 import { modelConnectionRoutes } from './models/routes.js';
+import { relayRoutes } from './models/relay.js';
+import { type Launcher, placeLauncher as placeLauncherClient } from './places/client.js';
+import { egressRoutes } from './places/egress.js';
+import { placeRoutes } from './places/routes.js';
+import websocket from '@fastify/websocket';
 import { scheduleRoutes } from './schedules/routes.js';
 import { LogSink } from './logs/sink.js';
 import { useSpanLogger } from './logs/span.js';
@@ -87,13 +94,14 @@ type BuildOptions = {
   jobs?: Jobs;
   mcpFetch?: FetchLike;
   licenseKey?: KeyObject;
+  placeLauncher?: Launcher;
 };
 
 /**
  * `workerBundle` is for the tests, which give the server a bundle of their own or none. `jobs`
  * is the process's pg-boss, which main starts after the migrations; a test starts its own.
  * `mcpFetch` lets a test reach a library MCP server or a model connection on this machine,
- * which the gateway refuses. `licenseKey` is the public key a test signs its licenses against;
+ * which the gateway refuses. `placeLauncher` is the place launcher, a test's own or none. `licenseKey` is the public key a test signs its licenses against;
  * never the environment, which would be a way around the license.
  */
 export async function buildApp(
@@ -103,6 +111,9 @@ export async function buildApp(
     jobs = createJobs(config),
     mcpFetch,
     licenseKey,
+    placeLauncher = config.placeLauncherUrl === undefined
+      ? undefined
+      : placeLauncherClient(config.placeLauncherUrl, config.secretKey),
   }: BuildOptions = {},
 ) {
   if (licenseKey) useLicenseKey(licenseKey);
@@ -114,7 +125,10 @@ export async function buildApp(
     genReqId: () => randomBytes(8).toString('hex'),
     // Behind a reverse proxy, request.ip is the client's address from X-Forwarded-For: the
     // sign-in rate limit and the sessions' addresses depend on it.
-    trustProxy: config.trustProxy,
+    trustProxy:
+      config.trustProxy === false
+        ? false
+        : (_address: string, hop: number) => hop < Number(config.trustProxy),
     // Requests Fastify rejects before routing (a malformed URL) get the same error format.
     frameworkErrors: errorHandler,
   }).withTypeProvider<ZodTypeProvider>();
@@ -130,6 +144,7 @@ export async function buildApp(
     ),
   );
   useSpanLogger(app.log);
+  addSecurityHeaders(app, { publicUrl: config.publicUrl, webDir: config.webDir });
 
   // Awaited before any route is added: the plugin documents routes as they are registered.
   await app.register(swagger, {
@@ -182,7 +197,13 @@ export async function buildApp(
   const bundle = loadWorkerBundle(workerBundle);
   const server = config.publicUrl.replace(/\/+$/, '');
   if (bundle) await app.register(connectRoutes, { bundle, server });
-  await app.register(seatRoutes, { db, config, jobs, bundle: bundle?.sha256 });
+  await app.register(seatRoutes, {
+    db,
+    config,
+    jobs,
+    bundle: bundle?.sha256,
+    placeLauncher,
+  });
   await app.register(runRoutes, { db, jobs });
   await app.register(agentRoutes, { db, config });
   await app.register(memoryRoutes, { db });
@@ -190,10 +211,19 @@ export async function buildApp(
   await app.register(mcpLibraryRoutes, { db, config, fetchImpl: mcpFetch });
   await app.register(taskRoutes, { db, config });
   await app.register(teamRoutes, { db });
-  await app.register(projectRoutes, { db });
+  await app.register(projectRoutes, { db, key: connectionsKey(config.secretKey) });
   await app.register(knowledgeRoutes, { db, config });
   await app.register(connectionRoutes, { db, config });
   await app.register(modelConnectionRoutes, { db, config, fetchImpl: mcpFetch });
+  await app.register(relayRoutes, { db, config, fetchImpl: mcpFetch });
+  // WebSockets carry one thing: the terminal of a person's place. Its frames are keystrokes.
+  await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
+  await app.register(placeRoutes, { db, launcher: placeLauncher, publicUrl: config.publicUrl });
+  await app.register(egressRoutes, {
+    db,
+    secretKey: config.secretKey,
+    publicUrl: config.publicUrl,
+  });
   await app.register(scheduleRoutes, { db });
   await app.register(mcpRoutes, { db, config, jobs, fetchImpl: mcpFetch });
   await app.register(apiTokenRoutes, { db });

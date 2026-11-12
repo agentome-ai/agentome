@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { agentFor, agentsThat, Holders } from '../agents/service.js';
 import type { Config } from '../config.js';
 import { connectionsKey, decryptSecret, encryptSecret } from '../connections/crypto.js';
+import { browserOnly } from '../auth.js';
 import { AppError } from '../errors.js';
 import {
   type FetchLike,
@@ -283,6 +284,7 @@ export const mcpLibraryRoutes: FastifyPluginAsyncZod<{
           ),
         );
       if (taken) throw new AppError('validation_failed', `You already have a server named ${name}`);
+      if (authorization) browserOnly(request);
       // Its tools are listed with the first sign-in: before it, the server lets nobody in.
       const tools =
         auth === 'oauth'
@@ -345,11 +347,28 @@ export const mcpLibraryRoutes: FastifyPluginAsyncZod<{
       },
     },
     async (request) => {
+      // Its header is a secret: it comes in through the browser's session only.
+      browserOnly(request);
       const row = await rowFor(db, request.params.id, request.user.id);
       if (row.ownerId !== request.user.id)
         throw new AppError('forbidden', 'Only its author changes a server');
       const old = specOf(row.spec);
       const { url = old.url, description = old.description, authorization } = request.body;
+      // Shared, it is everyone's agents' tool, on an admin's word for its address: only an admin
+      // moves it, or its author once it is theirs alone again.
+      if (url !== old.url && row.visibility === 'org' && request.user.role !== 'admin') {
+        throw new AppError(
+          'forbidden',
+          'This server is shared with everyone: an admin changes its address, or makes it yours alone first',
+        );
+      }
+      // Its header goes only to the address it was entered for.
+      if (url !== old.url && authorization === undefined && old.authorization) {
+        throw new AppError(
+          'validation_failed',
+          'Enter the Authorization header again for the new address, or remove it',
+        );
+      }
       if (old.auth === 'oauth') {
         if (authorization) {
           throw new AppError(

@@ -225,7 +225,7 @@ describe('creating an agent', () => {
       ['Code host', 'code_host_open_change_request', 'ask'],
       ['Code host', 'code_host_get_change_request', 'allow'],
       ['Code host', 'code_host_get_pipeline_failures', 'allow'],
-      ['Code host', 'code_host_reply_to_review', 'allow'],
+      ['Code host', 'code_host_reply_to_review', 'ask'],
       ['Task', 'task_comment', 'allow'],
       ['Memory', 'memory_read', 'allow'],
       ['Memory', 'memory_write', 'allow'],
@@ -832,7 +832,8 @@ describe('duplicate and export', () => {
     expect(sheet.name).toBe('Notes writer');
     expect(sheet.template?.name).toBe('Backend developer');
     expect(sheet.skills.map((one) => one.name)).toEqual(['release-notes']);
-    expect(sheet.tools.find((tool) => tool.name === 'jira_add_comment')?.policy).toBe('allow');
+    // The file allowed it; an imported agent starts with the defaults all the same.
+    expect(sheet.tools.find((tool) => tool.name === 'jira_add_comment')?.policy).toBe('ask');
 
     // The same text again is the skill they have; a changed one is its next version.
     const again = await call(ilya, 'POST', '/api/agents/import', file);

@@ -129,7 +129,9 @@ export async function importAgent(db: Db, ownerUserId: string, file: z.infer<typ
     modelPref: agent.modelPref,
     budget: agent.budget,
     skills: skills.map((skill) => ({ id: skill.id })),
-    tools: [...(v2?.tools ?? []), ...[...servers.values()].map((server) => ({ server }))],
+    // A file's tool policies are its author's: an imported agent starts with the defaults, and its
+    // owner allows what they mean to in Tools & policies.
+    tools: [...servers.values()].map((server) => ({ server })),
     templateId: template?.id ?? null,
   });
   return {

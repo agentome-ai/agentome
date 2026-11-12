@@ -167,14 +167,14 @@ describe('Agents', () => {
       agent: {
         name: 'Contract reviewer',
         roleTitle: 'Legal',
-        instructions: '',
+        instructions: 'Read each contract against the playbook.',
         engine: 'claude-code',
         modelPref: null,
         budget: null,
         skills: [
           { content: '---\nname: review-contract\ndescription: Reviews a contract.\n---\n' },
         ],
-        tools: [],
+        tools: [{ name: 'jira_add_comment', policy: 'allow' }],
         mcpServers: [{ name: 'docusign' }],
         template: null,
       },
@@ -206,6 +206,11 @@ describe('Agents', () => {
     await user.upload(input, new File([JSON.stringify(file)], 'contract.agent.json', json));
     expect(within(dialog).getByText('review-contract')).toBeTruthy();
     expect(within(dialog).getByText('docusign')).toBeTruthy();
+    // What it will be told, and that the file's policies stay behind, before it is imported.
+    expect(within(dialog).getByLabelText('Instructions in the file').textContent).toBe(
+      'Read each contract against the playbook.',
+    );
+    expect(within(dialog).getByText(/a file’s policies are not imported/)).toBeTruthy();
     await user.click(within(dialog).getByRole('button', { name: 'Import agent' }));
     expect(calls.find((call) => call.route === 'POST /api/agents/import')?.body).toEqual(file);
     // A server the library lacks is said before the agent opens.

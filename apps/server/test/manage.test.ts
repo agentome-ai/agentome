@@ -247,6 +247,8 @@ describe('the management MCP', () => {
         'list_templates',
         'get_project',
         'update_project',
+        'read_project_environment',
+        'approve_project_environment',
         'add_agent_to_project',
         'get_agent_memory',
         'get_agent_memory_versions',

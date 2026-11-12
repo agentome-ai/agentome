@@ -523,6 +523,8 @@ export const api: Record<string, unknown> = {
   'GET /api/teams/t1': deliveryTeam,
   'GET /api/approvals': { approvals },
   'GET /api/me': { id: 'u1', name: 'Ann Admin', email: 'ann@acme.com', role: 'admin' },
+  'POST /api/me/presence': null,
+  'GET /api/me/place': { available: false, place: null },
   'GET /api/me/tokens': {
     tokens: [
       {
@@ -802,6 +804,38 @@ export const api: Record<string, unknown> = {
       'https://github.com/northfold/ledger',
       'https://gitlab.northfold.dev/platform/settlement',
     ],
+    environment: {
+      repository: 'https://github.com/northfold/payments-api',
+      devcontainer: '.devcontainer/devcontainer.json',
+      services: [
+        {
+          name: 'db',
+          image: 'postgres:16-alpine',
+          environment: { POSTGRES_DB: 'payments', POSTGRES_PASSWORD: 'dev' },
+          volumes: [{ name: 'pgdata', target: '/var/lib/postgresql/data' }],
+        },
+        {
+          name: 'cache',
+          image: 'redis:7-alpine',
+          environment: {},
+          command: ['redis-server', '--appendonly', 'yes'],
+          volumes: [],
+        },
+        {
+          name: 'stripe-mock',
+          image: 'stripe/stripe-mock:0.188.0',
+          environment: {},
+          volumes: [],
+        },
+      ],
+      problems: [
+        'mailhog: left out, it asks for privileged',
+        'db: a folder of the host is not mounted (./seed)',
+      ],
+      readAt: new Date(Date.now() - 18 * 60_000).toISOString(),
+      hash: 'a'.repeat(64),
+      approved: false,
+    },
     agents: [
       {
         id: 'a1',

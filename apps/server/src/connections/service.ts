@@ -266,7 +266,17 @@ export async function updateConnection(
       throw new AppError('bad_request', 'A connection keeps its kind; create another instead');
     }
     const { host, namespace } = placeOf(changes.config);
-    Object.assign(set, { config: storedConfig(changes.config), host, namespace });
+    const config = storedConfig(changes.config);
+    // The stored token goes only to the host it was entered for: a new address takes it anew.
+    const before = (current.row.config as { baseUrl?: string }).baseUrl;
+    const after = (config as { baseUrl?: string }).baseUrl;
+    if ((host !== current.row.host || before !== after) && changes.token === undefined) {
+      throw new AppError(
+        'validation_failed',
+        'Enter the token again for the new address: a saved token goes only where it was entered for',
+      );
+    }
+    Object.assign(set, { config, host, namespace });
   }
   if (changes.token !== undefined) {
     set.tokenCiphertext = encryptSecret(key, changes.token);

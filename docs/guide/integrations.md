@@ -165,6 +165,12 @@ moves issues and comments as that account.
    exactly as your workflow has them.
 8. Paste the **Token** and select **Connect**.
 
+An issue's summary and description reach the agent as data, not as its task: the run is told to do
+the work the issue describes, with the issue's words in a marked block that it is told not to obey.
+That makes a planted instruction much less likely to work, not impossible. When the project's lead
+starts on new issues at once, anyone who can file an issue in the filter starts a run: keep the
+tools that write outside on **Ask** for such an agent, or let a person start each task.
+
 ### How issues and tasks follow each other
 
 - Every 5 minutes Agentome looks for new and changed issues under the filter. **Sync issues now** in
@@ -272,7 +278,7 @@ Needs a license key.
 
 In the agent's **Engine & model** section:
 
-1. Under **Where it works**, pick **Server**.
+1. Under **Where it works**, pick **By itself**.
 2. Pick the **Model connection** and the **Model**.
 
 The server needs a seat that runs the agents. An admin starts it once; see

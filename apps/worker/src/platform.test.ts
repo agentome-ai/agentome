@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cliCommand, inheritedVar, rulePath } from './platform.js';
+import { cliCommand, inheritedVar, rulePath, unsandboxed } from './platform.js';
 
 describe('a CLI on Windows', () => {
   const files: Record<string, string> = {
@@ -42,6 +42,15 @@ describe('a CLI on Windows', () => {
     ]);
   });
 
+  it('is never looked for in a relative folder of the PATH, which is the working directory', () => {
+    const local = { 'git.exe': '', 'C:\\Program Files\\Git\\cmd\\git.exe': '' };
+    const found = (path: string) => path in local;
+    expect(
+      cliCommand('git', { Path: '.;C:\\Program Files\\Git\\cmd' }, 'win32', found, read),
+    ).toEqual(['C:\\Program Files\\Git\\cmd\\git.exe']);
+    expect(cliCommand('git', { Path: '.;bin' }, 'win32', found, read)).toEqual(['git']);
+  });
+
   it('is left as it is when it is a path, missing, or elsewhere than Windows', () => {
     expect(cliCommand('C:\\tools\\claude.exe', env, 'win32', exists, read)).toEqual([
       'C:\\tools\\claude.exe',
@@ -71,5 +80,14 @@ describe('the environment of a CLI', () => {
   it('takes elsewhere only the names it lists', () => {
     expect(inheritedVar('SystemRoot', names, 'linux')).toBe(false);
     expect(inheritedVar('Path', names, 'linux')).toBe(false);
+  });
+});
+
+describe('the sandbox', () => {
+  it('is the CLI’s own on macOS and Linux, and none on Windows or in a place on the server', () => {
+    expect(unsandboxed('darwin', {})).toBe(false);
+    expect(unsandboxed('linux', {})).toBe(false);
+    expect(unsandboxed('win32', {})).toBe(true);
+    expect(unsandboxed('linux', { AGENTOME_WORKER_PLACE: '1' })).toBe(true);
   });
 });

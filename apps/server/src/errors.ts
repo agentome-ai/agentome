@@ -27,13 +27,16 @@ const statusByCode = {
   connection_unauthorized: 400,
   connection_unreachable: 502,
   email_taken: 409,
+  environment_changed: 409,
   memory_conflict: 409,
+  place_exists: 409,
   run_in_progress: 409,
   setup_required: 409,
   team_lead_taken: 409,
   invitation_invalid: 410,
   internal: 500,
   not_ready: 503,
+  place_unavailable: 502,
 } as const;
 
 export type ErrorCode = keyof typeof statusByCode;

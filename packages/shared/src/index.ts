@@ -13,7 +13,14 @@ export const RunStatus = z.enum([
 ]);
 export type RunStatus = z.infer<typeof RunStatus>;
 
-export const SeatKind = z.enum(['subscription-laptop', 'api-server', 'local-model']);
+// subscription-server: a person's own place on the company's server, their subscription in it,
+// taking their agents' runs only while they are present.
+export const SeatKind = z.enum([
+  'subscription-laptop',
+  'api-server',
+  'local-model',
+  'subscription-server',
+]);
 export type SeatKind = z.infer<typeof SeatKind>;
 
 /** Only the owner's grant is in use; deputy, operator and viewer are kept for later. */

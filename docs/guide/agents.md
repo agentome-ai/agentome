@@ -402,17 +402,17 @@ Changing the engine clears the model, since each engine has models of its own.
 
 ### Where it works
 
-- **Owner’s computer**: the agent runs on its owner's connected computer, under their own
-  subscription, while they are at the computer. No API key is needed. How to connect a computer is
-  in [Where agents run](computers.md).
-- **Server**: the agent works by itself on the company's server, with a model connection's key. No
-  person's computer is needed, and actions still wait for a person where the tool policies say so.
+- **With its owner**: the agent runs under its owner's own subscription, while they are at work: in
+  their place on the company's server, or on a computer they connected. No API key is needed. How to
+  make a place or connect a computer is in [Where agents run](computers.md).
+- **By itself**: the agent works by itself on the company's server, with a model connection's key.
+  Nobody needs to be at work, and actions still wait for a person where the tool policies say so.
 
 ### On the server
 
 Needs a license key.
 
-**Server** also needs a model connection. Until both are there, the option is unavailable, and the
+**By itself** also needs a model connection. Until both are there, the option is unavailable, and the
 line under it says what is missing. An admin adds model connections in Admin → Models; see
 [Administration](administration.md).
 

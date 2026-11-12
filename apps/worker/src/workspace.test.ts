@@ -24,6 +24,7 @@ import {
   removeRun,
   removeRuns,
   removeWorkspace,
+  closedHome,
 } from './workspace.js';
 
 let dir: string;
@@ -87,8 +88,10 @@ describe('prepareWorkspace', () => {
         autoAllowBashIfSandboxed: true,
         allowUnsandboxedCommands: false,
         network: { allowedDomains: ['agentome.test'], strictAllowlist: true },
+        // The person's home folder closed whole, and the run's own folder open.
         filesystem: {
-          denyRead: [join(home, 'config.json')],
+          denyRead: [join(home, 'config.json'), join(dir, 'person')],
+          allowRead: [workspace.dir],
           denyWrite: [workspace.profile],
           allowGitConfig: true,
         },
@@ -129,13 +132,19 @@ describe('prepareWorkspace', () => {
       join(dir, 'vault'),
       join(person, '.npmrc'),
     ];
-    expect(settings.sandbox.filesystem.denyRead).toEqual([join(home, 'config.json'), ...closed]);
+    expect(settings.sandbox.filesystem.denyRead).toEqual([
+      join(home, 'config.json'),
+      ...closed,
+      person,
+    ]);
     for (const path of closed) {
       expect(settings.permissions.deny).toContain(`Read(/${path})`);
       expect(settings.permissions.deny).toContain(`Read(/${path}/**)`);
     }
-    // What is not a place for credentials stays readable, and what is not there is not named.
-    expect(JSON.stringify(settings)).not.toMatch(/person\/code|\.gnupg/);
+    // The rest of the home folder is closed too, to the file tools as to the commands; what is not
+    // there is not named.
+    expect(settings.permissions.deny).toContain(`Read(/${join(person, 'code')}/**)`);
+    expect(JSON.stringify(settings)).not.toMatch(/\.gnupg/);
   });
 
   it('writes a computer its own sandbox, whatever the server sent, and leaves a server seat its own', async () => {
@@ -167,7 +176,8 @@ describe('prepareWorkspace', () => {
       allowUnsandboxedCommands: false,
       network: { allowedDomains: ['agentome.test'], strictAllowlist: true },
       filesystem: {
-        denyRead: ['/srv/data', join(home, 'config.json')],
+        denyRead: ['/srv/data', join(home, 'config.json'), join(dir, 'person')],
+        allowRead: [laptop.dir],
         denyWrite: [laptop.profile],
         allowGitConfig: true,
       },
@@ -568,5 +578,33 @@ describe('the folder Claude Code keeps for a run', () => {
     expect(existsSync(run)).toBe(false);
     expect(existsSync(join(home, 'runs'))).toBe(false);
     expect(existsSync(join(own, 'kept.txt'))).toBe(true);
+  });
+});
+
+describe("a computer's closed home folder", () => {
+  it('opens the toolchains it has and the run, and keeps only the worker’s own folder to the file tools', () => {
+    const person = realpathSync(mkdtempSync(join(tmpdir(), 'agentome-person-')));
+    for (const folder of [
+      '.nvm',
+      '.cargo/bin',
+      '.cargo/credentials',
+      '.agentome/runs/r1',
+      'code',
+    ]) {
+      mkdirSync(join(person, folder), { recursive: true });
+    }
+    writeFileSync(join(person, '.zsh_history'), 'export TOKEN=secret\n');
+    const closed = closedHome(join(person, '.agentome'), join(person, '.agentome/runs/r1'), person);
+    expect(closed.denyRead).toEqual([person]);
+    expect(closed.allowRead).toEqual([
+      join(person, '.agentome/runs/r1'),
+      join(person, '.nvm'),
+      join(person, '.cargo/bin'),
+    ]);
+    // Everything in the home folder but the worker's own, whose secrets are closed by name.
+    expect(closed.fileDeny.sort()).toEqual(
+      ['.cargo', '.nvm', '.zsh_history', 'code'].map((name) => join(person, name)),
+    );
+    rmSync(person, { recursive: true, force: true });
   });
 });

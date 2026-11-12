@@ -90,6 +90,9 @@ export const users = pgTable(
     role: userRoleEnum('role').notNull().default('member'),
     // A disabled person cannot sign in, and their sessions are deleted.
     disabledAt: at('disabled_at'),
+    // When the web app last said the person was there: a visible tab with recent input. Their
+    // place on the server takes a run only while this is recent.
+    presentAt: at('present_at'),
     // Required by better-auth. Nobody verifies an address: people join by invitation.
     emailVerified: boolean('email_verified').notNull().default(false),
     image: text('image'),
@@ -326,6 +329,10 @@ export const seats = pgTable(
     // Windows has no sandbox for an agent's commands: a Windows computer takes runs only after an
     // admin has allowed it to run them without one, which is when.
     sandboxWaivedAt: at('sandbox_waived_at'),
+    // A person's place on the server: the project whose services it was made ready for, by the
+    // hash of their approved list, and how far that got (PlaceShape in the server). Null when
+    // nothing is running beside the agent; sleep clears it.
+    placeShape: jsonb('place_shape'),
     // A revoked seat the owner took off the list; its runs still name it, so the row stays.
     removedAt: at('removed_at'),
     createdAt: createdAt(),
@@ -361,6 +368,17 @@ export const projects = pgTable('projects', {
   // of its Jira connection without an agent, goes to its lead. Auto: the lead takes it at once.
   teamId: uuid('team_id').references(() => teams.id, { onDelete: 'set null' }),
   intake: projectIntakeEnum('intake').notNull().default('manual'),
+  // Hosts the agents of its tasks may reach from a place on the server, besides Agentome and
+  // the model vendors: names, `*.suffix` patterns or IP addresses. Empty is nothing more.
+  allowedHosts: text('allowed_hosts')
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
+  // What its main repository's devcontainer asks to run next to the agent in a place, as last
+  // read (ProjectEnvironment in the server), and the fingerprint of the services an admin let
+  // run. A place runs them only while the two agree.
+  environment: jsonb('environment'),
+  environmentApproved: text('environment_approved'),
   // What the runs of its tasks may cost in a calendar month; empty is no limit.
   usdPerMonth: numeric('usd_per_month'),
   // What its code hosts' webhooks start: the author agent fixes a failed pipeline or

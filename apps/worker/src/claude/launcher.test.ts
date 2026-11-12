@@ -108,7 +108,7 @@ describe('runClaude: the invocation', () => {
       'stream-json',
       '--verbose',
       '--setting-sources',
-      'user',
+      '',
       '--strict-mcp-config',
       '--no-session-persistence',
       '--model',
@@ -167,7 +167,7 @@ describe('runClaude: the invocation', () => {
       const args = invocations()[0]?.args ?? [];
       expect(
         args.slice(args.indexOf('--setting-sources'), args.indexOf('--setting-sources') + 2),
-      ).toEqual(['--setting-sources', 'user']);
+      ).toEqual(['--setting-sources', '']);
       expect(args).toContain('--strict-mcp-config');
     },
   );
@@ -466,7 +466,7 @@ describe('runClaude: a session that cannot be continued', () => {
     expect(second?.args).not.toContain('--resume');
     // The fresh attempt is isolated from the repository's settings exactly like the first one.
     for (const attemptArgs of [first?.args, second?.args]) {
-      expect(attemptArgs).toEqual(expect.arrayContaining(['--setting-sources', 'user']));
+      expect(attemptArgs).toEqual(expect.arrayContaining(['--setting-sources', '']));
       expect(attemptArgs).toContain('--strict-mcp-config');
     }
 

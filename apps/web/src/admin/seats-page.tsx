@@ -6,6 +6,7 @@ import { EmptyState, ErrorState, LoadingState } from '../shell/states';
 import { Button } from '../ui/button';
 import { cn } from '../ui/cn';
 import { useMe } from '../session';
+import { PlaceSection } from './place-section';
 import { Copyable } from '../ui/copyable';
 import * as D from '../ui/dialog';
 import * as M from '../ui/dropdown-menu';
@@ -38,6 +39,7 @@ const kinds: Record<Seat['kind'], [string, LucideIcon]> = {
   'subscription-laptop': ['Person’s computer', Laptop],
   'api-server': ['API server', Server],
   'local-model': ['Local model', Cpu],
+  'subscription-server': ['Person’s place on the server', Server],
 };
 
 // [label, <col> width, cell classes]. The kind is the name's icon. On narrow screens Last seen
@@ -101,6 +103,7 @@ export function SeatsPage() {
         actions={seats?.length ? connect : undefined}
       />
       <div className={cn('pt-4 pb-24', frame.wide)}>
+        <PlaceSection />
         <p className="mb-4 max-w-[72ch] text-read text-ink-2">
           The computers that run your agents. A computer takes runs only while you are signed in to
           it and using it.

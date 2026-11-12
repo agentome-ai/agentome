@@ -7,6 +7,7 @@ import { FormError } from '../ui/field';
 import { AnswerForm } from './answer-form';
 import { type Approval, describe, useApprovals } from './approvals-data';
 import { DenyDialog, WithRefs } from './approvals-page';
+import { CallArguments } from './call-arguments';
 
 /**
  * The calls of one task or run that wait for the person, with Approve and Deny where the work
@@ -102,16 +103,17 @@ function Waiting(props: {
   }
 
   return (
-    <li className="flex flex-wrap items-center gap-x-4 gap-y-2 py-2">
-      {/* On a phone the buttons go under the words, which keep the width. */}
-      <span className="min-w-0 flex-1 max-md:basis-full">
+    <li className="grid gap-2 py-3">
+      <span className="min-w-0">
         <WithRefs text={words.action} refs={words.refs} />
         <span className="block text-small text-ink-3">
           Asked by {call.agent.name}
           {props.withTask && <OnTask call={call} />}
         </span>
       </span>
-      <span className="flex shrink-0 gap-2">
+      {/* What Approve lets through, whole, and the answer under it, as on the Approvals page. */}
+      <CallArguments tool={call.tool} input={call.input} compact />
+      <span className="flex justify-end gap-2">
         <Button size="sm" onClick={props.onDeny}>
           Deny
         </Button>
@@ -119,11 +121,7 @@ function Waiting(props: {
           {pending ? 'Approving…' : 'Approve'}
         </Button>
       </span>
-      {error && (
-        <span className="basis-full">
-          <FormError>{error}</FormError>
-        </span>
-      )}
+      {error && <FormError>{error}</FormError>}
     </li>
   );
 }

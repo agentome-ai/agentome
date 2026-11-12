@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   constants,
@@ -10,15 +11,17 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, win32 } from 'node:path';
 
 import { teamDir, type TeamHookConfig } from './claude/team-hook.js';
 import type { Artifact, LaunchPackage } from './client.js';
 import { connectionFile, describe } from './config.js';
-import { rulePath, unsandboxed } from './platform.js';
+import { cliCommand, rulePath, unsandboxed } from './platform.js';
 
 // The folder of one run: `repo/`, the agent's working copy, and `profile/`, its CLAUDE.md and
 // settings, next to the repository rather than in it, so that neither lands in a commit nor
@@ -28,6 +31,8 @@ import { rulePath, unsandboxed } from './platform.js';
 export interface Workspace {
   dir: string;
   repo: string;
+  /** The branch the last run's uncommitted work was saved to, in a folder that stays. */
+  leftover?: string;
   profile: string;
   /** HEAD before the agent started; absent in a repository without commits. */
   base?: string;
@@ -206,28 +211,45 @@ export function removeRuns(home: string, env: NodeJS.ProcessEnv): void {
 export async function prepareWorkspace(
   home: string,
   launch: LaunchPackage,
-  options: { signal: AbortSignal; timeout: number; server?: boolean },
+  options: { signal: AbortSignal; timeout: number; server?: boolean; place?: boolean },
 ) {
   if (options.server !== true) refuseStrangeTools(launch.workspace.profile.settings.allowedTools);
   const dir = workspaceDir(home, launch.run.id);
-  const [repo, profile] = [join(dir, 'repo'), join(dir, 'profile')];
+  const profile = join(dir, 'profile');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const source = launch.task?.repository;
   // A connected repository comes through the proxy, which holds the host's token.
   const remote = launch.workspace.git && proxyOf(dir, launch.workspace.git);
-  const origin = remote
-    ? { from: remote.url, local: false }
-    : source
-      ? sourceOf(source)
+  // In a person's place, an agent keeps one folder per repository between runs, on the place's
+  // volume: its dependencies and builds stay. Elsewhere each run clones afresh into its own.
+  const folder =
+    options.place === true && remote && source
+      ? folderOf(home, launch.agent.id, source)
       : undefined;
-  const create = origin
-    ? ['clone', '--quiet', '--no-hardlinks', '--', origin.from, repo]
-    : ['init', '--quiet', '--initial-branch=main', repo];
-  await git([...(remote ? ['-c', `credential.helper=${remote.helper}`] : []), ...create], dir, {
-    ...options,
-    allow: remote ? 'http:https' : 'file:git:http:https',
-    create: true,
-  });
+  if (folder) pruneFolders(home);
+  const repo = folder ?? join(dir, 'repo');
+  let leftover: string | undefined;
+  if (folder && remote && existsSync(join(folder, '.git'))) {
+    leftover = await refreshFolder(folder, remote, launch, options);
+  } else {
+    if (folder) {
+      rmSync(folder, { recursive: true, force: true });
+      mkdirSync(dirname(folder), { recursive: true, mode: 0o700 });
+    }
+    const origin = remote
+      ? { from: remote.url, local: false }
+      : source
+        ? sourceOf(source)
+        : undefined;
+    const create = origin
+      ? ['clone', '--quiet', '--no-hardlinks', '--', origin.from, repo]
+      : ['init', '--quiet', '--initial-branch=main', repo];
+    await git([...(remote ? ['-c', `credential.helper=${remote.helper}`] : []), ...create], dir, {
+      ...options,
+      allow: remote ? 'http:https' : 'file:git:http:https',
+      create: true,
+    });
+  }
   if (remote) {
     // The agent's own git pushes with it; the empty entry first drops the person's helpers, so
     // that the password never lands in their keychain.
@@ -285,10 +307,12 @@ export async function prepareWorkspace(
   );
   writeFileSync(join(profile, 'settings.json'), `${settings}\n`, { mode: 0o400 });
   chmodSync(profile, 0o500);
-  const local = origin?.local ? origin.from : undefined;
+  const plain = !remote && source ? sourceOf(source) : undefined;
+  const local = plain?.local ? plain.from : undefined;
   return {
     dir,
     repo,
+    ...(leftover && { leftover }),
     profile,
     base,
     local,
@@ -297,6 +321,102 @@ export async function prepareWorkspace(
     gitConfig,
     agents,
   } satisfies Workspace;
+}
+
+/** Where an agent's folder for a repository stays, in a place: by agent and by repository. */
+export function folderOf(home: string, agentId: string, source: string): string {
+  const repository = createHash('sha256').update(source).digest('hex').slice(0, 16);
+  return join(home, 'folders', agentId, repository);
+}
+
+/** A folder nobody has worked in for this long goes, to keep the place's volume in bounds. */
+const FOLDER_DAYS = 30;
+
+function pruneFolders(home: string): void {
+  const root = join(home, 'folders');
+  const old = Date.now() - FOLDER_DAYS * 24 * 60 * 60_000;
+  for (const agent of existsSync(root) ? readdirSync(root) : []) {
+    for (const repository of readdirSync(join(root, agent))) {
+      const folder = join(root, agent, repository);
+      if (statSync(folder).mtimeMs < old) rmSync(folder, { recursive: true, force: true });
+    }
+  }
+}
+
+/**
+ * Readies a folder an earlier run left: the agent owned it, so nothing of its git is trusted.
+ * The configuration is written anew and the hooks emptied; the run's proxy fetches; what the
+ * last run left uncommitted is saved to a branch of its own and pushed; the tracked files are set
+ * to the repository's default branch. What git ignores (dependencies, builds) stays.
+ */
+async function refreshFolder(
+  folder: string,
+  remote: NonNullable<ReturnType<typeof proxyOf>>,
+  launch: LaunchPackage,
+  options: { signal: AbortSignal; timeout: number },
+): Promise<string | undefined> {
+  const gitDir = join(folder, '.git');
+  if (!lstatSync(gitDir).isDirectory()) throw new Error('The folder’s .git is not a folder');
+  rmSync(join(gitDir, 'hooks'), { recursive: true, force: true });
+  mkdirSync(join(gitDir, 'hooks'), { mode: 0o700 });
+  writeFileSync(
+    join(gitDir, 'config'),
+    [
+      '[core]',
+      '\trepositoryformatversion = 0',
+      '\tfilemode = true',
+      '\tbare = false',
+      '\tlogallrefupdates = true',
+      '[remote "origin"]',
+      `\turl = ${remote.url}`,
+      '\tfetch = +refs/heads/*:refs/remotes/origin/*',
+      '',
+    ].join('\n'),
+    { mode: 0o600 },
+  );
+  const proxied = { ...options, allow: 'http:https' };
+  const helper = ['-c', `credential.helper=${remote.helper}`];
+  await git([...helper, 'fetch', '--quiet', '--prune', 'origin'], folder, proxied);
+  await git([...helper, 'remote', 'set-head', 'origin', '--auto'], folder, proxied).catch(() => '');
+  let leftover: string | undefined;
+  if ((await git(['status', '--porcelain', '--untracked-files=normal'], folder)).trim() !== '') {
+    leftover = `agent/leftover-${launch.run.id.slice(0, 8)}`;
+    const name = launch.agent.name.replace(/[\p{Cc}<>]/gu, ' ').trim() || 'Agentome agent';
+    await git(['checkout', '--quiet', '-B', leftover], folder);
+    await git(['add', '--all'], folder);
+    await git(
+      [
+        '-c',
+        `user.name=${name}`,
+        '-c',
+        `user.email=agent-${launch.agent.id.slice(0, 8)}@agentome.ai`,
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '--quiet',
+        '--no-verify',
+        '-m',
+        'What the last run left uncommitted, saved by the worker before the next one',
+      ],
+      folder,
+    );
+    // Kept on the host too, when it takes it; it stays in the folder either way.
+    await git(
+      [...helper, 'push', '--quiet', 'origin', `${leftover}:${leftover}`],
+      folder,
+      proxied,
+    ).catch(() => '');
+  }
+  const head = (
+    await git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], folder).catch(() => '')
+  )
+    .trim()
+    .replace(/^origin\//, '');
+  const branch = head || 'main';
+  await git(['checkout', '--quiet', '--force', '-B', branch, `origin/${branch}`], folder);
+  const now = new Date();
+  utimesSync(folder, now, now);
+  return leftover;
 }
 
 /**
@@ -344,6 +464,51 @@ const CREDENTIALS = [
   'Library/Application Support/Google/Chrome',
   'Library/Application Support/Firefox',
 ];
+
+// On a computer the home folder is closed whole, to the agent's commands and its file tools, and
+// opened again only where its toolchains live: what a person keeps there (shell history, project
+// .env files, settings with tokens, other tools' logins) is theirs, not the agent's. Folders, as
+// they are named under the home folder, that only hold toolchains and their caches.
+const TOOLCHAINS = [
+  '.nvm',
+  '.volta',
+  '.asdf',
+  '.rbenv',
+  '.pyenv',
+  '.rustup',
+  '.cargo/bin',
+  '.cargo/registry',
+  'go',
+  '.sdkman',
+  '.bun',
+  '.deno',
+  '.npm',
+  '.pnpm-store',
+  '.cache',
+  '.m2/repository',
+  '.gradle/caches',
+  '.gradle/wrapper',
+  '.local/bin',
+  'Library/Caches',
+  'Library/pnpm',
+];
+
+/**
+ * The home folder closed but for the run's own folder and the toolchains this computer has: to the
+ * sandbox, `denyRead` and `allowRead`; to the file tools, which obey their own rules, a deny on
+ * each thing in the home folder but the one that holds the worker's own folder, whose secrets are
+ * denied by name.
+ */
+export function closedHome(home: string, dir: string, userHome = homedir()) {
+  const open = TOOLCHAINS.map((place) => join(userHome, place)).filter((path) => existsSync(path));
+  const keep = home.startsWith(`${userHome}/`) ? home.slice(userHome.length + 1).split('/')[0] : '';
+  const entries = existsSync(userHome) ? readdirSync(userHome) : [];
+  return {
+    denyRead: [userHome],
+    allowRead: [dir, ...open],
+    fileDeny: entries.filter((name) => name !== keep).map((name) => join(userHome, name)),
+  };
+}
 
 /** Those of them this computer has, and where a link among them leads. */
 function credentialPaths(): string[] {
@@ -436,7 +601,15 @@ function profileSettings(
   const sandbox = !laptop ? asSent : unsandboxed() ? { enabled: false } : laptopSandbox(asSent);
   const filesystem = laptop ? {} : sent;
   const credentials = credentialPaths();
-  const denyRead = [...strings(sent?.denyRead), ...secrets, ...credentials];
+  // A computer with a sandbox closes its person's home folder whole; one without (Windows, allowed
+  // by an admin) keeps at least the file tools out of the credentials.
+  const closed = laptop && !unsandboxed() ? closedHome(home, dir) : undefined;
+  const denyRead = [
+    ...strings(sent?.denyRead),
+    ...secrets,
+    ...credentials,
+    ...(closed?.denyRead ?? []),
+  ];
   const denyWrite = [...strings(sent?.denyWrite), ...kept];
   return {
     // Claude Code protects .git/config by default, which breaks `git checkout <branch>` and
@@ -444,7 +617,13 @@ function profileSettings(
     // own copy of that file. Hooks stay protected, and the worker never runs them anyway.
     sandbox: {
       ...sandbox,
-      filesystem: { ...filesystem, denyRead, denyWrite, allowGitConfig: true },
+      filesystem: {
+        ...filesystem,
+        denyRead,
+        ...(closed && { allowRead: closed.allowRead }),
+        denyWrite,
+        allowGitConfig: true,
+      },
     },
     // `//` makes a rule's path absolute. /proc holds the CLI's own environment, and on a server
     // seat that has the model connection's key: with no shell, the file tools were
@@ -456,7 +635,10 @@ function profileSettings(
         'Read(//sys)',
         'Read(//sys/**)',
         ...secrets.map((secret) => `Read(${rulePath(secret)})`),
-        ...credentials.flatMap((path) => [`Read(${rulePath(path)})`, `Read(${rulePath(path)}/**)`]),
+        ...[...credentials, ...(closed?.fileDeny ?? [])].flatMap((path) => [
+          `Read(${rulePath(path)})`,
+          `Read(${rulePath(path)}/**)`,
+        ]),
         ...kept.map((folder) => `Edit(${rulePath(folder)}/**)`),
       ],
     },
@@ -637,6 +819,17 @@ const GIT_FLAGS = ['credential.helper=', 'core.fsmonitor=false', `core.hooksPath
 type GitOptions = { signal?: AbortSignal; timeout?: number; allow?: string; create?: boolean };
 
 /**
+ * git by its absolute path on Windows, which looks for a program in the working directory first:
+ * there, the clone, a git.exe of the repository's own would run as the worker. Nothing when Git
+ * for Windows is not found; the name elsewhere, where the PATH alone is searched.
+ */
+function gitProgram(): string | undefined {
+  const [program] = cliCommand('git', process.env);
+  if (process.platform !== 'win32') return program;
+  return win32.isAbsolute(program) ? program : undefined;
+}
+
+/**
  * `allow`: the transports git may use, none unless the call names them; never ssh, whose keys
  * are the person's. `create`: the call makes the repository (clone, init) rather than works in
  * the one at `cwd`.
@@ -658,7 +851,16 @@ function git(args: string[], cwd: string, options: GitOptions = {}) {
   const flags = GIT_FLAGS.flatMap((setting) => ['-c', setting]);
   const command = args.find((arg, index) => !arg.startsWith('-') && args[index - 1] !== '-c');
   return new Promise<string>((resolve, reject) => {
-    execFile('git', [...flags, ...args], { cwd, env, ...run }, (error, stdout, stderr) => {
+    const program = gitProgram();
+    if (program === undefined) {
+      reject(
+        new Error(
+          'Git for Windows is not installed, or not on the PATH: install it and run the worker again.',
+        ),
+      );
+      return;
+    }
+    execFile(program, [...flags, ...args], { cwd, env, ...run }, (error, stdout, stderr) => {
       if (error === null) resolve(stdout);
       else reject(new Error(`git ${command} failed: ${stderr.trim() || error.message}`));
     });

@@ -281,6 +281,14 @@ authority, change `deploy/Caddyfile` to use your own certificate or `tls interna
 [Caddy documentation](https://caddyserver.com/docs/caddyfile/directives/tls)); the install
 script never replaces the file once it is there.
 
+Every answer carries the browser's rules for the page: a Content Security Policy that runs only
+the server's own scripts (and index.html's one inline script, by its hash), loads images and fonts
+only from the server, so a link or picture an agent wrote cannot call another site when shown, and
+lets no other site frame Agentome; `nosniff`; and, at an HTTPS address, HSTS for half a year. With
+the proxy profile, plain HTTP on port 3000 answers only this machine, so nobody can skip the proxy
+and claim another client address. `/openapi.json` stays public: it describes the same API the
+public source does.
+
 ## HTTPS on a local network
 
 Phones and browsers deliver notifications only to an HTTPS address. Without a domain, the
@@ -347,11 +355,100 @@ authority signs. The image does not know that authority, so the server refuses t
 
 3. `docker compose up -d`. One file may hold several certificates, one after another.
 
+## Places on the server
+
+A person can have a place of their own on the server: a container that the platform makes for
+them, in which they sign in to Claude Code or Codex with their own subscription once, and which
+runs their agents while they work in Agentome. Nothing is installed on their computer. A place
+takes runs only while its person is present: a tab of Agentome open and in use within their idle
+time. A run that started goes on to its end.
+
+1. Start the launcher and tell the app where it is: put `AGENTOME_PLACE_LAUNCHER_URL=http://place-launcher:8080`
+   in `.env`, then `docker compose --profile places up -d`.
+2. Each person makes their place in **Computers → Your place on the server**, wakes it, puts it to
+   sleep and deletes it there.
+3. Each person signs their place in from **Open terminal** there: a terminal in their place, in the
+   browser, where they run `claude` and sign in with their Claude subscription, or
+   `codex login --device-auth` (a link and a code: the browser cannot reach the place itself).
+   Agentome keeps neither the sign-in nor what is typed; its log says only that a terminal opened
+   and closed. A place does not sleep while its terminal is open.
+
+The launcher is the only service with Docker's socket. It takes signed orders from the app and
+makes a place only from the seat image of this release, without capabilities, with no way to gain
+any, a read-only root, at most 8 GB of memory, 1024 processes and 2 CPUs, on the network
+`agentome-places`, which reaches the app and nothing else of Agentome's. A place keeps two volumes,
+`agentome-place-<id>-home` (the sign-in) and `agentome-place-<id>-seat` (its connection, the CLI
+and the agents' working folders). Once a minute the app wakes a place whose person is present and
+has a run queued, and puts to sleep one in which nothing has run for the person's idle time:
+sleeping stops the container and keeps the volumes. Deleting a place deletes both volumes.
+
+A project's work may need services next to it: a database, a queue, another service. A place
+takes them from the devcontainer of the project's main repository: `.devcontainer/devcontainer.json`
+(or `.devcontainer.json`) on its default branch and the compose files its `dockerComposeFile`
+names. Agentome reads them when the main repository changes and when someone asks
+(`POST /api/projects/:id/environment`, or `read_project_environment` from Claude Code). Every
+service but the devcontainer's own `service`, or those in `runServices`, comes through with its
+`image`, `environment` (defaults of `${VAR:-default}` only, nothing of the server's), `command`
+and named volumes; a service that is built, privileged, asks for capabilities, devices or the
+host's network, or mounts a folder of the host is left out, and the project says why. The
+images are whatever the repository names, run on the company's server, so a list runs only once
+an admin has approved it (`POST /api/projects/:id/environment/approve` with the list's hash, or
+`approve_project_environment`); a changed list needs approval again.
+
+When a run of such a project is the next for a person's place, the place gets ready first, and
+the claim waits meanwhile (`x-agentome-waiting: services`; pulling images may take minutes). With
+Docker, the services run as containers of their own on an internal network of the project's,
+`agentome-place-<id>-<project>`, which the place joins and where they answer to their compose
+names; another project's services are stopped and the place leaves their network, so two projects
+may both have a `db`. On Kubernetes, the place's pod is made again with the services as containers
+of its own, their names pointing to the pod itself, their volumes on the place's seat claim. A
+service keeps its image's user and capabilities, gains no privilege, has 1 CPU and 2 GB of memory,
+and reaches nothing outside the place. The agent's CLAUDE.md names the services, and calls to
+them bypass the egress proxy. Sleep stops the services; deleting the place removes them with
+their volumes. When they do not start, the app's log says why, and the place's runs go without
+them for 15 minutes before it tries again. Images from a registry that needs signing in are not
+supported yet.
+
+A place, like the server seat, runs the seat image, which has the common toolchains, so that an
+agent builds most projects without installing anything: Python 3.11 with pip and venv, Java 21
+(Temurin) with Maven, Go 1.27, .NET 8 SDK, gcc and make, and Node 22. A Gradle project brings its
+own wrapper. The image is about 3.6 GB.
+
+A place has no way out of its own: `agentome-places` is an internal network, and every call a
+place makes past the app goes through the egress proxy, `place-egress` in the same profile. The
+proxy asks the app which hosts the call's token opens and connects to those only; it never reads
+what passes through. A run's token opens Agentome's address, the model vendors' hosts
+(`anthropic.com`, `claude.ai`, `claude.com`, `openai.com`, `chatgpt.com` and their subdomains) and the hosts its
+task's project allows; the place's own token, which its worker and terminal use, opens Agentome,
+the vendors and `registry.npmjs.org`, from which the place installs its CLI at its first start.
+An admin lists a project's hosts in `allowedHosts` (`PATCH /api/projects/:id`, or `update_project`
+from Claude Code): a host name, `*.example.com` for every name under it, or an IPv4 address, such
+as the company's GitLab, Jira and package mirror. Node's own `fetch` uses the proxy too
+(`NODE_USE_ENV_PROXY=1` in a place).
+
+Every place event is in **Admin → Logs**, under the place's seat and, for a run, the run: made,
+woken, put to sleep and why, deleted, an agent's folders emptied, a terminal opened and closed
+(never what went through it), its services started or not. The egress proxy tells the app each
+host it refused (`a place was refused …`, a warning) and, once a minute a token, each host it let
+out (`a place reached …`, with how many connections), by the token each call came with, so a line
+names the run or place it was for and never the token; `docker compose logs place-egress` has the
+refusals too.
+
+In a place, an agent keeps one working folder per repository between runs, under `/seat/folders`:
+what git ignores (dependencies, builds) stays, and at the start of each run the worker writes the
+folder's git configuration anew, empties its hooks, saves what the last run left uncommitted to a
+branch `agent/leftover-<run>` and pushes it, and sets the tracked files to the default branch. A
+folder unused for 30 days goes; **Working folders → Start fresh** in the person's place empties an
+agent's at once.
+
 ## Agents on the server
 
 Most people's agents run on their own computers under their subscription. An agent set to work on
-the server (Engine & model → Where it works) runs on the server seat instead, with a model
-connection's key from Admin → Models. The seat is off until you start it:
+the server (Engine & model → Where it works) runs on the server seat instead, on a model
+connection from Admin → Models. The connection's key never leaves the server: the seat calls the
+model through the server's relay at `/model`, with the run's own token, and the server puts the key
+on each call and passes it on. The token stops working when the run ends. The seat is off until you
+start it:
 
 1. In Admin → Models, add a connection: Anthropic or OpenAI with an API key, or a gateway such as
    LiteLLM or OpenRouter. Give it a key made for agents, with a spending limit at the provider.
@@ -388,10 +485,11 @@ Without either the seat does not start and its log says so.
 The seat takes one run and exits, and compose starts it again clean: its file system is
 read-only but for its connection and npm's cache (`agentome-seat`), and the run and Claude Code,
 which live in memory. Every start checks the cache against the image's checksums, so a run
-cannot leave a changed CLI for the next one. It is on
+cannot leave a changed CLI for the next one. It has no Linux capabilities and cannot gain any, and
+at most 8 GB of memory (its in-memory folders count), 1024 processes and 2 CPUs. It is on
 a network of its own that reaches the app and the internet, not the database. Its agents have no
-shell unless an admin allowed one: with a shell an agent could read the connection's key, and the
-seat's own token too. In production, run the seat on a machine of its own, pointed at your
+shell unless an admin allowed one: with a shell an agent could read the seat's own token and the
+run's, which reach the model and the agent's tools until the run ends, never the connection's key. In production, run the seat on a machine of its own, pointed at your
 Agentome's address instead of `http://app:3000`. For more seats at once, start more:
 `docker compose --profile server-seat up -d --scale seat=3`, each connected with a code.
 
@@ -431,6 +529,8 @@ has built in; no Helm chart and no operator:
 - `secret.example.yaml`: the shape of the Secret `agentome`, which holds the secret key and
   the database's address and password. The kustomization leaves it out, so that no password
   ends up in a repository next to the manifests.
+- `places/`: people's places on the server, a component that `kustomization.yaml` lists once
+  you take the `#` off its line (see [Places on Kubernetes](#places-on-kubernetes)).
 
 The server seat, for agents on the server, is not covered yet: agents run on people's
 computers, or on a seat started with compose on a machine of its own (see
@@ -478,6 +578,25 @@ other pods reach it directly; a NetworkPolicy that admits the controller alone c
 rest. A company certificate authority goes in as with compose: `NODE_EXTRA_CA_CERTS` among the
 settings in `kustomization.yaml`, and the PEM file mounted from a ConfigMap with a patch.
 
+### Places on Kubernetes
+
+With the `places` component, a person's place is a pod of theirs in the namespace, with two
+volume claims: `agentome-place-<id>-home` (1 GiB, the sign-in) and `agentome-place-<id>-seat`
+(20 GiB, the connection, the CLI and the agents' working folders), of the cluster's default
+storage class. Sleeping deletes the pod and keeps the claims; waking makes the pod again on the
+same claims. Everything else is as in [Places on the server](#places-on-the-server).
+
+- `place-launcher` makes the pods. Its service account may get, create and delete pods and
+  volume claims in the namespace, and open a command in a pod (the terminal, and emptying an
+  agent's folders), and nothing in the cluster. It checks the server's orders with a key from
+  the Secret's `AGENTOME_SECRET_KEY`.
+- `place-egress` is the places' only way out, as with compose.
+- NetworkPolicies let a place reach the server, the egress proxy and the cluster's DNS, and
+  take no connection; only the server reaches the launcher, and only places the proxy. They
+  need a network plugin that enforces NetworkPolicies (Calico, Cilium, and kind's own do).
+- A place's pod runs as uid 1000, without capabilities or a token of the cluster, with a
+  read-only root and at most 2 CPUs and 8 GiB of memory.
+
 ### The secret key on Kubernetes
 
 Here the key comes from the Secret, not from the data volume as with compose. It has to stay
@@ -515,7 +634,7 @@ volume, then the server starts again:
 ```sh
 kubectl -n agentome scale deploy/agentome --replicas=0
 kubectl -n agentome run agentome-restore --rm -i --restart=Never \
-  --image=docker.io/agentome/agentome:0.1.0 --override-type=strategic --overrides='
+  --image=docker.io/agentome/agentome:0.2.0 --override-type=strategic --overrides='
 {"spec": {"securityContext": {"runAsNonRoot": true, "runAsUser": 1000, "runAsGroup": 1000,
     "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
   "containers": [{"name": "agentome-restore", "envFrom": [{"secretRef": {"name": "agentome"}}],

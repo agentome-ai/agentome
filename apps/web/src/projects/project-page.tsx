@@ -26,6 +26,7 @@ import { Row } from '../ui/list-row';
 import { NewProjectTask, ProjectFields } from './project-fields';
 import type { ProjectView } from './projects-data';
 import { RepositoriesSection } from './repositories-section';
+import { ServicesSection } from './services-section';
 import { Triggers } from './triggers';
 
 /** Markdown as it was written: until the renderer loads, or if it cannot. */
@@ -212,6 +213,13 @@ export function ProjectPage() {
         </Section>
 
         <RepositoriesSection project={project} isAdmin={isAdmin} onSaved={load} />
+
+        <ServicesSection
+          project={project}
+          canEdit={canEdit}
+          isAdmin={isAdmin}
+          onChanged={setProject}
+        />
 
         <Triggers project={project} canEdit={canEdit} onSaved={setProject} />
 

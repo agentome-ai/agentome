@@ -1,3 +1,5 @@
+import { placeReadyFor, type ShapeTarget } from '../places/shape.js';
+import type { ServiceSpec } from '../projects/devcontainer.js';
 import { priceUsage } from '@agentome/costs';
 import {
   agentGrants,
@@ -13,6 +15,7 @@ import {
   seats,
   tasks,
   toolCalls,
+  users,
   getTableColumns,
 } from '@agentome/db';
 import { grantInForce } from '../agents/grants.js';
@@ -22,13 +25,12 @@ import type { z } from 'zod';
 import { AppError } from '../errors.js';
 import { gitAccess } from '../git/credential.js';
 import { connectionFor } from '../connections/service.js';
-import { connectionsKey, decryptSecret } from '../connections/crypto.js';
 import { skillsOf } from '../library/skills.js';
 import { currentMemory } from '../memory/service.js';
 import type { EventsBody, FinishBody, LaunchPackage, RunLimits } from '../protocol.js';
 import { newToken } from '../tokens.js';
 import { memberServer, teamForRun } from '../agents/team.js';
-import { buildLaunchPackage, projectMd, runLimits, skillsSection } from './launch.js';
+import { buildLaunchPackage, projectMd, RELAY_PATH, runLimits, skillsSection } from './launch.js';
 import { taskRepository } from '../tasks/repository.js';
 import { taskHistory } from './history.js';
 import { requireBudget } from '../budgets/service.js';
@@ -40,7 +42,7 @@ import { licenseState, requireWritable } from '../license/service.js';
  * both alike; otherwise a run waiting for approval would look ended to its own seat.
  */
 export const LIVE_RUN_STATUSES = ['running', 'waiting_approval'] as const;
-const isLive = () => inArray(runs.status, [...LIVE_RUN_STATUSES]);
+export const isLive = () => inArray(runs.status, [...LIVE_RUN_STATUSES]);
 
 /**
  * How long a run has stood waiting for a person, in seconds: its calls that had to be decided,
@@ -130,15 +132,23 @@ export async function enqueueRun(
  */
 export async function claimRun(
   db: Db,
-  seat: Pick<typeof seats.$inferSelect, 'id' | 'ownerUserId' | 'engines' | 'kind'>,
-  options: { limits: RunLimits; publicUrl: string; secretKey: string },
+  seat: Pick<typeof seats.$inferSelect, 'id' | 'ownerUserId' | 'engines' | 'kind' | 'idleMinutes'>,
+  options: {
+    limits: RunLimits;
+    publicUrl: string;
+    secretKey: string;
+    /** Starts getting a person's place ready for its next run's services, after the claim. */
+    shape?: (target: ShapeTarget) => void;
+  },
 ): Promise<LaunchPackage | null> {
   // Runs queued before the license ended do not start after it either.
   if ((await licenseState(db)).status === 'read_only') return null;
   const onServer = seat.kind === 'api-server';
+  let shaping: ShapeTarget | undefined;
+  let services: ServiceSpec[] | undefined;
   const launch = await db.transaction(async (tx) => {
-    // A computer takes its owner's computer agents; a server seat takes the server agents of anyone
-    // that have a model connection.
+    // A computer, and a person's own place on the server, take their owner's computer agents; a
+    // server seat takes the server agents of anyone that have a model connection.
     const whose = onServer
       ? and(eq(agents.runsOn, 'server'), isNotNull(agents.modelConnectionId))
       : and(eq(agents.ownerUserId, seat.ownerUserId), eq(agents.runsOn, 'laptop'));
@@ -176,6 +186,18 @@ export async function claimRun(
       .where(and(eq(runs.seatId, seat.id), isLive()))
       .limit(1);
     if (!active || busy) return null;
+    // A place on the server runs its owner's subscription only while the owner is there: read
+    // under the seat's lock, so a claim that was waiting gets nothing once they have gone.
+    if (active.kind === 'subscription-server' && !(await ownerPresent(tx, seat))) return null;
+    // A place runs a project's services beside the agent: the run waits until they are up.
+    if (active.kind === 'subscription-server') {
+      const place = await placeReadyFor(tx, seat, next.taskId);
+      if (!place.ready) {
+        shaping = place.start;
+        return null;
+      }
+      services = place.services;
+    }
     const unsandboxed = active.kind === 'subscription-laptop' && active.platform === 'win32';
     if (unsandboxed && active.sandboxWaivedAt === null) return null;
 
@@ -207,6 +229,7 @@ export async function claimRun(
       onServer,
     });
   });
+  if (shaping) options.shape?.(shaping);
   if (!launch) return launch;
   // After the claim's transaction: the memory is read as it is now, by the run that got it.
   const memoryDocuments = (await currentMemory(db, launch.agent.id)).map(
@@ -246,34 +269,62 @@ export async function claimRun(
         }
       : settings,
   };
-  const model = onServer ? await modelOf(db, launch.agent.id, options.secretKey) : undefined;
+  // The relay's address and the run's own token: the connection's key stays on the server.
+  const kind = onServer ? await modelKindOf(db, launch.agent.id) : undefined;
+  const model = kind && {
+    kind,
+    baseUrl: `${options.publicUrl.replace(/\/+$/, '')}${RELAY_PATH}`,
+    key: launch.run.token,
+  };
   const withContext: LaunchPackage = {
     ...launch,
     ...(model && { model }),
     agent: { ...launch.agent, memoryDocuments, skills },
     ...(team?.launch && { team: team.launch }),
-    workspace: { ...launch.workspace, profile },
+    workspace: {
+      ...launch.workspace,
+      ...(services?.length && { services: services.map((service) => service.name) }),
+      profile: services?.length
+        ? { ...profile, claudeMd: profile.claudeMd + servicesSection(services) }
+        : profile,
+    },
   };
   return withGit(db, withContext, options);
 }
 
 /**
- * A server run's model connection, its key decrypted for the seat. A connection deleted
- * after the claim leaves the run without one, and the worker fails it with that reason.
+ * Whether the owner of a seat is at work by the web app: it said so within the seat's idle time
+ * (POST /api/me/presence). Only a person's place on the server asks.
  */
-async function modelOf(db: Db, agentId: string, secretKey: string) {
+export async function ownerPresent(
+  db: Pick<Db, 'select'>,
+  seat: { ownerUserId: string; idleMinutes: number },
+): Promise<boolean> {
+  const [owner] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(
+      and(
+        eq(users.id, seat.ownerUserId),
+        isNull(users.disabledAt),
+        sql`${users.presentAt} > now() - make_interval(mins => ${seat.idleMinutes})`,
+      ),
+    );
+  return owner !== undefined;
+}
+
+/**
+ * The kind of a server run's model connection, which tells the engine the format to speak; the
+ * relay looks up the rest on each call. A connection deleted after the claim leaves the run
+ * without one, and the worker fails it with that reason.
+ */
+async function modelKindOf(db: Db, agentId: string) {
   const [row] = await db
-    .select({
-      kind: modelConnections.kind,
-      baseUrl: modelConnections.baseUrl,
-      keyCiphertext: modelConnections.keyCiphertext,
-    })
+    .select({ kind: modelConnections.kind })
     .from(agents)
     .innerJoin(modelConnections, eq(modelConnections.id, agents.modelConnectionId))
     .where(eq(agents.id, agentId));
-  if (!row) return undefined;
-  const key = decryptSecret(connectionsKey(secretKey), row.keyCiphertext);
-  return { kind: row.kind, baseUrl: row.baseUrl, key };
+  return row?.kind;
 }
 
 /**
@@ -591,4 +642,19 @@ export async function requestStop(db: Db | Tx, which: SQL) {
     .update(runs)
     .set({ cancelRequestedAt: sql`coalesce(${runs.cancelRequestedAt}, now())` })
     .where(and(which, isLive()));
+}
+
+/** What runs beside the agent in its place, for its CLAUDE.md. */
+function servicesSection(services: ServiceSpec[]): string {
+  const lines = services.map((service) => `- \`${service.name}\`: ${service.image}`);
+  return [
+    '',
+    '',
+    '## Services beside you',
+    '',
+    "This project's devcontainer services run next to you, reachable by these names, as in its compose file:",
+    '',
+    ...lines,
+    '',
+  ].join('\n');
 }

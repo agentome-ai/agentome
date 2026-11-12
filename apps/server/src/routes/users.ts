@@ -9,12 +9,14 @@ import {
   runs,
   seats,
   sessions,
+  sql,
   users,
 } from '@agentome/db';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { verifyPassword } from 'better-auth/crypto';
 import { z } from 'zod';
 import { transferAgentsOf } from '../agents/ownership.js';
+import { browserOnly } from '../auth.js';
 import { AppError, postgresCode } from '../errors.js';
 import { requestStop } from '../runs/service.js';
 import { Name } from './validators.js';
@@ -86,6 +88,28 @@ export const userRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db })
       schema: { summary: 'The signed-in person', response: { 200: User } },
     },
     async (request) => request.user,
+  );
+
+  // The web app says the person is at work: a visible tab that has had input lately. Their place
+  // on the server takes runs only while this is recent. A session in the browser only: a token,
+  // an agent's among them, must not keep its person present.
+  app.post(
+    '/api/me/presence',
+    {
+      onRequest: app.requireSession,
+      schema: {
+        summary: 'Marks the signed-in person as present, for their place on the server',
+        response: { 204: z.null() },
+      },
+    },
+    async (request, reply) => {
+      browserOnly(request);
+      await db
+        .update(users)
+        .set({ presentAt: sql`now()` })
+        .where(eq(users.id, request.user.id));
+      return reply.code(204).send(null);
+    },
   );
 
   // The name and the email a person signs in with. A new email asks for the password too: an

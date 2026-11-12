@@ -11,7 +11,8 @@ const apiPort = process.env.AGENTOME_LISTEN?.split(':').at(-1) || '3000';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  server: { proxy: { '/api': `http://localhost:${apiPort}` } },
+  // ws: the terminal of a person's place goes over a WebSocket.
+  server: { proxy: { '/api': { target: `http://localhost:${apiPort}`, ws: true } } },
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],

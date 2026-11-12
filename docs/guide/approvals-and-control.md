@@ -37,8 +37,8 @@ agent's own clone and never leave it.
 
 A new agent starts with these defaults:
 
-- **Open a change request** and **Comment on the Jira issue** ask first, since other people read
-  what they produce.
+- **Open a change request**, **Reply on a change request** and **Comment on the Jira issue** ask first,
+  since other people read what they produce, and it could carry what the agent read.
 - Every tool of an MCP server from the Library asks first, since nobody has checked what it does.
 - Everything else is allowed.
 
@@ -56,7 +56,9 @@ Pick a request to see:
 
 - what the agent wants to do, in plain words;
 - what the agent wrote, such as the title and description of a change request;
-- the call itself: the tool and its arguments;
+- the call itself, as it will be sent: the tool and every argument whole, in monospace, and every
+  web address in it listed apart, since a picture or link in a description shows as nothing yet is
+  loaded by whoever opens what the agent posts;
 - the agent, the task and the repository, and a link to **Open the run**;
 - **The run so far**: the agent's plan, with the steps it has done and the one it is on.
 
@@ -78,15 +80,14 @@ run ended. A request whose run was cancelled or ended is closed as denied.
 
 When no text field has focus:
 
-| Key   | Action                       |
-| ----- | ---------------------------- |
-| **J** | Next request                 |
-| **K** | Previous request             |
-| **A** | Approve the selected request |
-| **D** | Deny it (opens the dialog)   |
+| Key   | Action                     |
+| ----- | -------------------------- |
+| **J** | Next request               |
+| **K** | Previous request           |
+| **D** | Deny it (opens the dialog) |
 
-After you decide, the next request is selected, so you can go through the queue with the keyboard
-alone.
+No key approves: **Approve** is a click under what the call sends. After you decide, the next request
+is selected.
 
 ### Other places to decide
 
@@ -96,7 +97,8 @@ The same requests appear where you already are:
 - on the page of the task the run belongs to;
 - on the page of the run.
 
-On a phone, **Approve** and **Deny** sit right in the list; tap a request to see all of it.
+Each shows what the call sends, whole, above its **Approve**. On a phone, **Deny** sits right in the
+list; **Review** opens the request, where it is approved under what it sends.
 
 ## Questions from an agent
 
@@ -113,7 +115,7 @@ may offer answers to pick from.
 Or select **Skip**. The agent is told that nobody will answer, goes on with its best judgement, and
 says so in its report.
 
-The keys **A** and **D** do nothing on a question: answer it in the form.
+The key **D** does nothing on a question: answer it in the form.
 
 ## Who decides
 

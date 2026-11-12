@@ -84,12 +84,28 @@ invitation link. More in [Administration](administration.md).
 
 An agent needs somewhere to run. Choose one:
 
-- **Your computer** (option A). The agent runs on your work machine under your own Claude
-  subscription, only while you are at the computer. This is free and the usual way to start.
-- **The server** (option B). The agent runs on a server seat with a model connection's API key, with
-  nobody at a keyboard. Needs a license key.
+- **Your place on the server** (option A). The platform makes you a container on the company's
+  server, and your agents run in it under your own Claude subscription while you are at work in
+  Agentome. Nothing is installed on your computer. This is the usual way for a company.
+- **Your computer** (option B). The agent runs on your work machine under your own Claude
+  subscription, only while you are at the computer. Suits a small team without a server.
+- **By itself, on the server** (option C). The agent runs on a server seat with a model connection's
+  API key, with nobody at work. Needs a license key.
 
-### Option A: connect your computer
+### Option A: make your place on the server
+
+1. Turn places on, once, on the server machine: in the folder that holds `compose.yaml`, put
+   `AGENTOME_PLACE_LAUNCHER_URL=http://place-launcher:8080` in `.env` and run
+   `docker compose --profile places up -d`. On Kubernetes, take the `places` component of
+   `deploy/kubernetes`. More in [Places on the server](../../deploy/OPERATIONS.md#places-on-the-server).
+2. In Agentome, open **Admin → Computers**. Under **Your place on the server**, click
+   **Make my place**. It takes a minute the first time, while the place installs Claude Code.
+3. Click **Open terminal**. In the terminal, run `claude` and sign in with your Claude subscription:
+   open the link it shows in your browser, then paste the code back. For Codex, run
+   `codex login --device-auth` and enter its code in your browser.
+4. Close the terminal. Your agents now run in your place whenever you have Agentome open and in use.
+
+### Option B: connect your computer
 
 1. On the computer you want to connect, check that Claude Code is installed and signed in: run
    `claude`, and sign in with your Claude subscription if it asks. Node.js 20 or later must be
@@ -117,7 +133,7 @@ dialog says **Run it in a checkout of the repository**. Everything about compute
 to do when a computer shows **Offline** or **Claude Code is not signed in**, is in
 [Where agents run](computers.md).
 
-### Option B: add a model connection for agents on the server
+### Option C: add a model connection for agents on the server
 
 Needs a license key. An admin pastes one in **Admin → License**.
 
@@ -180,9 +196,9 @@ what it is, stays on the right. For a first task, look at three sections:
   **Ask** holds the call in **Approvals** until you approve it. **Auto** allows every tool and
   **Manual** asks for every tool, except the ones you deny. Policies save as you change them.
 - **Engine & model.** Pick the **Engine**, **Claude Code** or **Codex**, and under **Where it
-  works** pick **Owner's computer** or **Server**. On your computer, leave **Model** on **Default**
-  to let the engine choose. On the server, pick a **Model connection** and a **Model**; the
-  **Server** choice needs a license key and a model connection.
+  works** pick **With its owner** or **By itself**. With its owner, leave **Model** on **Default**
+  to let the engine choose. By itself, pick a **Model connection** and a **Model**; the
+  **By itself** choice needs a license key and a model connection.
 
 Click **Save changes** at the top when you are done. The other sections, such as **Skills**,
 **Memory** and **Budget**, are described in [Agents](agents.md).

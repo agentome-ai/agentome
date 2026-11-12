@@ -14,8 +14,11 @@ import { runDueSchedules } from './schedules/service.js';
 import { wakeParents } from './tasks/subtasks.js';
 import { processWebhook, type WebhookJob } from './webhooks/process.js';
 import { licenseState } from './license/service.js';
+import { placeLauncher } from './places/client.js';
+import { tendPlaces } from './places/tend.js';
 
 const REAP = 'reap-orphaned-runs';
+const PLACES = 'tend-places';
 const WEBHOOK = 'process-webhook';
 const KNOWLEDGE = 'sync-knowledge';
 const SCHEDULES = 'run-schedules';
@@ -79,6 +82,13 @@ export function createJobs(config: Config) {
         const made = await runDueSchedules(db);
         if (made.length > 0) log.info({ taskIds: made }, 'started the tasks of schedules');
       });
+      // Each minute, people's places on the server: woken for work, put to sleep without it.
+      if (config.placeLauncherUrl !== undefined) {
+        const launcher = placeLauncher(config.placeLauncherUrl, config.secretKey);
+        await boss.createQueue(PLACES);
+        await boss.schedule(PLACES, '* * * * *');
+        await boss.work(PLACES, () => tendPlaces(db, launcher, log));
+      }
       // Each minute, the tasks whose assigned tasks have all ended.
       await boss.createQueue(WAKE);
       await boss.schedule(WAKE, '* * * * *');

@@ -14,11 +14,14 @@ resources:
 # lines and put its address into the Secret (secret.example.yaml).
 components:
   - postgres
+  # People's places on the server, each a pod of their own (deploy/OPERATIONS.md, Places on
+  # the server). Their NetworkPolicies need a network plugin that enforces them.
+  # - places
 
 # The release: an update or a rollback changes newTag.
 images:
   - name: docker.io/agentome/agentome
-    newTag: 0.1.0
+    newTag: 0.2.0
 
 # The server's settings (deploy/CONFIG.md); add any other one as NAME=value. Secrets go into
 # the Secret instead. A change here restarts the server on the next apply.

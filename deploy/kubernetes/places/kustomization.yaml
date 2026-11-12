@@ -1,0 +1,13 @@
+# People's places on the server, as a component: kustomization.yaml lists it under
+# `components`. A place is a pod of a person's own in this namespace, made by the place launcher,
+# with two volume claims; it reaches the server and the egress proxy, and nothing else.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - places.yaml
+# The server finds the launcher by this address.
+configMapGenerator:
+  - name: agentome
+    behavior: merge
+    literals:
+      - AGENTOME_PLACE_LAUNCHER_URL=http://place-launcher:8080

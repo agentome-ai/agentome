@@ -27,6 +27,10 @@ const USAGE = `Usage:
                        [--installation <id>]
                                      a license key for Admin → License, to stdout; only the
                                      owner has the private key
+  agentome place-launcher            the service that makes people's places on the server; it
+                                     needs Docker's socket and the app's data, read-only
+  agentome place-egress              the places' only way out: a proxy that lets a place reach
+                                     the hosts its run's project opens, and nothing else
 `;
 
 // stdin, stdout and stderr of a tool. During a backup our stdout is the archive, so only tar
@@ -195,6 +199,77 @@ async function resetPasswordCommand(email: string): Promise<string> {
   }
 }
 
+/**
+ * Runs the place launcher until it is stopped: on port 8080 of the internal network, with
+ * Docker's socket, or in a cluster with its service account. A place reaches the app directly and
+ * nothing else but the egress proxy.
+ */
+async function placeLauncherCommand(): Promise<void> {
+  const { loadLauncherConfig } = await import('./config.js');
+  const { deriveKey } = await import('./auth.js');
+  const { dockerAt, dockerAttachAt } = await import('./places/docker.js');
+  const { launcherServer } = await import('./places/launcher.js');
+  const { dockerPlaces } = await import('./places/docker-places.js');
+  const { kubePlaces } = await import('./places/kube-places.js');
+  const { inCluster } = await import('./places/kube.js');
+  // In a cluster, places are pods in the launcher's namespace; elsewhere, Docker's containers.
+  const cluster = inCluster();
+  const { LAUNCHER_PURPOSE } = await import('./places/client.js');
+  const { placeEgressToken } = await import('./places/egress.js');
+  const config = loadLauncherConfig(process.env);
+  // Agentome's services by their names, in compose as in the manifests.
+  const network = {
+    serverUrl: cluster ? 'http://agentome:3000' : 'http://app:3000',
+    egress: {
+      proxy: 'place-egress:3128',
+      tokenOf: (id: string) => placeEgressToken(config.secretKey, id),
+    },
+  };
+  const places = cluster
+    ? kubePlaces({ ...network, kube: cluster.kube, exec: cluster.exec, image: config.image })
+    : dockerPlaces({
+        ...network,
+        docker: dockerAt('/var/run/docker.sock'),
+        attach: dockerAttachAt('/var/run/docker.sock'),
+        image: config.image,
+        network: 'agentome-places',
+      });
+  const server = launcherServer(
+    { key: deriveKey(config.secretKey, LAUNCHER_PURPOSE), places },
+    (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+  );
+  await new Promise<void>((resolve) => server.listen(8080, '0.0.0.0', resolve));
+  const where = cluster ? `pods in ${cluster.namespace}` : 'Docker containers';
+  process.stderr.write(
+    `The place launcher listens on 8080, making places as ${where} from ${config.image}.\n`,
+  );
+  await new Promise<void>((resolve) => {
+    const stop = () => server.close(() => resolve());
+    process.once('SIGTERM', stop);
+    process.once('SIGINT', stop);
+  });
+}
+
+async function placeEgressCommand(): Promise<void> {
+  const { egressProxy, hostsFromServer, reportToServer } = await import('./places/egress-proxy.js');
+  // The server by its service's name: `agentome` in the manifests, `app` in compose.
+  const serverUrl = process.env.KUBERNETES_SERVICE_HOST
+    ? 'http://agentome:3000'
+    : 'http://app:3000';
+  const server = egressProxy({
+    hostsOf: hostsFromServer(serverUrl),
+    report: reportToServer(serverUrl),
+    log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+  });
+  await new Promise<void>((resolve) => server.listen(3128, '0.0.0.0', resolve));
+  process.stderr.write("The places' egress proxy listens on 3128.\n");
+  await new Promise<void>((resolve) => {
+    const stop = () => server.close(() => resolve());
+    process.once('SIGTERM', stop);
+    process.once('SIGINT', stop);
+  });
+}
+
 async function main([command, ...rest]: string[]): Promise<number> {
   if (command === 'license' && rest[0] === 'sign') {
     try {
@@ -223,6 +298,26 @@ async function main([command, ...rest]: string[]): Promise<number> {
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       process.stderr.write(`agentome reset-password: ${error.message}\n`);
+      return 1;
+    }
+  }
+  if (command === 'place-launcher' && rest.length === 0) {
+    try {
+      await placeLauncherCommand();
+      return 0;
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      process.stderr.write(`agentome place-launcher: ${error.message}\n`);
+      return 1;
+    }
+  }
+  if (command === 'place-egress' && rest.length === 0) {
+    try {
+      await placeEgressCommand();
+      return 0;
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      process.stderr.write(`agentome place-egress: ${error.message}\n`);
       return 1;
     }
   }

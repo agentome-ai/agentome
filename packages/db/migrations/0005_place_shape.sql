@@ -1,0 +1,1 @@
+ALTER TABLE "seats" ADD COLUMN "place_shape" jsonb;

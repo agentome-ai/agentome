@@ -55,6 +55,8 @@ export interface LaunchPackage {
     mcp?: { url: string };
     /** The git proxy, when the task's repository is connected; the password opens it only. */
     git?: { url: string; username: string; password: string };
+    /** In a person's place, the project's services beside the agent, by name. */
+    services?: string[];
     profile: {
       claudeMd: string;
       /** The task's project. Absent when it has none, or from an older server. */
@@ -157,15 +159,28 @@ async function call(url: string, method: 'GET' | 'POST', options: Call) {
  * What this worker is: a computer with Claude Code under its owner's subscription, or a
  * server seat with model connections' keys, which only an admin's code connects.
  */
-const seat = (server: boolean) => ({
-  kind: server ? 'api-server' : 'subscription-laptop',
+const seat = (where: Where) => ({
+  kind:
+    where === 'server'
+      ? 'api-server'
+      : where === 'place'
+        ? 'subscription-server'
+        : 'subscription-laptop',
   engines: ['claude-code'],
   capabilities: {},
 });
 
 /** Trades a pairing code for the seat of this computer. */
-export async function pair(serverUrl: string, code: string, name: string, server = false) {
-  const body = { code, name, ...seat(server) };
+/** Where a worker runs: a person's computer, a server seat, or a person's place on the server. */
+export type Where = 'computer' | 'server' | 'place';
+
+export async function pair(
+  serverUrl: string,
+  code: string,
+  name: string,
+  where: Where = 'computer',
+) {
+  const body = { code, name, ...seat(where) };
   const answer = await call(`${serverUrl}/api/seats/pair`, 'POST', { body });
   const { seatId, token } = (answer.body ?? {}) as { seatId?: unknown; token?: unknown };
   if (typeof seatId !== 'string' || typeof token !== 'string') {
@@ -190,7 +205,13 @@ export function seatClient({ serverUrl, token }: Pick<Connection, 'serverUrl' | 
       engines?: readonly string[],
       build?: string,
       signedOut: readonly string[] = [],
-    ): Promise<{ launch?: LaunchPackage; idleMinutes?: number; waitsForSandbox?: boolean }> {
+    ): Promise<{
+      launch?: LaunchPackage;
+      idleMinutes?: number;
+      waitsForSandbox?: boolean;
+      waitsForOwner?: boolean;
+      waitsForServices?: boolean;
+    }> {
       // The engines on this computer now: Codex installed after pairing counts from the next claim.
       const also = engines ? `&engines=${encodeURIComponent(engines.join(','))}` : '';
       // Which worker this is, so that Admin, Computers can say when it is older than the server's.
@@ -205,8 +226,16 @@ export function seatClient({ serverUrl, token }: Pick<Connection, 'serverUrl' | 
       const idle = Number(answer.headers.get('x-agentome-idle-minutes'));
       const idleMinutes = Number.isInteger(idle) && idle >= 1 ? idle : undefined;
       if (answer.status === 204) {
-        const waitsForSandbox = answer.headers.get('x-agentome-waiting') === 'sandbox';
-        return { idleMinutes, ...(waitsForSandbox && { waitsForSandbox }) };
+        const waiting = answer.headers.get('x-agentome-waiting');
+        const waitsForSandbox = waiting === 'sandbox';
+        const waitsForOwner = waiting === 'presence';
+        const waitsForServices = waiting === 'services';
+        return {
+          idleMinutes,
+          ...(waitsForSandbox && { waitsForSandbox }),
+          ...(waitsForOwner && { waitsForOwner }),
+          ...(waitsForServices && { waitsForServices }),
+        };
       }
       const launch = answer.body as LaunchPackage | undefined;
       // The run id names a folder that is removed after the run: it must be nothing but an id.

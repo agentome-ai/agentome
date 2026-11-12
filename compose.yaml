@@ -7,7 +7,7 @@ services:
   app:
     # The release: an update or a rollback changes AGENTOME_VERSION. In a checkout,
     # compose.override.yaml builds agentome:local from the source instead.
-    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.1.0}
+    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.2.0}
     depends_on:
       postgres:
         condition: service_healthy
@@ -18,15 +18,23 @@ services:
       AGENTOME_PUBLIC_URL: ${AGENTOME_PUBLIC_URL:-http://localhost:${AGENTOME_HTTP_PORT:-3000}}
       AGENTOME_LOG_LEVEL: ${AGENTOME_LOG_LEVEL:-}
       AGENTOME_OAUTH_RETURN_URL: ${AGENTOME_OAUTH_RETURN_URL:-}
+      # With the places profile: people make their own place on the server from Computers.
+      AGENTOME_PLACE_LAUNCHER_URL: ${AGENTOME_PLACE_LAUNCHER_URL:-}
       # Behind the proxy, the address of the client comes in X-Forwarded-For.
       AGENTOME_TRUST_PROXY: ${AGENTOME_PROXY_HOST:+true}
     ports:
-      - '${AGENTOME_HTTP_PORT:-3000}:3000'
+      # With the HTTPS proxy, plain HTTP answers this machine only: from elsewhere it could
+      # skip the proxy and name any client address in X-Forwarded-For.
+      - '${AGENTOME_HTTP_PORT:-${AGENTOME_PROXY_HOST:+127.0.0.1:}3000}:3000'
     volumes:
       # The generated secret key and whatever else the server keeps on disk.
       - agentome-data:/data
-    # default: the database and the proxy; seat: the server seat, which reaches the app only.
-    networks: [default, seat]
+    # default: the database and the proxy; seat: the server seat, which reaches the app only;
+    # places: people's places on the server, which reach the app and nothing else of ours.
+    networks: [default, seat, places]
+    # Node on port 3000 as an unprivileged user needs no capability.
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
     restart: unless-stopped
 
   # Not published: only the app reaches it, on the compose network.
@@ -81,9 +89,16 @@ services:
   # (the models' addresses), not the database. In production, run it on a machine of its own.
   seat:
     profiles: [server-seat]
-    image: docker.io/agentome/agentome-seat:${AGENTOME_VERSION:-0.1.0}
+    image: docker.io/agentome/agentome-seat:${AGENTOME_VERSION:-0.2.0}
     depends_on: [app]
     read_only: true
+    # An agent's commands run here: no capability, no way to gain one, and a ceiling on memory
+    # (its tmpfs counts against it), processes and CPU, so a run cannot take the host down.
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    mem_limit: 8g
+    pids_limit: 1024
+    cpus: 2
     tmpfs:
       - /tmp:mode=1777,size=2g
       # The CLIs' own homes (~/.claude, ~/.codex): in memory too, not under /tmp, where Codex
@@ -98,9 +113,61 @@ services:
     networks: [seat]
     restart: unless-stopped
 
+  # `docker compose --profile places up -d`, with AGENTOME_PLACE_LAUNCHER_URL=http://place-launcher:8080
+  # in .env: people make their own place on the server, a container with their subscription in it
+  # that runs their agents while they are at work. The launcher is the only service with Docker's
+  # socket: it makes places from the seat image with fixed settings, on orders the app signs, and
+  # reads the app's key from its data, read-only.
+  place-launcher:
+    profiles: [places]
+    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.2.0}
+    # The app makes the installation's key at its first start; the launcher only reads it.
+    depends_on:
+      app:
+        condition: service_healthy
+    command: ['agentome', 'place-launcher']
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agentome-data:/data:ro
+    environment:
+      AGENTOME_PLACE_IMAGE: ${AGENTOME_PLACE_IMAGE:-}
+    read_only: true
+    cap_drop: [ALL]
+    # Root for the socket; reading the app's key, which is the node user's, takes this one.
+    cap_add: [DAC_READ_SEARCH]
+    security_opt: ['no-new-privileges:true']
+    # The image's check asks the app's port; the launcher has its own.
+    healthcheck:
+      disable: true
+    networks: [default]
+    restart: unless-stopped
+
+  # The places' only way out: their network has no route outside, and this proxy lets a place
+  # reach Agentome, the model vendors, and the hosts an admin opens on the run's project. It asks
+  # the app which, by the token each call comes with; it has no key and no socket.
+  place-egress:
+    profiles: [places]
+    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.2.0}
+    command: ['agentome', 'place-egress']
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    healthcheck:
+      disable: true
+    # places to take the calls, egress to make them: not the default network, so not the database.
+    networks: [places, egress]
+    restart: unless-stopped
+
 networks:
   default:
   seat:
+  # Named, so that the launcher can put each place on it.
+  places:
+    name: agentome-places
+    # No way out but the egress proxy.
+    internal: true
+  egress:
 
 volumes:
   agentome-data:

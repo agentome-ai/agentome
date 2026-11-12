@@ -86,10 +86,18 @@ describe('loadConfig', () => {
       jiraPollMinutes: 2,
       logRetentionDays: 7,
       setupAdmin: undefined,
-      trustProxy: true,
+      // The one proxy in front.
+      trustProxy: 1,
       updateCheck: false,
       build: { version: '0.2.0', commit: '572776f' },
     });
+  });
+
+  it('trusts as many proxies as it is told, and no other', () => {
+    const base = { AGENTOME_DATABASE_URL: 'postgres://u@h/d', AGENTOME_SECRET_KEY: 'k'.repeat(64) };
+    expect(loadConfig({ ...base, AGENTOME_TRUST_PROXY: '2' }).trustProxy).toBe(2);
+    expect(loadConfig({ ...base, AGENTOME_TRUST_PROXY: 'false' }).trustProxy).toBe(false);
+    expect(() => loadConfig({ ...base, AGENTOME_TRUST_PROXY: 'everyone' })).toThrow();
   });
 
   it('treats an empty variable as unset', () => {

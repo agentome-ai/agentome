@@ -55,6 +55,27 @@ export type ProjectConnection = {
   agentName: string | null;
 };
 
+/** A service a place runs beside the agent, as the repository's compose file names it. */
+export type ProjectService = {
+  name: string;
+  image: string;
+  environment: Record<string, string>;
+  command?: string[];
+  volumes: { name: string; target: string }[];
+};
+
+export type ProjectEnvironment = {
+  repository: string;
+  devcontainer: string | null;
+  services: ProjectService[];
+  /** What was left out, and why. */
+  problems: string[];
+  readAt: string;
+  hash: string;
+  /** Whether an admin let this very list run. */
+  approved: boolean;
+};
+
 export type ProjectView = ProjectSummary & {
   /** The team that takes the project's tasks, and whether its lead starts at once. */
   team: { id: string; name: string; lead: { id: string; name: string } } | null;
@@ -71,6 +92,8 @@ export type ProjectView = ProjectSummary & {
   goals: string;
   /** URLs under the project's connections; the first is the main one. */
   repositories: string[];
+  /** What the main repository's devcontainer asks to run beside an agent in a place. */
+  environment: ProjectEnvironment | null;
   agents: ProjectAgent[];
   connections: ProjectConnection[];
   week: ProjectWeek;

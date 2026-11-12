@@ -15,6 +15,8 @@ type AgentFile = {
   agent: {
     name: string;
     roleTitle: string;
+    /** What the agent is told: shown before importing, as the agent will get it. */
+    instructions?: string;
     skills: unknown[];
     mcpServers?: { name: string }[];
   };
@@ -151,8 +153,27 @@ export function ImportAgentDialog() {
                       <span className="font-normal text-ink-2"> · {file.agent.roleTitle}</span>
                     )}
                   </dd>
+                  <dt className="text-ink-2">Instructions</dt>
+                  <dd>
+                    {file.agent.instructions ? (
+                      <pre
+                        tabIndex={0}
+                        aria-label="Instructions in the file"
+                        className="max-h-40 overflow-auto rounded-md bg-desk p-2 font-mono text-small whitespace-pre-wrap text-ink-2"
+                      >
+                        {file.agent.instructions}
+                      </pre>
+                    ) : (
+                      'None'
+                    )}
+                  </dd>
                   <dt className="text-ink-2">Skills</dt>
                   <dd>{skills.length > 0 ? skills.join(', ') : 'None'}</dd>
+                  <dt className="text-ink-2">Tool policies</dt>
+                  <dd className="text-ink-2">
+                    The defaults: a file’s policies are not imported. Allow what you mean to in
+                    Tools &amp; policies.
+                  </dd>
                   {servers.length > 0 && (
                     <>
                       <dt className="text-ink-2">MCP servers</dt>

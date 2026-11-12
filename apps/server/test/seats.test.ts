@@ -587,6 +587,7 @@ describe('claim', () => {
         ownerUserId: owner.id,
         kind: 'subscription-laptop',
         engines: ['claude-code'],
+        idleMinutes: 15,
       },
       { limits: config.runLimits, publicUrl: config.publicUrl, secretKey: config.secretKey },
     );

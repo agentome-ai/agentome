@@ -597,8 +597,8 @@ function AgentEditor({ id }: { id: string }) {
                 </RadioGroup>
                 <span className="text-small text-ink-3">
                   {draft.engine === 'codex'
-                    ? 'OpenAI’s Codex: under the owner’s ChatGPT sign-in on their computer, or a model connection’s GPT or company model on the server. It leads no team.'
-                    : 'Anthropic’s Claude Code: under the owner’s Claude subscription on their computer, or a model connection’s Claude model on the server.'}
+                    ? 'OpenAI’s Codex: under the owner’s ChatGPT sign-in, or by itself on a model connection’s GPT or company model. It leads no team.'
+                    : 'Anthropic’s Claude Code: under the owner’s Claude subscription, or by itself on a model connection’s Claude model.'}
                 </span>
               </div>
               <div className="grid gap-1.5">
@@ -615,22 +615,22 @@ function AgentEditor({ id }: { id: string }) {
                   }}
                   className="grid w-full max-w-120 grid-cols-2 gap-2"
                 >
-                  <RadioTab value="laptop">Owner’s computer</RadioTab>
+                  <RadioTab value="laptop">With its owner</RadioTab>
                   <RadioTab
                     value="server"
                     disabled={(connections.length === 0 || free) && draft.runsOn !== 'server'}
                   >
-                    Server
+                    By itself
                   </RadioTab>
                 </RadioGroup>
                 <span className="text-small text-ink-3">
                   {draft.runsOn === 'server'
-                    ? 'By itself, on the company’s server, with a model connection’s key: no person’s computer needed, and actions wait for a person where the tool policies say so.'
-                    : `Under the owner’s ${draft.engine === 'codex' ? 'ChatGPT sign-in' : 'Claude subscription'}, while they are at the computer.${
+                    ? 'On the company’s server, with a model connection’s key: nobody needs to be at work, and actions wait for a person where the tool policies say so.'
+                    : `Under the owner’s ${draft.engine === 'codex' ? 'ChatGPT sign-in' : 'Claude subscription'}, while they are at work: in their place on the company’s server, or on their computer.${
                         free
-                          ? ' Agents on the server need a license key.'
+                          ? ' Agents that work by themselves need a license key.'
                           : connections.length === 0
-                            ? ' The server needs a model connection an admin adds in Admin → Models.'
+                            ? ' To work by itself it needs a model connection an admin adds in Admin → Models.'
                             : ''
                       }`}
                 </span>

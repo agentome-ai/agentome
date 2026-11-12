@@ -47,27 +47,33 @@ sensitive.
   engineering, product and design, sales and marketing, customer support, finance and legal, people
   and operations, and data and knowledge.
 - **Engines:** Claude Code and OpenAI Codex.
-- **Where agents run:** on an employee's computer under their own Claude or ChatGPT subscription,
-  while they are at work, or on your server with an API key, directly or through LiteLLM.
+- **Where agents run:** in containers on your server. Each person gets a place of their own, a
+  container where their agents run under their own Claude or ChatGPT subscription while they are at
+  work; agents that work by themselves run in a container with an API key, directly or through
+  LiteLLM. A small team can run agents on people's own computers instead.
 - **What they work with:** self-hosted GitLab, GitHub, Jira Data Center, and any MCP server.
 - **How you control them:** a policy per tool (allow, ask, deny), approvals on the web and on a
   phone, limits per run, budgets, and the cost and transcript of every run.
-- **How you install it:** one Docker Compose file on a machine in your network. The server never
-  reports home, and the license key is checked offline.
+- **How you install it:** one Docker Compose file on a machine in your network, or the Kubernetes
+  manifests in your cluster. The server never reports home, and the license key is checked offline.
 
 ## Why Agentome
 
 - **Your code and tokens stay in your network.** Agents reach GitLab, GitHub and Jira only through
   the server's MCP gateway, with a token that lives as long as one run. Integration tokens never
-  reach a computer, and `git push` goes through the server's git proxy, only to branches under
-  `agent/`.
+  reach where an agent runs, and `git push` goes through the server's git proxy, only to branches
+  under `agent/`.
+- **Agents work in closed containers.** A person's place has no capabilities, a read-only
+  root and limits, and a network that reaches only Agentome, the model's vendor and the hosts an
+  admin opens for a project; everything else is refused and logged. The services a project's
+  devcontainer lists, such as its database, run beside the agent once an admin approves them.
 - **Agents belong to the company, not to one person's machine.** An agent's instructions, memory and
   history live on the platform. When its owner goes on holiday or leaves, the agent is handed to
   someone else, with its tasks, and keeps working.
 - **Every step can be checked.** A run keeps its plan, its transcript, the calls it made, the change
   requests it opened and what it cost. A call your policy marks "ask" waits for a person.
-- **It uses what you already pay for.** On people's computers, agents run on the subscriptions your
-  people already have; API keys are needed only for agents that work on the server by themselves.
+- **It uses what you already pay for.** Agents run on the subscriptions your people already have,
+  in their places on your server; API keys are needed only for agents that work by themselves.
 - **Built for companies that run their own infrastructure:** self-hosted GitLab, Jira Data Center,
   Keycloak, often behind a VPN.
 
@@ -81,8 +87,8 @@ flowchart LR
     P["git proxy"]
     S --- G
     S --- P
-    L["Employee's computer<br/>worker + Claude Code or Codex"]
-    V["Server seat<br/>Claude Code or Codex with an API key"]
+    L["Person's place<br/>container: Claude Code or Codex<br/>under their subscription"]
+    V["Server seat<br/>container: Claude Code or Codex<br/>with an API key"]
     J["Jira Data Center"]
     H["GitLab / GitHub"]
   end
@@ -97,8 +103,8 @@ flowchart LR
 ```
 
 1. A task is filed in a project and goes to an agent, or to a team whose lead splits it.
-2. A run starts on the computer of the agent's owner while they are at it, or on the server when the
-   agent works by itself.
+2. A run starts in the place of the agent's owner while they are at work, or in the server seat
+   when the agent works by itself. The place starts the project's services first.
 3. The agent works in a clone of the project's repository, with the tools its policy allows, through
    the MCP gateway.
 4. A call marked "ask" waits in Approvals. When the run ends, its report, branch and change request
@@ -124,7 +130,8 @@ flowchart LR
 
 - Every task is filed in a project. A project has its agents, its team, its repositories, its Jira
   connection and its knowledge, read from the Markdown docs of its repositories.
-- A task works in the project's repository, or in a folder on the computer that runs it.
+- A task works in the project's repository; in a person's place, an agent keeps its folder of each
+  repository between runs, with its dependencies and builds.
 - A run streams its plan and transcript live, and ends with a report, a branch and a change request.
   Comments on a task go to its next run.
 
@@ -192,8 +199,8 @@ curl -fsSL https://agentome.ai/install.sh | sh
 The script puts `compose.yaml` into `./agentome`, pulls the images from Docker Hub
 ([`agentome/agentome`](https://hub.docker.com/r/agentome/agentome) and `postgres:16-alpine`),
 starts them, and prints the address of the first-run setup with its setup code. Open it, create the
-administrator, then either connect a computer (Admin → Computers gives a one-time command) or add a
-model connection, and give an agent its first task.
+administrator, make your place in Admin → Computers (with places turned on, see below) or connect
+your computer with the one-time command there, and give an agent its first task.
 
 The same by hand, without the script:
 
@@ -204,9 +211,13 @@ docker compose up -d
 docker compose exec app agentome setup-code   # then open http://localhost:3000/setup
 ```
 
-Agents on the server, with an API key, run in the
-[`agentome/agentome-seat`](https://hub.docker.com/r/agentome/agentome-seat) image; both images are
-for amd64 and arm64.
+People's places and agents on the server run in the
+[`agentome/agentome-seat`](https://hub.docker.com/r/agentome/agentome-seat) image, which has Claude
+Code, Codex and the common toolchains (Python, Java, Go, .NET, Node); both images are for amd64 and
+arm64. Places are turned on with the `places` profile: put
+`AGENTOME_PLACE_LAUNCHER_URL=http://place-launcher:8080` in `.env` and run
+`docker compose --profile places up -d`. On Kubernetes, `deploy/kubernetes/` has the manifests and a
+`places` component; see [deploy/OPERATIONS.md](deploy/OPERATIONS.md).
 
 How to set up and use it, with screenshots, is in the [documentation](docs/guide/README.md). HTTPS,
 backups, updates and troubleshooting are in [deploy/OPERATIONS.md](deploy/OPERATIONS.md); every
@@ -222,16 +233,17 @@ release is out.
 Agentome is free to install and use, in any company, with no time limit. A license key adds what
 larger teams need.
 
-|                                               | Free               | Enterprise                     |
-| --------------------------------------------- | ------------------ | ------------------------------ |
-| Active agents                                 | up to 5            | as many as you need            |
-| Teams                                         | one                | any, nested                    |
-| Where agents work                             | people's computers | their computers and the server |
-| GitLab, GitHub, Jira Data Center, MCP library | yes                | yes                            |
-| Approvals, per-run limits, cost of every run  | yes                | yes                            |
-| Monthly budgets                               |                    | yes                            |
-| Agent quality                                 |                    | yes                            |
-| Sign-in with Keycloak                         |                    | yes                            |
+|                                                 | Free    | Enterprise          |
+| ----------------------------------------------- | ------- | ------------------- |
+| Active agents                                   | up to 5 | as many as you need |
+| Teams                                           | one     | any, nested         |
+| People's places on your server, their computers | yes     | yes                 |
+| Agents that work by themselves, with an API key |         | yes                 |
+| GitLab, GitHub, Jira Data Center, MCP library   | yes     | yes                 |
+| Approvals, per-run limits, cost of every run    | yes     | yes                 |
+| Monthly budgets                                 |         | yes                 |
+| Agent quality                                   |         | yes                 |
+| Sign-in with Keycloak                           |         | yes                 |
 
 For a key, or a 30-day trial key, write to [hello@agentome.ai](mailto:hello@agentome.ai) with the
 installation ID from Admin → License. The key is checked offline: Agentome never reports home.
@@ -243,7 +255,7 @@ installation ID from Admin → License. The key is checked offline: Agentome nev
 A self-hosted platform for AI employees: agents for any role, from developers and testers to
 analysts, lawyers and managers, each defined by its skills and tools. It keeps each agent's role,
 instructions, skills, tools and memory on your server, gives it tasks from your projects, runs it
-with Claude Code or Codex on a person's computer or on the server, and records and controls
+with Claude Code or Codex in a person's container on your server, and records and controls
 everything it does.
 
 ### Is Agentome open source?
@@ -261,15 +273,15 @@ used directly. The server itself calls no service of ours.
 
 ### Which AI models and agents does it support?
 
-Claude Code (Anthropic's models) and OpenAI Codex. On a person's computer each runs under the
-person's own subscription; on the server an agent uses an API key, directly or through LiteLLM, so
-any model your gateway serves can be used.
+Claude Code (Anthropic's models) and OpenAI Codex. In a person's place, or on their computer, each
+runs under the person's own subscription; an agent that works by itself uses an API key, directly or
+through LiteLLM, so any model your gateway serves can be used.
 
 ### Do I need an API key?
 
-Not for agents that run on people's computers: they use the subscription of the person at the
-computer. An agent that works on the server, without a person, needs an API key in a model
-connection.
+Not for agents that work with their owner: they use the subscription of the person, in their place
+on the server or on their computer, while that person is at work. An agent that works by itself,
+without a person, needs an API key in a model connection.
 
 ### Can it run behind a VPN?
 

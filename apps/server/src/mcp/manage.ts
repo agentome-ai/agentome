@@ -45,6 +45,11 @@ const TOOLS: Record<string, { name: string; readOnly: boolean }> = {
   'GET /api/templates': { name: 'list_templates', readOnly: true },
   'GET /api/projects/:id': { name: 'get_project', readOnly: true },
   'PATCH /api/projects/:id': { name: 'update_project', readOnly: false },
+  'POST /api/projects/:id/environment': { name: 'read_project_environment', readOnly: false },
+  'POST /api/projects/:id/environment/approve': {
+    name: 'approve_project_environment',
+    readOnly: false,
+  },
   'DELETE /api/projects/:id': { name: 'remove_project', readOnly: false },
   'PUT /api/projects/:id/agents/:agentId': { name: 'add_agent_to_project', readOnly: false },
   // Slice 4: memory, the library and knowledge. Adding or changing an MCP server is left to

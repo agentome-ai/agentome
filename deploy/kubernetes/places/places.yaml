@@ -1,0 +1,244 @@
+# The place launcher may make and delete pods and volume claims in this namespace, and open a
+# command in a pod; nothing else, and nothing in the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: place-launcher
+  labels:
+    app.kubernetes.io/name: place-launcher
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: place-launcher
+  labels:
+    app.kubernetes.io/name: place-launcher
+rules:
+  - apiGroups: ['']
+    resources: [pods, persistentvolumeclaims]
+    verbs: [get, create, delete]
+  # Why a pairing failed, in the worker's words.
+  - apiGroups: ['']
+    resources: [pods/log]
+    verbs: [get]
+  # The terminal in a person's place, and emptying an agent's folders in it.
+  - apiGroups: ['']
+    resources: [pods/exec]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: place-launcher
+  labels:
+    app.kubernetes.io/name: place-launcher
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: place-launcher
+subjects:
+  - kind: ServiceAccount
+    name: place-launcher
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: place-launcher
+  labels:
+    app.kubernetes.io/name: place-launcher
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: place-launcher
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: place-launcher
+    spec:
+      serviceAccountName: place-launcher
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: place-launcher
+          image: docker.io/agentome/agentome:0.2.0
+          command: ['agentome', 'place-launcher']
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # The orders the server signs are checked with a key derived from this one.
+            - name: AGENTOME_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentome
+                  key: AGENTOME_SECRET_KEY
+            # Node trusts the API server's certificate by the service account's CA.
+            - name: NODE_EXTRA_CA_CERTS
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: place-launcher
+  labels:
+    app.kubernetes.io/name: place-launcher
+spec:
+  selector:
+    app.kubernetes.io/name: place-launcher
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# The places' only way out: it lets a place reach the server, the model vendors and the hosts an
+# admin opens on the run's project, asking the server which by the token each call comes with.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: place-egress
+  labels:
+    app.kubernetes.io/name: place-egress
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: place-egress
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: place-egress
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: place-egress
+          image: docker.io/agentome/agentome:0.2.0
+          command: ['agentome', 'place-egress']
+          ports:
+            - name: proxy
+              containerPort: 3128
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: place-egress
+  labels:
+    app.kubernetes.io/name: place-egress
+spec:
+  selector:
+    app.kubernetes.io/name: place-egress
+  ports:
+    - name: proxy
+      port: 3128
+      targetPort: proxy
+---
+# A place takes no connection, and makes only three: to the server, to the egress proxy, and to
+# the cluster's DNS. Not to another place, the database or the launcher.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agentome-places
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agentome-place
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentome
+      ports:
+        - port: 3000
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: place-egress
+      ports:
+        - port: 3128
+          protocol: TCP
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# Only the server gives the launcher orders.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: place-launcher
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: place-launcher
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentome
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+# Only places call out through the proxy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: place-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: place-egress
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentome-place
+      ports:
+        - port: 3128
+          protocol: TCP

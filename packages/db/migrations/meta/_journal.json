@@ -15,6 +15,34 @@
       "when": 1794468663185,
       "tag": "0001_seat_sandbox_waiver",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794503334733,
+      "tag": "0002_place_presence",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794507699814,
+      "tag": "0003_project_allowed_hosts",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794511032096,
+      "tag": "0004_project_environment",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794511858018,
+      "tag": "0005_place_shape",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,7 @@ import type { Db } from '@agentome/db';
 import { ModelConnectionKind } from '@agentome/shared';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { browserOnly } from '../auth.js';
 import type { Config } from '../config.js';
 import { connectionsKey } from '../connections/crypto.js';
 import type { FetchLike } from '../mcp/remote.js';
@@ -93,6 +94,8 @@ export const modelConnectionRoutes: FastifyPluginAsyncZod<{
       },
     },
     async (request, reply) => {
+      // A key comes in through the browser's session only, never a token's.
+      browserOnly(request);
       const view = await createModelConnection(db, key, request.user.id, request.body, fetchImpl);
       return reply.code(201).send(view);
     },
@@ -113,7 +116,10 @@ export const modelConnectionRoutes: FastifyPluginAsyncZod<{
         response: { 200: ModelConnection },
       },
     },
-    (request) => updateModelConnection(db, key, request.params.id, request.body, fetchImpl),
+    (request) => {
+      browserOnly(request);
+      return updateModelConnection(db, key, request.params.id, request.body, fetchImpl);
+    },
   );
 
   app.post(

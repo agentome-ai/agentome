@@ -102,6 +102,11 @@ describe('migrate', () => {
       );
       // What the migrations after the baseline change, as the old ones left it.
       await old.execute(sql`create table public.seats (id uuid primary key)`);
+      await old.execute(sql`create table public.users (id uuid primary key)`);
+      await old.execute(sql`create table public.projects (id uuid primary key)`);
+      await old.execute(
+        sql`create type public.seat_kind as enum ('subscription-laptop', 'api-server', 'local-model')`,
+      );
       await migrate(url.href);
       // The baseline is skipped; only the migrations after it are applied.
       const applied = await old.execute<{ count: number }>(
@@ -111,7 +116,7 @@ describe('migrate', () => {
       const tables = await old.execute(
         sql`select 1 from information_schema.tables where table_schema = 'public'`,
       );
-      expect(tables).toHaveLength(1);
+      expect(tables).toHaveLength(3);
     } finally {
       await old.$client.end();
     }

@@ -3,10 +3,12 @@ import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { appFor, REFUSING_DATABASE } from './app.js';
 
-const page = '<!doctype html><div id="root"></div>';
+const page =
+  '<!doctype html><script>document.documentElement.dataset.theme = "dark";</script><div id="root"></div>';
 const browser = { accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8' };
 let dir: string;
 let app: Awaited<ReturnType<typeof appFor>>;
@@ -144,5 +146,25 @@ describe('the web app', () => {
     expect(response.json()).toEqual({
       error: { code: 'bad_request', message: 'Range Not Satisfiable' },
     });
+  });
+});
+
+describe('the headers of every answer', () => {
+  it('let the page run its own scripts and its inline one by hash, framed by nobody', async () => {
+    const response = await app.inject({ method: 'GET', url: '/', headers: browser });
+    const policy = String(response.headers['content-security-policy']);
+    const inline = createHash('sha256')
+      .update('document.documentElement.dataset.theme = "dark";')
+      .digest('base64');
+    expect(policy).toContain(`script-src 'self' 'sha256-${inline}'`);
+    expect(policy).toContain("frame-ancestors 'none'");
+    expect(policy).toContain("img-src 'self' data: blob:");
+    expect(policy).not.toContain('unsafe-eval');
+    expect(response.headers['x-content-type-options']).toBe('nosniff');
+    expect(response.headers['x-frame-options']).toBe('DENY');
+    // This test's address is plain HTTP: no HSTS.
+    expect(response.headers['strict-transport-security']).toBeUndefined();
+    const api = await app.inject({ method: 'GET', url: '/health' });
+    expect(api.headers['x-content-type-options']).toBe('nosniff');
   });
 });

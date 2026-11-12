@@ -98,8 +98,9 @@ Once the project has a team, a second chip says who starts a new task. Click it 
 **Who starts a new task**:
 
 - **A person starts it**: a new task waits for someone to press **Run**.
-- **The lead takes it**: the lead starts on a new task at once, on its owner's computer while it is
-  connected. The chip then reads **Lead starts at once**.
+- **The lead takes it**: the lead starts on a new task at once, in its owner's place or on their
+  computer while they are at work. The chip then reads **Lead starts at once**. With issues from
+  Jira, that is anyone who can file one: see [Jira](integrations.md#add-the-connection).
 
 ![The Who starts a new task menu on a project: A person starts it, or The lead takes it.](img/project-intake.jpg)
 

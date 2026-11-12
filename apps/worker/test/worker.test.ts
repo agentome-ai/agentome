@@ -91,7 +91,7 @@ function start(
   const stop = new AbortController();
   const done = runWorker({
     connection,
-    settings: { home, idleMinutes: 15, keepWorkspaces: false, server: false },
+    settings: { home, idleMinutes: 15, keepWorkspaces: false, server: false, place: false },
     signal: stop.signal,
     log,
     idle: async () => 0,
@@ -437,7 +437,7 @@ describe('the seat', () => {
     const worker = start(
       { CLAUDE_FAKE_FIXTURE: fixture('success-text.jsonl'), CLAUDE_CODE_OAUTH_TOKEN: 'personal' },
       {
-        settings: { home, idleMinutes: 15, keepWorkspaces: false, server: true },
+        settings: { home, idleMinutes: 15, keepWorkspaces: false, server: true, place: false },
         idle: async () => 60 * 60_000,
       },
     );
@@ -460,7 +460,7 @@ describe('the seat', () => {
     });
     const worker = start(
       { CLAUDE_FAKE_FIXTURE: fixture('success-text.jsonl') },
-      { settings: { home, idleMinutes: 15, keepWorkspaces: false, server: true } },
+      { settings: { home, idleMinutes: 15, keepWorkspaces: false, server: true, place: false } },
     );
     expect(await worker.done).toBe('stopped');
     const sent = JSON.stringify([...run.events.values(), run.finish]);
@@ -472,7 +472,7 @@ describe('the seat', () => {
     const run = fake.enqueue(launchPackage());
     const worker = start(
       { CLAUDE_FAKE_FIXTURE: fixture('success-text.jsonl') },
-      { settings: { home, idleMinutes: 15, keepWorkspaces: false, server: true } },
+      { settings: { home, idleMinutes: 15, keepWorkspaces: false, server: true, place: false } },
     );
     expect(await worker.done).toBe('stopped');
     expect(run.finish?.status).toBe('failed');
@@ -529,7 +529,7 @@ describe('the seat', () => {
           },
           timing: { flushMs: 20, heartbeatMs: 50, endMs: 2_000, backoff: () => 10 },
         },
-        settings: { home, idleMinutes: 15, keepWorkspaces: false, server: true },
+        settings: { home, idleMinutes: 15, keepWorkspaces: false, server: true, place: false },
       },
     );
     expect(await worker.done).toBe('stopped');

@@ -126,7 +126,7 @@ describe('Admin, Computers', () => {
     expect(await screen.findByText("Couldn't load the computers")).toBeTruthy();
     expect(screen.getByText('Sign in to continue.')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(calls.filter((call) => call.method === 'GET')).toHaveLength(2);
+    expect(calls.filter((call) => call.method === 'GET' && call.url === '/api/seats')).toHaveLength(2);
   });
 
   it('connects a computer with a one-time code and a command to copy', async () => {
@@ -146,7 +146,9 @@ describe('Admin, Computers', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Copy command' }));
     expect(await navigator.clipboard.readText()).toBe(INSTALLER);
     expect(within(dialog).getByRole('button', { name: 'Copied' })).toBeTruthy();
-    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(1);
+    // One code, made once; the shell's presence beat is not the dialog's.
+    const made = calls.filter((call) => call.method === 'POST' && call.url !== '/api/me/presence');
+    expect(made).toHaveLength(1);
   });
 
   it('says that the command of a server run from a checkout needs a checkout', async () => {

@@ -1,28 +1,51 @@
 # Where agents run
 
-This page explains where an agent's runs happen: on a person's computer under their own
-subscription, or on the company's server with an API key. It shows how to connect a computer, what
-the list in **Admin → Computers** tells you, how to keep the worker up to date, and how to start the
-server seat.
+This page explains where an agent's runs happen: in a person's own place, a container on the
+company's server, under their subscription; on a person's computer; or by itself on the server with
+an API key. It shows how to make your place, how to connect a computer, what the list in
+**Admin → Computers** tells you, how to keep the worker up to date, and how to start the server
+seat.
 
-## Two places to run
+## Three places to run
 
-Each agent has a setting that says where it works: open the agent, go to the **Engine & model**
+Each agent has a setting that says how it works: open the agent, go to the **Engine & model**
 section and look at **Where it works**.
 
-- **Owner's computer.** The agent runs on a connected computer of its owner, under the owner's own
-  Claude subscription (Claude Code) or ChatGPT sign-in (Codex), and only while the owner is at that
-  computer. No API key is needed. This is how most agents work.
-- **Server.** The agent runs by itself on a server seat, with the API key of a model connection from
-  **Admin → Models**. Nobody needs to be at a keyboard, and tool calls that your policies mark
-  **Ask** still wait for a person. Needs a license key.
+- **With its owner.** The agent runs under its owner's own Claude subscription (Claude Code) or
+  ChatGPT sign-in (Codex), and only while the owner is at work. No API key is needed. It runs in the
+  owner's **place on the server**, a container the platform makes for them, or on a **computer** the
+  owner connected. For a company, the place is the usual way: nothing is installed on anyone's
+  computer, and the agent works in a closed container. A computer suits a small team without a
+  server, and work that needs the person's own machine.
+- **By itself.** The agent runs on the server seat, on a model connection from
+  **Admin → Models**. The connection's key stays on the Agentome server: the seat reaches the model
+  through the server with the run's own token. Nobody needs to be at work, and tool calls that your
+  policies mark **Ask** still wait for a person. Needs a license key.
 
 Either way, the agent's instructions, memory, history and settings stay on the Agentome server; the
-machine only borrows them for one run.
+place or the machine only borrows them for one run.
 
-A program called the worker does the running. On a computer it runs as a background service of your
-login session. On the server it runs in its own container, the seat. In the API both are called
-seats; the interface calls a person's machine a computer.
+A program called the worker does the running. In a place and on the server seat it runs in a
+container; on a computer it runs as a background service of your login session. In the API all of
+them are called seats.
+
+### A place on the server
+
+When an admin has turned places on, **Computers** has **Your place on the server**: **Make my
+place** gives you a container of your own on the company's server. **Open terminal** opens a
+terminal in it, in the browser: run `claude` and sign in once with your subscription (or
+`codex login --device-auth` for ChatGPT: it gives a link and a code to enter in your browser),
+and your agents run in it while you work in Agentome, with
+nothing installed on your computer. It wakes when one of your agents has work and you are here,
+and sleeps when nothing has run for a while; your sign-in and your agents' working folders stay
+while it sleeps. In your place each agent keeps a working folder per repository between runs, so
+its dependencies and builds stay; whatever a run left uncommitted is saved to a branch
+`agent/leftover-…` before the next one starts. **Working folders → Start fresh** empties an agent's.
+**Delete place** removes it, with its sign-in and folders.
+
+Your place reaches Agentome and the model vendors, and nothing else unless an admin opens it: the
+hosts a project allows, such as the company's GitLab or Jira, open to the runs of that project's
+tasks only. A run that needs another host fails to reach it; ask an admin to add it to the project.
 
 ## What a computer needs
 
@@ -287,7 +310,7 @@ finishes a run in progress; to disconnect the computer, also revoke it in **Admi
 
 Needs a license key.
 
-An agent set to **Server** under **Where it works** runs on the server seat: a container next to the
+An agent set to **By itself** under **Where it works** runs on the server seat: a container next to the
 Agentome server that runs Claude Code or Codex with a model connection's API key. It needs no person
 at a keyboard. The seat is off until an admin starts it.
 
@@ -303,13 +326,13 @@ at a keyboard. The seat is off until an admin starts it.
    docker compose --profile server-seat up -d
    ```
 
-4. Open an agent, go to **Engine & model**, choose **Server** under **Where it works**, and pick a
+4. Open an agent, go to **Engine & model**, choose **By itself** under **Where it works**, and pick a
    **Model connection** and a **Model**: a Claude model for Claude Code, another model for Codex.
    Click **Save changes**.
 
 ![Admin, Models: a model connection with its address, its models and when it was checked](img/models.jpg)
 
-Only an admin's code connects a server seat. The **Server** choice is greyed out until a model
+Only an admin's code connects a server seat. The **By itself** choice is greyed out until a model
 connection exists and a license key is in.
 
 How the seat behaves:
@@ -322,8 +345,9 @@ How the seat behaves:
   `NPM_CONFIG_REGISTRY`.
 - It reaches the server and the internet, not the database.
 - Its agents have no shell unless an admin turns on **Allow a shell on the server** for that agent,
-  in **Engine & model**. With a shell the agent could read the connection's key, so allow it only to
-  an agent that has to run commands, such as tests.
+  in **Engine & model**. With a shell the agent's commands could use the run's token, which
+  reaches the model and the agent's tools until the run ends, so allow it only to an agent that has
+  to run commands, such as tests. The connection's key is never on the seat.
 - For more seats at once, start more: `docker compose --profile server-seat up -d --scale seat=3`.
 
 The seat's worker comes in its image. When **Admin → Computers** shows it out of date, start it

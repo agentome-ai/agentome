@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { devNull, tmpdir } from 'node:os';
@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { launchPackage } from '../test/fake-server.js';
-import { branchArtifact, prepareWorkspace, removeWorkspace } from './workspace.js';
+import { branchArtifact, prepareWorkspace, removeRun, removeWorkspace } from './workspace.js';
 
 // The clone and the kept commits through the git proxy, played here by `git
 // http-backend` behind Basic authentication with the run's git name and password.
@@ -178,5 +178,56 @@ describe('a workspace behind the git proxy', () => {
     const again = await branchArtifact(workspace, 'r3', true);
     expect(again.artifact?.ref).toBe('agent/fix');
     expect(await git(bare, 'branch', '--list', 'agent/run-r3')).toBe('');
+  });
+});
+
+describe("an agent's folder that stays, in a person's place", () => {
+  const place = { ...options, place: true };
+
+  it('is cloned once into the place, and outlives the run', async () => {
+    const home = join(dir, 'home-place-first');
+    const launch = proxied();
+    const workspace = await prepareWorkspace(home, launch, place);
+    expect(workspace.repo.startsWith(join(home, 'folders', launch.agent.id))).toBe(true);
+    expect(await git(workspace.repo, 'log', '--format=%s')).toBe('Start\n');
+    removeRun(home, launch.run.id, process.env);
+    expect(existsSync(join(workspace.repo, 'README.md'))).toBe(true);
+  });
+
+  it("keeps what git ignores, saves what the last run left, and trusts none of the folder's git", async () => {
+    const home = join(dir, 'home-place-again');
+    const first = proxied();
+    const before = await prepareWorkspace(home, first, place);
+    const folder = before.repo;
+    // The first run: a dependency git ignores, a change it did not commit, and a hook and a
+    // setting of its own in the folder's git.
+    writeFileSync(join(folder, '.gitignore'), 'node_modules/\n');
+    await git(folder, 'add', '.gitignore');
+    await git(folder, 'commit', '--quiet', '-m', 'Ignore dependencies');
+    await git(folder, 'push', '--quiet', 'origin', 'main');
+    mkdirSync(join(folder, 'node_modules', 'left-pad'), { recursive: true });
+    writeFileSync(join(folder, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1;\n');
+    writeFileSync(join(folder, 'README.md'), 'acme, half done\n');
+    writeFileSync(join(folder, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', {
+      mode: 0o755,
+    });
+    await git(folder, 'config', 'alias.st', '!echo planted');
+    removeRun(home, first.run.id, process.env);
+
+    const second = proxied();
+    second.run.id = '9c8f1a2b-3c4d-4e5f-8a6b-7c8d9e0f1a2b';
+    second.agent.id = first.agent.id;
+    const after = await prepareWorkspace(home, second, place);
+    expect(after.repo).toBe(folder);
+    expect(after.leftover).toBe('agent/leftover-9c8f1a2b');
+    // The change is on its branch, here and on the host; the tracked files are main's again.
+    expect(readFileSync(join(folder, 'README.md'), 'utf8')).toBe('acme\n');
+    expect(await git(bare, 'show', 'agent/leftover-9c8f1a2b:README.md')).toBe('acme, half done\n');
+    expect((await git(folder, 'rev-parse', '--abbrev-ref', 'HEAD')).trim()).toBe('main');
+    // What git ignores stayed.
+    expect(existsSync(join(folder, 'node_modules', 'left-pad', 'index.js'))).toBe(true);
+    // The hook and the setting the run planted are gone.
+    expect(existsSync(join(folder, '.git', 'hooks', 'pre-commit'))).toBe(false);
+    expect(readFileSync(join(folder, '.git', 'config'), 'utf8')).not.toContain('planted');
   });
 });

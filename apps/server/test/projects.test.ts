@@ -379,14 +379,110 @@ describe('projects', () => {
     expect((await call(maria, 'GET', `/api/tasks/${taskId}`)).statusCode).toBe(200);
   });
 
+  it("read their main repository's devcontainer services, which run once an admin approves them", async () => {
+    const { id } = await project('Shop');
+    host();
+    await connect(id, { kind: 'github', owner: 'acme' });
+    const files: Record<string, string> = {
+      dc: '{ "service": "app", "dockerComposeFile": "compose.yml" }',
+      compose: 'services:\n  app:\n    build: ..\n  db:\n    image: postgres:16\n',
+    };
+    const asked: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: Request | string) => {
+        const path = new URL(typeof input === 'string' ? input : input.url).pathname;
+        asked.push(path);
+        if (path === '/repos/acme/shop') {
+          return Response.json({
+            full_name: 'acme/shop',
+            clone_url: 'https://github.com/acme/shop.git',
+            html_url: 'https://github.com/acme/shop',
+            default_branch: 'main',
+          });
+        }
+        if (path === '/repos/acme/shop/git/trees/main') {
+          return Response.json({
+            truncated: false,
+            tree: [
+              { path: '.devcontainer/devcontainer.json', type: 'blob', sha: 'dc' },
+              { path: '.devcontainer/compose.yml', type: 'blob', sha: 'compose' },
+            ],
+          });
+        }
+        const blob = /^\/repos\/acme\/shop\/git\/blobs\/(\w+)$/.exec(path)?.[1];
+        if (blob) {
+          return Response.json({
+            content: Buffer.from(files[blob] ?? '').toString('base64'),
+            encoding: 'base64',
+          });
+        }
+        return Response.json({ message: 'Not Found' }, { status: 404 });
+      }),
+    );
+    // Setting the main repository reads its environment.
+    const set = await call(admin, 'PATCH', `/api/projects/${id}`, {
+      repositories: ['https://github.com/acme/shop'],
+    });
+    type Environment = {
+      devcontainer: string | null;
+      services: { name: string; image: string }[];
+      problems: string[];
+      hash: string;
+      approved: boolean;
+    };
+    const read = set.json<{ environment: Environment }>().environment;
+    expect(read).toMatchObject({
+      devcontainer: '.devcontainer/devcontainer.json',
+      services: [{ name: 'db', image: 'postgres:16' }],
+      problems: [],
+      approved: false,
+    });
+    // A person reads it again; only an admin lets it run, and only the list they saw.
+    const again = await call(maria, 'POST', `/api/projects/${id}/environment`);
+    expect(again.statusCode).toBe(403);
+    expect(
+      (await call(maria, 'POST', `/api/projects/${id}/environment/approve`, { hash: read.hash }))
+        .statusCode,
+    ).toBe(403);
+    const stale = await call(admin, 'POST', `/api/projects/${id}/environment/approve`, {
+      hash: 'f'.repeat(64),
+    });
+    expect(stale.statusCode).toBe(409);
+    const approved = await call(admin, 'POST', `/api/projects/${id}/environment/approve`, {
+      hash: read.hash,
+    });
+    expect(approved.json<{ environment: Environment }>().environment.approved).toBe(true);
+    // Another image in the repository needs approval again; the same list keeps it.
+    files.compose = 'services:\n  db:\n    image: postgres:17\n';
+    const changed = await call(admin, 'POST', `/api/projects/${id}/environment`);
+    expect(changed.json<{ environment: Environment }>().environment).toMatchObject({
+      services: [{ name: 'db', image: 'postgres:17' }],
+      approved: false,
+    });
+    expect(asked).toContain('/repos/acme/shop/git/trees/main');
+  });
+
   it('take a repository that a GitLab connection names as its group', async () => {
     const { id } = await project('One repository');
     // A connection made for one project, with a project access token, names the project.
-    await connect(id, {
+    const gitlab = await connect(id, {
       kind: 'gitlab',
       baseUrl: 'https://gitlab.example.com',
       group: 'acme/web/app',
     });
+    // Its token goes only to the GitLab it was entered for.
+    const elsewhere = await call(admin, 'PATCH', `/api/connections/${gitlab.id}`, {
+      config: {
+        kind: 'gitlab',
+        baseUrl: 'https://gitlab.elsewhere.example',
+        group: 'acme/web/app',
+      },
+    });
+    expect(elsewhere.statusCode).toBe(400);
+    expect(elsewhere.json<{ error: { message: string } }>().error.message).toMatch(
+      /Enter the token again/,
+    );
     const changed = await call(admin, 'PATCH', `/api/projects/${id}`, {
       repositories: ['https://gitlab.example.com/acme/web/app'],
     });
@@ -635,6 +731,16 @@ describe('connections', () => {
       config: { kind: 'gitlab', baseUrl: 'https://gitlab.example.com', group: 'acme' },
     });
     expect(turned.statusCode).toBe(400);
+
+    // The webhook's secret and the token go in and out of the browser's session only.
+    const made = await call(admin, 'POST', '/api/me/tokens', { name: 'scripts', scope: 'write' });
+    const bearer = { authorization: `Bearer ${made.json<{ token: string }>().token}` };
+    const byToken = await app.inject({
+      method: 'GET',
+      url: `/api/connections/${connection.id}/webhook`,
+      headers: bearer,
+    });
+    expect(byToken.statusCode).toBe(403);
 
     expect((await call(admin, 'DELETE', `/api/connections/${connection.id}`)).statusCode).toBe(204);
     expect((await call(admin, 'GET', `/api/connections/${connection.id}`)).statusCode).toBe(404);

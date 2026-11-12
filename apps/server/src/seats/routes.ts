@@ -28,7 +28,13 @@ import {
   PairBody,
   PairResponse,
 } from '../protocol.js';
-import { claimRun, LIVE_RUN_STATUSES, requestStop, type Tx } from '../runs/service.js';
+import {
+  claimRun,
+  LIVE_RUN_STATUSES,
+  ownerPresent,
+  requestStop,
+  type Tx,
+} from '../runs/service.js';
 import {
   bearerToken,
   hashSecret,
@@ -38,6 +44,8 @@ import {
 } from '../tokens.js';
 import type { Jobs } from '../jobs.js';
 import { tellJira } from '../jira/push.js';
+import type { Launcher } from '../places/client.js';
+import { PlaceShape, placeShaper } from '../places/shape.js';
 import { tagLog } from '../logs/context.js';
 import { storeWorkerLines } from '../logs/service.js';
 
@@ -53,7 +61,10 @@ const iso = (date: Date | null) => date?.toISOString() ?? null;
 const IdleMinutes = z.int().min(5).max(120);
 /** How the worker learns the seat's idle time: on every claim answer, 200 and 204 alike. */
 export const IDLE_MINUTES_HEADER = 'x-agentome-idle-minutes';
-/** On a claim answer with no run: `sandbox`, a Windows computer no admin has allowed yet. */
+/**
+ * On a claim answer with no run: `sandbox`, a Windows computer no admin has allowed yet;
+ * `presence`, a place whose person is away; `services`, a place getting its run's services ready.
+ */
 export const WAITING_HEADER = 'x-agentome-waiting';
 
 /** Whether a seat runs the agent's commands without a sandbox: a computer on Windows. */
@@ -107,7 +118,10 @@ export const seatRoutes: FastifyPluginAsyncZod<{
   jobs: Pick<Jobs, 'fileJira'>;
   /** The SHA-256 of the worker this server hands out at /connect; nothing when it has none. */
   bundle: string | undefined;
-}> = async (app, { db, config, jobs, bundle }) => {
+  /** People's places on the server, made ready for their next run's services. */
+  placeLauncher: Launcher | undefined;
+}> = async (app, { db, config, jobs, bundle, placeLauncher }) => {
+  const shape = placeShaper(db, placeLauncher, app.log);
   const bundled = bundle !== undefined;
   const server = config.publicUrl.replace(/\/+$/, '');
   /** The seats as people see them, each with the command that updates an older worker. */
@@ -185,7 +199,8 @@ export const seatRoutes: FastifyPluginAsyncZod<{
         if (!spent) throw await pairingRefusal(tx, codeHash);
         // A server seat runs anyone's server agents with the company's model keys: only
         // an admin's code makes one. A local-model seat is not used: its model is a connection's.
-        if (seat.kind !== 'subscription-laptop') {
+        // A computer and a person's own place on the server run only that person's agents.
+        if (seat.kind !== 'subscription-laptop' && seat.kind !== 'subscription-server') {
           const [owner] = await tx
             .select({ role: users.role })
             .from(users)
@@ -248,6 +263,10 @@ export const seatRoutes: FastifyPluginAsyncZod<{
       const seat = { ...found, engines: usable };
       reply.header(IDLE_MINUTES_HEADER, String(seat.idleMinutes));
       if (waits) reply.header(WAITING_HEADER, 'sandbox');
+      // A person's place on the server says why it waits; claimRun itself refuses it a run.
+      else if (seat.kind === 'subscription-server' && !(await ownerPresent(db, seat))) {
+        reply.header(WAITING_HEADER, 'presence');
+      }
       // Once the seat hangs up, nothing more is claimed for it.
       const hungUp = new AbortController();
       reply.raw.once('close', () => hungUp.abort());
@@ -255,7 +274,7 @@ export const seatRoutes: FastifyPluginAsyncZod<{
       const stop = AbortSignal.any([hungUp.signal, closing.signal]);
       const deadline = Date.now() + request.query.wait * 1000;
       const { runLimits: limits, publicUrl, secretKey } = config;
-      const options = { limits, publicUrl, secretKey };
+      const options = { limits, publicUrl, secretKey, shape };
       while (!stop.aborted) {
         const launch = usable.length ? await claimRun(db, seat, options) : undefined;
         if (launch) {
@@ -269,6 +288,16 @@ export const seatRoutes: FastifyPluginAsyncZod<{
         if (remaining <= 0) break;
         const pause = Math.min(CLAIM_POLL_MS, remaining);
         if (!(await sleep(pause, true, { signal: stop }).catch(() => false))) break;
+      }
+      // A place whose services are being started says so: its run is on the way.
+      if (seat.kind === 'subscription-server') {
+        const [row] = await db
+          .select({ shape: seats.placeShape })
+          .from(seats)
+          .where(eq(seats.id, seat.id));
+        if (PlaceShape.safeParse(row?.shape).data?.state === 'preparing') {
+          reply.header(WAITING_HEADER, 'services');
+        }
       }
       return reply.code(204).send(null);
     },

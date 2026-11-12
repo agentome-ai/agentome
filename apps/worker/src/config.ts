@@ -1,5 +1,13 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -25,6 +33,13 @@ export interface Settings {
    * each run, so that its container starts the next one clean.
    */
   server: boolean;
+  /**
+   * `AGENTOME_WORKER_PLACE=1`: a person's own place on the company's server, in the container the
+   * platform made for them. It pairs as one and runs its owner's agents under their subscription;
+   * whether the owner is at work is the server's to say, from the web app, as there is no keyboard
+   * here to measure.
+   */
+  place: boolean;
 }
 
 export function readSettings(env: NodeJS.ProcessEnv = process.env): Settings {
@@ -41,6 +56,7 @@ export function readSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     idleMinutes,
     keepWorkspaces: env.AGENTOME_WORKER_KEEP_WORKSPACES?.trim() === '1',
     server: env.AGENTOME_WORKER_SERVER?.trim() === '1',
+    place: env.AGENTOME_WORKER_PLACE?.trim() === '1',
   };
 }
 
@@ -66,10 +82,18 @@ export function readConnection(home: string): Connection | undefined {
   );
 }
 
+/**
+ * A folder that existed before is the owner's alone from now on, too. A volume's root on
+ * Kubernetes is root's and cannot be changed by the place's user, the only one in its container:
+ * it is taken as it is. The connection file is the owner's alone either way.
+ */
+export function privateFolder(folder: string, uid = process.getuid?.()): void {
+  if (uid === undefined || statSync(folder).uid === uid) chmodSync(folder, 0o700);
+}
+
 export function writeConnection(home: string, connection: Connection): void {
   mkdirSync(home, { recursive: true, mode: 0o700 });
-  // A folder that existed before is the owner's alone from now on, too.
-  chmodSync(home, 0o700);
+  privateFolder(home);
   writePrivate(connectionFile(home), `${JSON.stringify(connection, null, 2)}\n`);
 }
 

@@ -198,10 +198,19 @@ Node, reinstalling dependencies or connecting again.
   CLI's own sign-in file (`CREDENTIALS` in `workspace.ts`). The server does not know the home
   folder, so the list is the worker's.
 
-What the agent may still read is the rest of the disk, the person's home included: its
-toolchains are all over it. Closing the home and letting the workspace and the toolchains
-through by name (`sandbox.filesystem.allowRead`) is stronger, and waits for a check on a live
-computer.
+- **Not the person's home folder at all.** On macOS and Linux the home folder is closed whole to
+  sandboxed commands (`denyRead` on it) and opened again only for the run's own folder and the
+  toolchains the computer has (`allowRead`: `.nvm`, `.cargo/bin`, `.m2/repository`, `.cache` and the
+  like, `TOOLCHAINS` in `workspace.ts`); the file tools get a deny rule on everything in the home
+  folder but the worker's own folder, whose secrets are denied by name. The agent's git reads no
+  global config (`GIT_CONFIG_GLOBAL=/dev/null`). Checked on a live Mac: `ls ~` and `cat ~/…` are
+  refused, the Read tool is refused, `node` and `git commit` in the workspace work.
+- **Not the person's Claude Code settings.** The CLI loads none of its setting sources
+  (`--setting-sources ''`): the person's allowed tools, sandbox exclusions, hooks and plugins do not
+  reach the run. Their sign-in still does: it is the keychain's or its file's, not a setting.
+
+What the agent may still read is the disk outside the home folder: the system and the tools
+installed there.
 
 ## To check on a live CLI
 

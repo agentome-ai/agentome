@@ -143,6 +143,13 @@ export async function updateModelConnection(
 ) {
   const row = await rowFor(db, id);
   if (input.name) await nameFree(db, input.name, id);
+  // The stored key goes only to the address it was entered for: a new address takes it anew.
+  if (input.baseUrl !== undefined && input.baseUrl !== row.baseUrl && input.key === undefined) {
+    throw new AppError(
+      'validation_failed',
+      'Enter the key again for the new address: a saved key goes only where it was entered for',
+    );
+  }
   const baseUrl = input.baseUrl ?? row.baseUrl;
   const key = input.key ?? decryptSecret(secret, row.keyCiphertext);
   const recheck = input.baseUrl !== undefined || input.key !== undefined;

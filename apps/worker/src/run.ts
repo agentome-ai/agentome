@@ -39,6 +39,8 @@ export interface RunDeps {
   env?: NodeJS.ProcessEnv;
   /** A server seat: the run takes its model connection's key, never a subscription. */
   server?: boolean;
+  /** A person's place on the server: an agent's folder for a repository stays between runs. */
+  place?: boolean;
   /** `endMs`: how long the end of a run is retried; after that, the server's reaper closes it. */
   timing?: Partial<Timing>;
 }
@@ -178,8 +180,24 @@ export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<
     if (launch.task === null) {
       outcome = end('no_task', 'This run has no task, and this worker runs only tasks.');
     } else {
-      const seat = { signal, timeout: left(), server: deps.server === true };
+      const seat = {
+        signal,
+        timeout: left(),
+        server: deps.server === true,
+        place: deps.place === true,
+      };
       workspace = await prepareWorkspace(deps.home, launch, seat);
+      if (workspace.leftover) {
+        const message = `What the last run left uncommitted in this folder is saved on ${workspace.leftover}.`;
+        sink({
+          type: 'error',
+          code: 'leftover_saved',
+          message,
+          fatal: false,
+          seq: nextSeq,
+          at: new Date().toISOString(),
+        });
+      }
       // The agent's engine runs it: Claude Code, or Codex.
       const engine = launch.agent.engine === 'codex' ? codex : claude;
       const waited = () => waitedMs;
@@ -241,7 +259,7 @@ async function claude(
   deps: RunDeps,
   waitedMs: () => number,
 ): Promise<ClaudeRunOutcome> {
-  const env = deps.env ?? process.env;
+  const env = egressOf(deps.env ?? process.env, launch.run.token, launch.workspace.services);
   // A computer is its owner's subscription: a key in the environment would bill the
   // person's own account, a personal credential, so the launcher keeps it from the CLI,
   // and a key the server sent is never used there. A server seat uses the key it was sent and
@@ -268,6 +286,27 @@ async function claude(
   return runClaude({ ...run, cliPath: deps.cliPath }, sink, signal);
 }
 
+/**
+ * In a person's place, the run's calls out go through the egress proxy under the run's own token,
+ * which opens what its task's project allows; the place's token, for sign-in, stays out of it.
+ * The project's services beside the agent are reached directly, by their names.
+ */
+export function egressOf(env: NodeJS.ProcessEnv, token: string, services: string[] = []) {
+  const proxy = env.AGENTOME_PLACE_EGRESS;
+  if (!proxy) return env;
+  const url = `http://run:${encodeURIComponent(token)}@${proxy}`;
+  const direct = [env.NO_PROXY, ...services].filter(Boolean).join(',');
+  return {
+    ...env,
+    HTTPS_PROXY: url,
+    HTTP_PROXY: url,
+    https_proxy: url,
+    http_proxy: url,
+    NO_PROXY: direct,
+    no_proxy: direct,
+  };
+}
+
 async function codex(
   launch: LaunchPackage,
   task: Task,
@@ -278,7 +317,7 @@ async function codex(
   deps: RunDeps,
   waitedMs: () => number,
 ): Promise<ClaudeRunOutcome> {
-  const env = deps.env ?? process.env;
+  const env = egressOf(deps.env ?? process.env, launch.run.token, launch.workspace.services);
   const server = deps.server === true;
   const model = launch.model;
   // A computer is its owner's ChatGPT sign-in; a server seat the connection it was sent.

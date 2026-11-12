@@ -1,3 +1,4 @@
+import { environmentView } from './environment.js';
 import {
   agents,
   and,
@@ -199,6 +200,8 @@ export async function projectView(db: Db, id: string) {
     description: found.row.description,
     goals: found.row.goals,
     repositories: found.row.repositories,
+    allowedHosts: found.row.allowedHosts,
+    environment: environmentView(found.row),
     agents: members,
     connections,
     week: weekOf(found.week),
@@ -226,6 +229,7 @@ export async function updateProject(
     description?: string;
     goals?: string;
     repositories?: string[];
+    allowedHosts?: string[];
     teamId?: string | null;
     intake?: 'manual' | 'auto';
     usdPerMonth?: number | null;

@@ -21,9 +21,10 @@
     "@agentome/shared": "workspace:*",
     "@fastify/static": "^10.1.6",
     "@fastify/swagger": "^9.9.2",
+    "@fastify/websocket": "^11.3.7",
     "@gitbeaker/rest": "43.8.0",
     "@modelcontextprotocol/sdk": "1.32.1",
-    "better-auth": "^1.7.11",
+    "better-auth": "1.7.18",
     "drizzle-orm": "^0.45.4",
     "fastify": "^5.12.7",
     "fastify-type-provider-zod": "^7.0.0",
@@ -31,6 +32,7 @@
     "pg-boss": "^12.38.0",
     "postgres": "^3.4.9",
     "web-push": "^3.6.7",
+    "yaml": "^2.9.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

@@ -204,6 +204,12 @@ describe('model connections', () => {
       key: 'wrong',
     });
     expect(wrongKey.json().error.code).toBe('connection_unauthorized');
+    // The saved key goes only to the address it was entered for.
+    const moved = await as(adminCookie, 'PATCH', `/api/model-connections/${id}`, {
+      baseUrl: 'https://gateway.elsewhere.example',
+    });
+    expect(moved.statusCode).toBe(400);
+    expect(moved.json().error.message).toMatch(/Enter the key again/);
 
     expect((await as(adminCookie, 'DELETE', `/api/model-connections/${id}`)).statusCode).toBe(204);
     expect((await as(adminCookie, 'POST', `/api/model-connections/${id}/check`)).statusCode).toBe(

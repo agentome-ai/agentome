@@ -132,6 +132,9 @@ export const LaunchPackage = z.object({
     // The git proxy, when the task's repository is connected: clone and push go
     // here with the run's git password, which opens nothing else.
     git: z.object({ url: z.string(), username: z.string(), password: z.string() }).optional(),
+    // In a person's place, the project's services running beside the agent, by the names it
+    // reaches them at: the worker keeps calls to them off the egress proxy.
+    services: z.array(z.string()).optional(),
     profile: z.object({
       claudeMd: z.string(),
       /** The task's project, for PROJECT.md; absent when the task has none. */

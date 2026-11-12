@@ -6,7 +6,7 @@ export type Seat = {
   name: string;
   /** Whose computer it is; the pages say the person, not the machine. */
   owner: { id: string; name: string };
-  kind: 'subscription-laptop' | 'api-server' | 'local-model';
+  kind: 'subscription-laptop' | 'api-server' | 'local-model' | 'subscription-server';
   status: 'active' | 'revoked';
   lastSeenAt: string | null;
   /** Minutes without a person at the computer after which it takes no runs; 5 to 120. */

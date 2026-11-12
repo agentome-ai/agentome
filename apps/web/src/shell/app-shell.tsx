@@ -13,6 +13,7 @@ import { PullToRefresh } from './pull-to-refresh';
 import { footerSections, mainSections, paletteKey, type Section, tabPaths } from './sections';
 import { TabIcon } from './tab-icons';
 import { LicenseBanner } from './license-banner';
+import { reportPresence } from './presence';
 
 export type ShellData = {
   approvalsWaiting: number;
@@ -68,6 +69,9 @@ export function AppShell({
     onSignOut,
     onAccountSaved,
   };
+
+  // While the person works here, their place on the server may run their agents.
+  React.useEffect(() => reportPresence(), []);
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

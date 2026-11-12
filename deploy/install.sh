@@ -128,6 +128,19 @@ main() {
     download deploy/Caddyfile
   fi
 
+  # A new installation gets a database password of its own. One whose database exists keeps the
+  # password the database was made with: changing it here would lock the app out.
+  if ! grep -q '^AGENTOME_POSTGRES_PASSWORD=.' .env 2>/dev/null &&
+    ! docker volume inspect agentome_agentome-postgres >/dev/null 2>&1; then
+    password=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
+    umask 077
+    # In place of an empty line copied from .env.example, or as a new one.
+    { grep -v '^AGENTOME_POSTGRES_PASSWORD=$' .env 2>/dev/null || true
+      printf 'AGENTOME_POSTGRES_PASSWORD=%s\n' "$password"; } >.env.new
+    mv .env.new .env
+    echo 'Made a password for the database, in .env.'
+  fi
+
   docker compose pull || fail 'cannot pull the images from Docker Hub; check that this machine
   reaches docker.io, or set AGENTOME_VERSION to a release that exists'
   docker compose up -d --wait --wait-timeout 120 ||
