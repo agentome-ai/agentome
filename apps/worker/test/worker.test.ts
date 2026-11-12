@@ -393,9 +393,16 @@ describe('the seat', () => {
       { idle: async () => idleMinutes * 60_000, awayPauseMs: 10 },
     );
     const run = fake.enqueue(launchPackage());
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Until the worker has looked: a slow machine takes longer than any fixed wait to start it.
+    const away = () => {
+      try {
+        return 'awaySince' in JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
+      } catch {
+        return false;
+      }
+    };
+    await waitFor(away);
     expect(fake.claims).toBe(0);
-    expect(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))).toHaveProperty('awaySince');
     idleMinutes = 1;
     await waitFor(() => run.finish !== undefined);
     worker.stop();
