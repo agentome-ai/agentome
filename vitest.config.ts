@@ -6,5 +6,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
+    // A shared CI runner is several times slower than a developer's machine: 5 s failed tests
+    // that pass, and a test that hangs still ends.
+    testTimeout: 20_000,
   },
 });

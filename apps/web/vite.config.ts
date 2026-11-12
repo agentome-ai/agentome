@@ -16,5 +16,7 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['src/test-setup.ts'],
+    // As in the shared vitest.config.ts: room for a slow CI runner.
+    testTimeout: 20_000,
   },
 });
