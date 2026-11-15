@@ -27,15 +27,29 @@ Pick one of the two ways.
 **With the install script.** On the server machine, run:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/agentome-ai/agentome/main/deploy/install.sh | sh
+curl -fsSL https://agentome.ai/install.sh | sh
 ```
 
-The script creates the folder `./agentome`, downloads `compose.yaml` into it, pulls the images from
-Docker Hub and starts the server and PostgreSQL. When the server is healthy it prints a line like
-this:
+The script asks three things: the folder for the server (`./agentome`), the domain people open
+(for HTTPS with a Let's Encrypt certificate; Enter keeps the server on this machine only), and
+whether people's agents run here, in places on the server. With places, it turns gVisor on when
+Docker has it. It then downloads the release's `compose.yaml`, writes `.env`, pulls the images
+from Docker Hub and starts everything. When the server is healthy it prints a line like this:
 
 ```text
 Agentome is running. Open http://localhost:3000/setup to create the administrator, with the setup code <code>
+```
+
+The script also puts an `agentome` command on the machine (in `~/.local/bin`, or
+`/usr/local/bin` for root), which runs this server from any folder: `agentome status`,
+`agentome update`, `agentome backup`, `agentome logs`, `agentome setup-code`;
+`agentome help` lists them all.
+
+Without a terminal, give the answers as flags:
+
+```sh
+curl -fsSL https://agentome.ai/install.sh | sh -s -- --domain agentome.example.com --places
+curl -fsSL https://agentome.ai/install.sh | sh -s -- --help
 ```
 
 Keep the setup code for step 2.

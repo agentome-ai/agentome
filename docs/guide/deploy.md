@@ -24,6 +24,15 @@ setting is in [Configuration](../../deploy/CONFIG.md).
 
 ## Install with Docker Compose
 
+Once gVisor is registered with Docker (step 2 below), one command does steps 1 and 3: it asks for
+the domain and whether places run here, and turns gVisor on for them.
+
+```sh
+curl -fsSL https://agentome.ai/install.sh | sh -s -- --domain agentome.example.com --places
+```
+
+By hand, or to see what it does:
+
 1. Install the server as in [Getting started](getting-started.md#1-install-the-server), and
    give it HTTPS: with a public name, the `proxy` profile gets a certificate from Let's Encrypt
    ([HTTPS with the proxy profile](../../deploy/OPERATIONS.md#https-with-the-proxy-profile));
@@ -113,9 +122,10 @@ loop a public address back inside, give the name an internal record, or an alias
 
 ## Keep it running
 
-- **Updates:** take a backup, set the new version and `docker compose up -d`; places are made anew
-  from the new image when they next wake. See
-  [Updating](../../deploy/OPERATIONS.md#updating).
+The install script's `agentome` command does these from any folder on the server:
+
+- **Updates:** `agentome backup`, then `agentome update`; places are made anew from the new image
+  when they next wake. See [Updating](../../deploy/OPERATIONS.md#updating).
 - **Backups:** `agentome backup` writes the database; keep the secret key apart from it. See
   [Backing up and restoring](../../deploy/OPERATIONS.md#backing-up-and-restoring).
 - **A key that may have leaked:** `agentome rotate-key` seals every secret under a new one. See
