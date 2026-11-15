@@ -49,7 +49,9 @@ export const invitationRoutes: FastifyPluginAsyncZod<{
   db: Db;
   auth: Auth;
   publicUrl: string;
-}> = async (app, { db, auth, publicUrl }) => {
+  /** Whether people sign in with a password here; off, they join through Keycloak. */
+  passwordSignIn: boolean;
+}> = async (app, { db, auth, publicUrl, passwordSignIn }) => {
   app.post(
     '/api/invitations',
     {
@@ -61,6 +63,12 @@ export const invitationRoutes: FastifyPluginAsyncZod<{
       },
     },
     async (request, reply) => {
+      if (!passwordSignIn) {
+        throw new AppError(
+          'forbidden',
+          'People join through Keycloak here: their first sign-in makes their account, and an admin makes them admins in People',
+        );
+      }
       // An invitation makes an account, which would outlive the personal token that made it.
       browserOnly(request);
       const token = randomBytes(32).toString('base64url');
@@ -203,6 +211,13 @@ export const invitationRoutes: FastifyPluginAsyncZod<{
       },
     },
     async (request, reply) => {
+      // Without passwords, people join through Keycloak: an invitation would make a password.
+      if (!passwordSignIn) {
+        throw new AppError(
+          'forbidden',
+          'Sign in with Keycloak: your first sign-in makes your account',
+        );
+      }
       const { name, email, password } = request.body;
       const find = (executor: Pick<Db, 'select'>) =>
         executor

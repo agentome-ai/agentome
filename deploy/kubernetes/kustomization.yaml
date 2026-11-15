@@ -21,7 +21,7 @@ components:
 # The release: an update or a rollback changes newTag.
 images:
   - name: docker.io/agentome/agentome
-    newTag: 0.2.0
+    newTag: 0.3.0
 
 # The server's settings (deploy/CONFIG.md); add any other one as NAME=value. Secrets go into
 # the Secret instead. A change here restarts the server on the next apply.
@@ -30,7 +30,9 @@ configMapGenerator:
     literals:
       # The address people open and computers connect to. The Ingress takes its host from it.
       - AGENTOME_PUBLIC_URL=https://agentome.example.com
-      # Behind the Ingress the client's address comes in X-Forwarded-For.
+      # Behind the Ingress the client's address comes in X-Forwarded-For. Name the ingress
+      # controller's pods' network (10.42.0.0/16, say) instead of true: with true a place, which
+      # reaches the app directly, could claim another address.
       - AGENTOME_TRUST_PROXY=true
       - AGENTOME_LOG_LEVEL=info
 

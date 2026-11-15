@@ -70,7 +70,7 @@ export function PeoplePage() {
     }
   }
 
-  const { seats } = useSeats();
+  const { seats, reload: reloadSeats } = useSeats();
   const header = (actions?: ReactNode) => (
     <PageHeader title="People" crumbs={[{ label: 'Admin', to: '/admin' }]} actions={actions} />
   );
@@ -133,6 +133,29 @@ export function PeoplePage() {
                         <M.DropdownMenuItem onSelect={() => setHanding(person)}>
                           Transfer agents
                         </M.DropdownMenuItem>
+                        {seats?.some(
+                          (seat) =>
+                            seat.owner.id === person.id &&
+                            seat.kind === 'subscription-server' &&
+                            seat.status === 'active',
+                        ) && (
+                          <M.DropdownMenuItem
+                            variant="danger"
+                            onSelect={() =>
+                              setConfirmation({
+                                title: `Delete ${person.name}’s place?`,
+                                description: `The place on the server is deleted with its volumes: ${person.name}’s sign-in to Claude Code and Codex and their agents’ working folders. A run in it stops. ${person.name} can make a new place from Computers.`,
+                                action: 'Delete place',
+                                run: () =>
+                                  api(`/api/users/${person.id}/place`, { method: 'DELETE' }).then(
+                                    reloadSeats,
+                                  ),
+                              })
+                            }
+                          >
+                            Delete place
+                          </M.DropdownMenuItem>
+                        )}
                         {person.disabledAt ? (
                           <M.DropdownMenuItem onSelect={() => void enable(person)}>
                             Enable

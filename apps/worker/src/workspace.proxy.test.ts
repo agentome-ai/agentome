@@ -102,6 +102,35 @@ function proxied() {
   return launch;
 }
 
+describe("the worker's clone", () => {
+  it("never signs in with the person's ~/.netrc", async () => {
+    // Their own git would: the host takes the run's name and password from the file.
+    const person = join(dir, 'person');
+    mkdirSync(person, { recursive: true });
+    const [host, port] = new URL(url).host.split(':');
+    const netrc = `machine ${host ?? ''} port ${port ?? ''} login ${ACCESS.username} password ${ACCESS.password}\n`;
+    writeFileSync(join(person, '.netrc'), netrc, { mode: 0o600 });
+    const theirs = mkdtempSync(join(dir, 'theirs-'));
+    await exec('git', ['clone', '--quiet', url, theirs], {
+      env: {
+        PATH: process.env.PATH,
+        HOME: person,
+        GIT_CONFIG_GLOBAL: devNull,
+        GIT_TERMINAL_PROMPT: '0',
+      },
+    });
+
+    const before = process.env.HOME;
+    process.env.HOME = person;
+    try {
+      const launch = launchPackage({ repository: url });
+      await expect(prepareWorkspace(join(dir, 'home-netrc'), launch, options)).rejects.toThrow();
+    } finally {
+      process.env.HOME = before;
+    }
+  });
+});
+
 describe('a workspace behind the git proxy', () => {
   it('clones through the proxy and leaves the agent a helper that only reads the password', async () => {
     const home = join(dir, 'home-clone');
@@ -117,11 +146,11 @@ describe('a workspace behind the git proxy', () => {
       'credential.helper',
     );
     expect(helpers.split('\n')[0]).toBe('');
-    expect(helpers).toContain('git-credentials');
+    expect(helpers).toContain('git/credentials');
     expect(readFileSync(join(workspace.repo, '.git', 'config'), 'utf8')).not.toContain(
       ACCESS.password,
     );
-    const file = join(workspace.dir, 'git-credentials');
+    const file = join(workspace.dir, 'git', 'credentials');
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(file.startsWith(workspace.repo)).toBe(false);
 
@@ -147,7 +176,7 @@ describe('a workspace behind the git proxy', () => {
     );
     const config = readFileSync(join(workspace.repo, '.git', 'config'), 'utf8');
     expect(config).not.toContain('insteadOf');
-    expect(config).toContain('git-credentials');
+    expect(config).toContain('git/credentials');
   });
 
   it('pushes the commits the agent left unpushed to a branch of the run', async () => {

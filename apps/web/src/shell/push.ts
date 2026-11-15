@@ -30,7 +30,17 @@ export async function pushState(): Promise<PushState> {
   if (!window.isSecureContext) return 'insecure';
   if (!supported()) return apple() && !standalone() ? 'install' : 'unsupported';
   if (Notification.permission === 'denied') return 'denied';
-  return (await subscription()) ? 'on' : 'off';
+  const current = await subscription();
+  if (!current) return 'off';
+  // Made to the key the server had before its secret key was rotated: that one gets nothing.
+  const key = current.options?.applicationServerKey;
+  if (!key) return 'on';
+  const { publicKey } = await api<{ publicKey: string }>('/api/me/push');
+  return sameBytes(new Uint8Array(key), base64url(publicKey)) ? 'on' : 'off';
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array) {
+  return a.length === b.length && a.every((byte, i) => byte === b[i]);
 }
 
 /** Asks for permission and subscribes this browser; must run from a tap or a click. */

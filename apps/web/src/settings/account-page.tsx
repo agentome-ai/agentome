@@ -9,11 +9,12 @@ import { cn } from '../ui/cn';
 import { FormError } from '../ui/field';
 import { Input } from '../ui/input';
 import { Panel, Row } from './panel';
+import { TwoStepPanel } from './two-step';
 
-// The person's own account: their name, the email they sign in with, and their password. A
-// new email and a new password both ask for the current password (PATCH /api/me and
-// better-auth's change-password); a new password signs the person's other devices out. A page
-// of its own, in panels as Linear's settings, where it was a dialog.
+// The person's own account: their name, the email they sign in with, their password and its
+// second step. A new email and a new password both ask for the current password (PATCH /api/me
+// and better-auth's change-password); a new password signs the person's other devices out. A
+// page of its own, in panels as Linear's settings, where it was a dialog.
 
 const wrongPassword = 'The current password is wrong. Check it, then try again.';
 const say = (error: ApiError) =>
@@ -28,6 +29,7 @@ export function AccountPage() {
       <div className={cn('grid gap-8 pt-8 pb-24 max-md:gap-5.5 max-md:pt-3', frame.read)}>
         <Profile name={me.name} email={me.email} onSaved={() => onAccountSaved?.()} />
         <Password />
+        <TwoStepPanel />
       </div>
     </>
   );

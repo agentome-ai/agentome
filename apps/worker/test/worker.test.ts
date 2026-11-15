@@ -424,8 +424,10 @@ describe('the seat', () => {
   });
 
   it('on a server seat, runs with the connection the server sent and exits after one run', async () => {
+    const base = launchPackage();
     const launch = {
-      ...launchPackage(),
+      ...base,
+      agent: { ...base.agent, modelPref: 'anthropic/claude-sonnet-4.5' },
       model: {
         kind: 'gateway' as const,
         baseUrl: 'https://openrouter.ai/api',
@@ -449,6 +451,9 @@ describe('the seat', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-or-agents');
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    // The CLI's background calls go to the agent's model, which the relay lets through.
+    expect(env.ANTHROPIC_SMALL_FAST_MODEL).toBe('anthropic/claude-sonnet-4.5');
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('anthropic/claude-sonnet-4.5');
   });
 
   it("on a server seat, keeps the model key out of the run's transcript and summary", async () => {
@@ -578,7 +583,7 @@ describe('the seat', () => {
     const profile = invocation.args.find((arg) => arg.startsWith('permissions.agentome=')) ?? '';
     // Its profile folder to read, the platform's host to reach, and the older sandbox not named.
     expect(profile).toContain(`${join(home, 'runs', run.launch.run.id, 'profile')}" = "read"`);
-    expect(profile).toContain('"agentome.test" = "allow"');
+    expect(profile).toContain('"127.0.0.1" = "allow"');
     expect(invocation.args.some((arg) => arg.startsWith('sandbox_mode'))).toBe(false);
   });
 
@@ -588,6 +593,53 @@ describe('the seat', () => {
     expect(await worker.done).toBe('disconnected');
     expect(worker.logs).toContain(`error ${DISCONNECTED}`);
   });
+});
+
+describe("a person's place", () => {
+  it("runs each run's CLI in the run's own container, reports it by the seat and clears the sign-in", async () => {
+    // A socket's path is short on macOS (104 bytes): the place's home is /seat in a place.
+    const seatHome = mkdtempSync('/tmp/agentome-seat-');
+    await fake.close();
+    fake = await startFakeServer({ placeHome: seatHome });
+    connection = { serverUrl: fake.url, seatId: 'seat', token: fake.seatToken };
+    const signIn = join(dir, 'person');
+    mkdirSync(join(signIn, '.claude', 'skills', 'left'), { recursive: true });
+    writeFileSync(join(signIn, '.claude', '.credentials.json'), 'the sign-in');
+    const run = fake.enqueue(launchPackage());
+    const worker = start(
+      { CLAUDE_FAKE_FIXTURE: fixture('success-text.jsonl') },
+      {
+        settings: {
+          home: seatHome,
+          idleMinutes: 15,
+          keepWorkspaces: false,
+          server: false,
+          place: true,
+          signInHome: signIn,
+        },
+      },
+    );
+    await vi
+      .waitFor(() => expect(run.finish?.status).toBe('done'), { timeout: 10_000 })
+      .catch((error: unknown) => {
+        throw new Error(
+          `${String(error)}\n${worker.logs.join('\n')}\n${fake.containers.join('\n')}`,
+        );
+      });
+    worker.stop();
+    await worker.done;
+    // The run's container was asked for, then deleted, by the place's seat.
+    expect(fake.containers).toEqual([
+      `start ${run.launch.run.id} no folder`,
+      `end ${run.launch.run.id}`,
+    ]);
+    // The CLI ran there and its transcript came back as from here.
+    expect([...run.events.values()].some((event) => event.type === 'result')).toBe(true);
+    // What a run could leave for the next is gone; the sign-in stays.
+    expect(existsSync(join(signIn, '.claude', 'skills'))).toBe(false);
+    expect(readFileSync(join(signIn, '.claude', '.credentials.json'), 'utf8')).toBe('the sign-in');
+    rmSync(seatHome, { recursive: true, force: true });
+  }, 20_000);
 });
 
 describe('agentome-worker connect', () => {

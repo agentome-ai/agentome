@@ -30,8 +30,14 @@ people who use agents and for the admins who run the installation.
   with an API key; connecting a computer and keeping its worker up to date.
 - [Integrations](integrations.md): GitLab, GitHub, Jira Data Center, MCP servers, model connections
   and Keycloak.
+- [Deploy on your server](deploy.md): what the company's server needs, places under gVisor with
+  Docker Compose or Kubernetes, the network agents get, and a checklist before a pilot.
+- [Security](security.md): what an agent can reach, where each secret lives, and what Agentome
+  does not protect.
 - [Administration](administration.md): people, the license, the version and updates, backups, logs,
   API tokens, and managing Agentome from Claude Code or Codex.
+- [API](api.md): signing in with a token, filing a task and following its run from a script, and
+  the reference of every call.
 
 ## For operators
 

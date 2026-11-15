@@ -1,0 +1,1 @@
+ALTER TABLE "installation" ADD COLUMN "installation_id" text;

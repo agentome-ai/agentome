@@ -320,6 +320,11 @@ describe('the routes', () => {
     expect(bundle.statusCode).toBe(200);
     expect(bundle.headers['cache-control']).toBe('no-store');
     expect(bundle.body).toBe(WORKER);
+
+    // `agentome connect` reads the checksum it checks the worker against from here.
+    const said = await app.inject({ method: 'GET', url: '/connect/worker.json' });
+    expect(said.headers['cache-control']).toBe('no-store');
+    expect(said.json()).toEqual({ sha256 });
   });
 
   it('are a JSON 404 on a server without the bundle', async () => {

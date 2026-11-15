@@ -169,8 +169,10 @@ update it. Details, and how to roll back, are in [Updating](../../deploy/OPERATI
 
 ## Backups and restore
 
-A backup is one `.tar.gz` with the database and the data directory, which holds the server's secret
-key. Keep it as carefully as the server itself.
+A backup is one `.tar.gz` with the database. The server's secret key is not in it, so that a backup
+that leaked opens none of the integrations' tokens: keep a copy of the key once, apart from the
+backups, in a password manager or a vault (`docker compose exec -T app cat /data/secrets/secret.key`).
+A restore on another machine needs it in place first.
 
 Take one, while the server runs:
 
@@ -187,7 +189,8 @@ docker compose up -d
 ```
 
 Restore with the version that made the backup, or a newer one. The same commands move an
-installation to another machine. Scheduling backups and what can go wrong are in
+installation to another machine, with the key put there first. Encrypting backups, scheduling
+them and what can go wrong are in
 [Backing up and restoring](../../deploy/OPERATIONS.md#backing-up-and-restoring).
 
 ## A forgotten password
@@ -305,6 +308,32 @@ codex mcp add agentome --url https://<server>/mcp/manage --bearer-token-env-var 
 
 Then start Codex where `AGENTOME_TOKEN` holds the token, for example after
 `export AGENTOME_TOKEN=<token>` in your shell profile. `codex mcp list` shows the server.
+
+### Connect Claude Desktop or another client
+
+A client that starts a program rather than calling an address with a header, such as Claude
+Desktop, runs `agentome mcp` from npm, which passes its messages on to your server. It needs
+Node.js 20 or later. In Claude Desktop, open **Settings**, **Developer**, **Edit Config**, and add
+the server to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "agentome": {
+      "command": "npx",
+      "args": ["-y", "agentome", "mcp"],
+      "env": {
+        "AGENTOME_URL": "https://<server>",
+        "AGENTOME_TOKEN": "<token>"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop. The token is kept in that file, so revoke it if the file leaks. Agentome is
+also listed in the MCP Registry as `io.github.agentome-ai/agentome`, for clients that install
+servers from there.
 
 ### What it can do
 

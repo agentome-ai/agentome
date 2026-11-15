@@ -1,22 +1,26 @@
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { request as httpRequest, type IncomingMessage, type Server, createServer } from 'node:http';
-import { connect } from 'node:net';
+import { BlockList, connect, isIP } from 'node:net';
 import type { Duplex } from 'node:stream';
-import { hostAllowed } from './egress.js';
+import { type HostMatch, hostAllowed } from './egress.js';
 
-// The only way out of the places' network. A place sends every call out through here with a
-// token in the proxy URL: a run's own while it runs, the person's place token in its terminal.
-// The proxy asks the app which hosts that token opens, keeps the answer a minute, and connects
-// only to those. It never reads the traffic: HTTPS passes through CONNECT as it is.
+// The only way out of the places' network, and of the server seat's. A place sends every call
+// out through here with a token in the proxy URL: a run's own while it runs, the person's place
+// token in its terminal; the server seat its own, to install its CLI.
+// The proxy asks the app which hosts that token opens, keeps the answer 15 seconds, and connects
+// only to those, on their port, at an address it checked. Through CONNECT only TLS passes, to
+// the server name that was asked for: the proxy reads the ClientHello for it, and nothing else.
 
 /** Whom the hosts are for, and the hosts; undefined when the app refuses the token. */
 export type Opened = { who: string; hosts: string[] };
 export type HostsOf = (
-  kind: 'run' | 'place',
+  kind: 'run' | 'cli' | 'docker' | 'place' | 'seat',
   id: string | undefined,
   token: string,
 ) => Promise<Opened | undefined>;
 
-const KEEP_MS = 60_000;
+// A run that ends, a host taken off a project's list: closed within this long.
+const KEEP_MS = 15_000;
 const KEEP_REFUSED_MS = 10_000;
 const MAX_KEPT = 2_000;
 /** What the proxy did goes to the app this often; a host it lets out, once a minute a token. */
@@ -25,7 +29,7 @@ const REPORT_ALLOWED_MS = 60_000;
 
 /** A host the proxy let out or refused for one token, and how many times since the last report. */
 export type EgressEvent = {
-  kind: 'run' | 'place';
+  kind: 'run' | 'cli' | 'docker' | 'place' | 'seat';
   id?: string;
   token: string;
   host: string;
@@ -82,9 +86,14 @@ function credentialsOf(header: string | undefined) {
     return undefined;
   }
   if (!token) return undefined;
-  return user === 'run'
-    ? { kind: 'run' as const, id: undefined, token }
-    : { kind: 'place' as const, id: user, token };
+  if (user === 'run' || user === 'seat') {
+    return { kind: user === 'run' ? ('run' as const) : ('seat' as const), id: undefined, token };
+  }
+  // A run's CLI container: `cli-<run id>`.
+  if (user.startsWith('cli-')) return { kind: 'cli' as const, id: user.slice(4), token };
+  // A run's own Docker: `docker-<run id>`.
+  if (user.startsWith('docker-')) return { kind: 'docker' as const, id: user.slice(7), token };
+  return { kind: 'place' as const, id: user, token };
 }
 
 /** `host:port` of a CONNECT; an IPv6 literal is not a host anybody allows. */
@@ -95,14 +104,139 @@ function targetOf(authority: string | undefined) {
   return { host: match[1].toLowerCase(), port };
 }
 
+/** Addresses nothing may reach: the proxy's own machine, link-local (cloud metadata), multicast. */
+const NEVER = new BlockList();
+NEVER.addSubnet('0.0.0.0', 8);
+NEVER.addSubnet('127.0.0.0', 8);
+NEVER.addSubnet('169.254.0.0', 16);
+NEVER.addSubnet('224.0.0.0', 4);
+NEVER.addSubnet('240.0.0.0', 4);
+NEVER.addAddress('::', 'ipv6');
+NEVER.addAddress('::1', 'ipv6');
+NEVER.addSubnet('fe80::', 10, 'ipv6');
+NEVER.addSubnet('ff00::', 8, 'ipv6');
+/** The company's own networks: reached only for a host listed exactly, never through a `*.`. */
+const PRIVATE = new BlockList();
+PRIVATE.addSubnet('10.0.0.0', 8);
+PRIVATE.addSubnet('172.16.0.0', 12);
+PRIVATE.addSubnet('192.168.0.0', 16);
+PRIVATE.addSubnet('100.64.0.0', 10);
+PRIVATE.addSubnet('fc00::', 7, 'ipv6');
+
+/** Whether a host's address may be reached, given how the host was allowed. */
+export function addressAllowed(address: string, match: HostMatch): boolean {
+  // An IPv4 address written as IPv6 (::ffff:10.0.0.1) is judged as the IPv4 one.
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address)?.[1];
+  const ip = mapped ?? address;
+  const family = isIP(ip) === 6 ? 'ipv6' : 'ipv4';
+  if (isIP(ip) === 0 || NEVER.check(ip, family)) return false;
+  return match.exact || !PRIVATE.check(ip, family);
+}
+
+export type Lookup = (host: string) => Promise<{ address: string }[]>;
+const systemLookup: Lookup = (host) => dnsLookup(host, { all: true, verbatim: true });
+
+/** How long a client has to send its ClientHello, and how much of it the proxy reads. */
+const HELLO_MS = 10_000;
+const MAX_HELLO = 64 * 1024;
+
+/**
+ * The server name of a TLS ClientHello, once `bytes` hold all of it: a string, `null` when it
+ * names none or is not TLS, `undefined` while more is needed.
+ */
+export function serverNameOf(bytes: Buffer): string | null | undefined {
+  // The handshake message may span records: put their payloads together.
+  const handshake: Buffer[] = [];
+  let at = 0;
+  let length = 0;
+  while (at + 5 <= bytes.length) {
+    if (bytes[at] !== 0x16) return null;
+    const size = bytes.readUInt16BE(at + 3);
+    if (at + 5 + size > bytes.length) break;
+    handshake.push(bytes.subarray(at + 5, at + 5 + size));
+    length += size;
+    at += 5 + size;
+  }
+  if (at === 0 && bytes.length >= 1 && bytes[0] !== 0x16) return null;
+  const message = Buffer.concat(handshake, length);
+  if (message.length < 4) return undefined;
+  if (message[0] !== 0x01) return null;
+  const end = 4 + message.readUIntBE(1, 3);
+  if (message.length < end) return undefined;
+  try {
+    // version 2, random 32, then the session id, the ciphers and the compressions by their lengths.
+    let i = 4 + 2 + 32;
+    i += 1 + message.readUInt8(i);
+    i += 2 + message.readUInt16BE(i);
+    i += 1 + message.readUInt8(i);
+    if (i + 2 > end) return null;
+    const extensionsEnd = i + 2 + message.readUInt16BE(i);
+    i += 2;
+    while (i + 4 <= extensionsEnd && extensionsEnd <= end) {
+      const type = message.readUInt16BE(i);
+      const size = message.readUInt16BE(i + 2);
+      if (type === 0) {
+        // server_name: a list of (type 0, length, name); the first host name is the one.
+        let j = i + 4 + 2;
+        while (j + 3 <= i + 4 + size) {
+          const nameLength = message.readUInt16BE(j + 1);
+          if (message[j] === 0) {
+            return message.toString('ascii', j + 3, j + 3 + nameLength).toLowerCase();
+          }
+          j += 3 + nameLength;
+        }
+        return null;
+      }
+      i += 4 + size;
+    }
+  } catch {
+    // A length that points past the message: not a ClientHello anyone sends.
+    return null;
+  }
+  return null;
+}
+
+/** Reads the client's ClientHello after the tunnel is open; what it read goes on to the server. */
+function helloOf(client: Duplex, head: Buffer): Promise<{ bytes: Buffer; name: string | null }> {
+  return new Promise((resolve) => {
+    let bytes = head;
+    const done = (name: string | null) => {
+      clearTimeout(timer);
+      client.off('data', onData);
+      client.off('close', onClose);
+      client.pause();
+      resolve({ bytes, name });
+    };
+    const check = () => {
+      const name = serverNameOf(bytes);
+      if (name !== undefined) done(name);
+      else if (bytes.length > MAX_HELLO) done(null);
+    };
+    const onData = (chunk: Buffer) => {
+      bytes = Buffer.concat([bytes, chunk]);
+      check();
+    };
+    const onClose = () => done(null);
+    const timer = setTimeout(() => done(null), HELLO_MS);
+    client.on('data', onData);
+    client.on('close', onClose);
+    if (bytes.length > 0) check();
+  });
+}
+
 export function egressProxy(options: {
   hostsOf: HostsOf;
   report: Report;
   log: (line: string) => void;
   now?: () => number;
+  lookup?: Lookup;
+  /** Whether an address may be reached; tests on this machine let loopback through. */
+  reachable?: typeof addressAllowed;
 }): Server {
   const { hostsOf, report, log } = options;
   const now = options.now ?? Date.now;
+  const lookup = options.lookup ?? systemLookup;
+  const reachable = options.reachable ?? addressAllowed;
   const kept = new Map<string, { opened: Opened | undefined; until: number }>();
   const pending = new Map<string, EgressEvent>();
   const reported = new Map<string, number>();
@@ -156,7 +290,7 @@ export function egressProxy(options: {
   }, REPORT_MS);
   reporting.unref();
 
-  /** Who may go where; the answer to give when not. */
+  /** Who may go where, and at which address; the answer to give when not. */
   async function decide(request: IncomingMessage, host: string, port: number) {
     const credentials = credentialsOf(request.headers['proxy-authorization']);
     if (!credentials) return { status: 407 as const };
@@ -168,13 +302,26 @@ export function egressProxy(options: {
       return { status: 503 as const };
     }
     if (!opened) return { status: 407 as const };
-    const allowed = hostAllowed(host, opened.hosts);
-    account(credentials, host, port, allowed);
-    if (!allowed) {
-      log(`${opened.who}: refused ${host}`);
+    const match = hostAllowed(host, port, opened.hosts);
+    let address: string | undefined;
+    if (match) {
+      try {
+        const found = isIP(host) ? [{ address: host }] : await lookup(host);
+        address = found.find((entry) => reachable(entry.address, match))?.address;
+      } catch {
+        // A name that does not resolve has no address to allow.
+      }
+    }
+    account(credentials, host, port, address !== undefined);
+    if (!match) {
+      log(`${opened.who}: refused ${host}:${port}`);
       return { status: 403 as const, who: opened.who };
     }
-    return { status: 200 as const, who: opened.who };
+    if (!address) {
+      log(`${opened.who}: refused ${host}:${port}, its address is not one a place may reach`);
+      return { status: 403 as const, who: opened.who };
+    }
+    return { status: 200 as const, who: opened.who, address };
   }
 
   const server = createServer((request, response) => {
@@ -199,9 +346,12 @@ export function egressProxy(options: {
       const headers = { ...request.headers };
       delete headers['proxy-authorization'];
       delete headers['proxy-connection'];
+      // The host asked for, whatever the client put in Host: the address is the one checked.
+      headers.host = url.host;
+      // The address checked, with the host's name kept in the Host header it came with.
       const upstream = httpRequest(
         {
-          host: url.hostname,
+          host: verdict.address,
           port: url.port || 80,
           path: `${url.pathname}${url.search}`,
           method: request.method,
@@ -227,19 +377,25 @@ export function egressProxy(options: {
       if (!target) return refuse(client, 400);
       const verdict = await decide(request, target.host, target.port);
       if (verdict.status !== 200) return refuse(client, verdict.status);
-      const upstream = connect(target.port, target.host);
-      let established = false;
+      // The tunnel opens, the client says hello, and only TLS to the name it asked for goes on.
+      client.write('HTTP/1.1 200 Connection established\r\n\r\n');
+      const hello = await helloOf(client, head);
+      if (hello.name !== target.host) {
+        log(
+          `${verdict.who}: refused ${target.host}:${target.port}, ` +
+            (hello.name ? `it said hello to ${hello.name}` : 'not TLS to a named server'),
+        );
+        client.destroy();
+        return;
+      }
+      const upstream = connect(target.port, verdict.address);
       upstream.once('connect', () => {
-        established = true;
-        client.write('HTTP/1.1 200 Connection established\r\n\r\n');
-        if (head.length > 0) upstream.write(head);
+        upstream.write(hello.bytes);
         upstream.pipe(client);
         client.pipe(upstream);
+        client.resume();
       });
-      upstream.on('error', () => {
-        if (!established) refuse(client, 502);
-        else client.destroy();
-      });
+      upstream.on('error', () => client.destroy());
       client.on('close', () => upstream.destroy());
     })();
   });

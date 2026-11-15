@@ -40,6 +40,11 @@ export interface Settings {
    * here to measure.
    */
   place: boolean;
+  /**
+   * In a place: its home, where the person's sign-in to the CLIs is, which each run's container
+   * mounts. Only a place has it: the worker clears what a run left in it.
+   */
+  signInHome?: string;
 }
 
 export function readSettings(env: NodeJS.ProcessEnv = process.env): Settings {
@@ -57,6 +62,7 @@ export function readSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     keepWorkspaces: env.AGENTOME_WORKER_KEEP_WORKSPACES?.trim() === '1',
     server: env.AGENTOME_WORKER_SERVER?.trim() === '1',
     place: env.AGENTOME_WORKER_PLACE?.trim() === '1',
+    ...(env.AGENTOME_WORKER_PLACE?.trim() === '1' && { signInHome: homedir() }),
   };
 }
 

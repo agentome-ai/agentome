@@ -10,6 +10,21 @@ import type { CodeHost } from '../code-host/types.js';
 // works in the place's own image, which has the common toolchains.
 
 const NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+/**
+ * Names a place's own containers go by. A service by one of them would be found instead of the
+ * platform's — the worker would hand its token to it.
+ */
+export const RESERVED_NAMES = new Set([
+  'app',
+  'agentome',
+  'place-egress',
+  'place-launcher',
+  'postgres',
+  'localhost',
+]);
+/** Problems are read by people and by admins' assistants: a few, short, of names we checked. */
+const MAX_PROBLEMS = 50;
+const MAX_PROBLEM = 200;
 /** An image reference: [registry[:port]/]path[:tag][@sha256:digest]. */
 const IMAGE =
   /^(?:[a-z0-9.-]+(?::\d+)?\/)?[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[\w][\w.-]{0,127})?(?:@sha256:[a-f0-9]{64})?$/;
@@ -102,6 +117,9 @@ export function parseJsonc(text: string): unknown {
 
 /** Compose's `${VAR:-default}`: nothing of this server's environment goes in, only defaults. */
 function interpolate(value: string): string {
+  // A value longer than a service may have is refused anyway; the pattern is quadratic on an
+  // unclosed `${a:-${a:-…`, which a repository's file may hold megabytes of.
+  if (value.length > 4096) return value;
   return value
     .replace(
       /\$\{[A-Za-z_][A-Za-z0-9_]*(?::?-([^}]*))?\}/g,
@@ -193,6 +211,16 @@ export function servicesOf(
   const services: ServiceSpec[] = [];
   for (const name of wanted) {
     if (name === main) continue;
+    if (!NAME.test(name)) {
+      problems.push(
+        'A service is left out: its name is not a lowercase word of up to 63 characters',
+      );
+      continue;
+    }
+    if (RESERVED_NAMES.has(name)) {
+      problems.push(`${name}: left out, the platform's own containers go by this name`);
+      continue;
+    }
     const raw = record(composeServices[name]);
     if (Object.keys(raw).length === 0) {
       problems.push(`${name}: not in the compose file`);
@@ -261,6 +289,17 @@ export function servicesOf(
   return { services, problems };
 }
 
+/** What a repository's files gave to say, bounded: each line short, a few lines in all. */
+function bounded(problems: string[]): string[] {
+  const out = problems
+    .slice(0, MAX_PROBLEMS)
+    .map((problem) =>
+      problem.length > MAX_PROBLEM ? `${problem.slice(0, MAX_PROBLEM - 1)}…` : problem,
+    );
+  if (problems.length > MAX_PROBLEMS) out.push(`and ${problems.length - MAX_PROBLEMS} more`);
+  return out;
+}
+
 /** The devcontainer files a repository may have, in the order the standard looks for them. */
 const DEVCONTAINER = ['.devcontainer/devcontainer.json', '.devcontainer.json'];
 
@@ -285,7 +324,9 @@ export async function readEnvironmentFrom(
     return {
       ...none,
       devcontainer: found,
-      problems: [`${found} is not valid JSON: ${error instanceof Error ? error.message : ''}`],
+      problems: bounded([
+        `${found} is not valid JSON: ${error instanceof Error ? error.message : ''}`,
+      ]),
     };
   }
   const named = record(devcontainer).dockerComposeFile;
@@ -325,7 +366,7 @@ export async function readEnvironmentFrom(
     repository: repositoryUrl,
     devcontainer: found,
     services,
-    problems: [...problems, ...more],
+    problems: bounded([...problems, ...more]),
   };
 }
 

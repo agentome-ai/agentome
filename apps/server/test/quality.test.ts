@@ -15,7 +15,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import { licenseEnterprise, setupCodeIn } from './app.js';
+import { licenseEnterprise, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // An agent's quality: four tasks this month and one older. One merged at the
 // first go, one merged after a person and a failed pipeline sent it back, one a person closed
@@ -47,6 +47,7 @@ beforeAll(async () => {
       admin: { name: 'Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   await licenseEnterprise(db);
   const setCookie = setup.headers['set-cookie'] ?? [];
   cookie = (Array.isArray(setCookie) ? setCookie : [setCookie])

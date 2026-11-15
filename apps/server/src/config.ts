@@ -1,7 +1,9 @@
+import { DEFAULT_REGISTRIES } from './projects/registry.js';
 import { randomBytes } from 'node:crypto';
 import { existsSync, linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { placesKey, placesKeyFile } from './places/keys.js';
 
 // Checked the way postgres.js reads the URL, not as a WHATWG URL: it accepts several
 // hosts (h1:5432,h2:5432) and decodes the password, failing on a stray %.
@@ -76,6 +78,9 @@ const Env = z.object({
   AGENTOME_DATA_DIR: z.string().default('./.data'),
   AGENTOME_SECRET_KEY: SecretKey.optional(),
   AGENTOME_SECRET_KEY_FILE: z.string().optional(),
+  // The place launcher's key: the places' key the app writes in its data at each start, which
+  // compose mounts into the launcher alone.
+  AGENTOME_PLACES_KEY_FILE: z.string().optional(),
   AGENTOME_WEB_DIR: z.string().optional(),
   AGENTOME_LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
@@ -94,10 +99,20 @@ const Env = z.object({
   AGENTOME_SETUP_ADMIN_PASSWORD_FILE: z.string().optional(),
   AGENTOME_SETUP_ORG_NAME: z.string().trim().min(1).default('Agentome'),
   // Behind a reverse proxy: take the client's address from X-Forwarded-For.
-  // `true` is the one proxy in front, as compose and the manifests have it: the client's address
-  // is the last one that proxy added. A number trusts that many proxies; `false`, none.
+  // `true` is the one proxy in front: the client's address is the last one that proxy added. A
+  // number trusts that many proxies; `false`, none. A list of the proxy's addresses, networks
+  // or names (compose gives `proxy`, Caddy's service) trusts the header only from those, so a
+  // place or a seat that reaches the app directly cannot claim another address.
   AGENTOME_TRUST_PROXY: z
-    .union([z.stringbool(), z.coerce.number().int().min(1).max(10)])
+    .union([
+      z.stringbool(),
+      z.coerce.number().int().min(1).max(10),
+      z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z0-9.:/_-]+(,[A-Za-z0-9.:/_-]+)*$/)
+        .transform((value) => value.split(',')),
+    ])
     .default(false)
     .transform((value) => (value === true ? 1 : value)),
   // Sign-in with the company's Keycloak: the realm's address, as its issuer, and the
@@ -108,6 +123,10 @@ const Env = z.object({
     .transform((value) => value?.replace(/\/$/, '')),
   AGENTOME_KEYCLOAK_CLIENT_ID: z.string().trim().min(1).optional(),
   AGENTOME_KEYCLOAK_CLIENT_SECRET: z.string().trim().min(1).optional(),
+  // `false` turns signing in with a password off, so that everyone signs in through Keycloak and
+  // its second factor; Keycloak must be set. Turned off, the server takes no password, and an
+  // invitation is not how people join.
+  AGENTOME_PASSWORD_SIGN_IN: z.stringbool().default(true),
   // The place launcher (`agentome place-launcher`): with it, people make their own place on
   // the server from Computers. Unset, there are no places.
   AGENTOME_PLACE_LAUNCHER_URL: z
@@ -116,9 +135,41 @@ const Env = z.object({
     .transform((value) => value?.replace(/\/$/, '')),
   // The launcher's: the seat image a place runs, when not this release's.
   AGENTOME_PLACE_IMAGE: z.string().trim().min(1).optional(),
+  // The launcher's: the runtime its places and runs get, `runsc` for gVisor on Docker or a
+  // RuntimeClass on Kubernetes; unset, the default one.
+  AGENTOME_PLACE_RUNTIME: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9][a-z0-9.-]*$/)
+    .optional(),
+  // The launcher's: the runtime of a Docker of a run's own, beside its sandbox, for testcontainers
+  // and compose. gVisor's with its raw network (runsc --net-raw); unset, runs have no Docker.
+  // Never runc: Docker there would need the host's root.
+  AGENTOME_PLACE_DOCKER_RUNTIME: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9][a-z0-9.-]*$/)
+    .refine((name) => name !== 'runc', 'Docker in a run needs gVisor, not runc')
+    .optional(),
+  // What each person's place on Docker may hold on disk, in GB: past it the place sleeps until
+  // its person empties an agent's folders. A cluster's claims have their own size.
+  AGENTOME_PLACE_DISK_GB: Limit(20),
+  // How many places the server may have: anyone who can sign in can make one.
+  AGENTOME_PLACES_MAX: Limit(50),
+  // The registries a project's services may come from, comma-separated (docker.io, ghcr.io…):
+  // each image is pinned to its digest there when the project is read. Others are left out.
+  AGENTOME_SERVICE_REGISTRIES: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9.-]+(:\d+)?(,[a-z0-9.-]+(:\d+)?)*$/)
+    .transform((value) => value.split(','))
+    .optional(),
   // Admin's browser asks GitHub once a day whether a newer release is out; off for an
   // installation whose people must not reach outside.
   AGENTOME_UPDATE_CHECK: z.stringbool().default(true),
+  // People's own computers run their agents; off, agents run only on the server (places and the
+  // server seat), and a computer neither connects nor takes a run.
+  AGENTOME_COMPUTERS: z.stringbool().default(true),
   // The image's release and commit, set when it is built, not by an operator; an image built
   // without them is a development build. Empty is unset: a build argument not given is empty.
   AGENTOME_BUILD_VERSION: z
@@ -171,9 +222,16 @@ export function loadConfig(env: Record<string, string | undefined>) {
     setupAdmin: readSetupAdmin(values),
     trustProxy: values.AGENTOME_TRUST_PROXY,
     keycloak: readKeycloak(values),
+    passwordSignIn: readPasswordSignIn(values),
     updateCheck: values.AGENTOME_UPDATE_CHECK,
+    computers: values.AGENTOME_COMPUTERS,
     build: { version: values.AGENTOME_BUILD_VERSION, commit: values.AGENTOME_BUILD_COMMIT },
     placeLauncherUrl: values.AGENTOME_PLACE_LAUNCHER_URL,
+    serviceRegistries: values.AGENTOME_SERVICE_REGISTRIES ?? DEFAULT_REGISTRIES,
+    placeLimits: {
+      diskBytes: values.AGENTOME_PLACE_DISK_GB * 1024 ** 3,
+      places: values.AGENTOME_PLACES_MAX,
+    },
   };
 }
 
@@ -183,7 +241,10 @@ const LauncherEnv = Env.pick({
   AGENTOME_DATA_DIR: true,
   AGENTOME_SECRET_KEY: true,
   AGENTOME_SECRET_KEY_FILE: true,
+  AGENTOME_PLACES_KEY_FILE: true,
   AGENTOME_PLACE_IMAGE: true,
+  AGENTOME_PLACE_RUNTIME: true,
+  AGENTOME_PLACE_DOCKER_RUNTIME: true,
   AGENTOME_BUILD_VERSION: true,
 });
 
@@ -194,14 +255,24 @@ const LauncherEnv = Env.pick({
 export function loadLauncherConfig(env: Record<string, string | undefined>) {
   const values = parse(LauncherEnv, env);
   const dataDir = resolve(values.AGENTOME_DATA_DIR);
-  const keyFile = values.AGENTOME_SECRET_KEY_FILE ?? join(dataDir, 'secrets', 'secret.key');
-  if (values.AGENTOME_SECRET_KEY === undefined && !existsSync(keyFile)) {
-    throw new ConfigError(`The installation's key is not in ${keyFile} yet: start the app first.`);
-  }
   const version = values.AGENTOME_BUILD_VERSION ?? 'latest';
+  const image = values.AGENTOME_PLACE_IMAGE ?? `docker.io/agentome/agentome-seat:${version}`;
+  // The installation's key, where the launcher is given it (a cluster's Secret): the places' key
+  // is derived from it here. Otherwise the places' key alone, which the app writes at its start.
+  const runtime = values.AGENTOME_PLACE_RUNTIME;
+  const dockerRuntime = values.AGENTOME_PLACE_DOCKER_RUNTIME;
+  if (values.AGENTOME_SECRET_KEY !== undefined) {
+    return { placesKey: placesKey(values.AGENTOME_SECRET_KEY), image, runtime, dockerRuntime };
+  }
+  const keyFile = values.AGENTOME_PLACES_KEY_FILE ?? placesKeyFile(dataDir);
+  if (!existsSync(keyFile)) {
+    throw new ConfigError(`The places' key is not in ${keyFile} yet: start the app first.`);
+  }
   return {
-    secretKey: values.AGENTOME_SECRET_KEY ?? readKeyFile(resolve(keyFile), 'AGENTOME_DATA_DIR'),
-    image: values.AGENTOME_PLACE_IMAGE ?? `docker.io/agentome/agentome-seat:${version}`,
+    placesKey: readKeyFile(resolve(keyFile), 'AGENTOME_PLACES_KEY_FILE'),
+    image,
+    runtime,
+    dockerRuntime,
   };
 }
 
@@ -265,6 +336,15 @@ function readSetupAdmin(values: z.infer<typeof Env>) {
     );
   }
   return { email: email.toLowerCase(), password, orgName: values.AGENTOME_SETUP_ORG_NAME };
+}
+
+function readPasswordSignIn(values: z.infer<typeof Env>): boolean {
+  if (!values.AGENTOME_PASSWORD_SIGN_IN && readKeycloak(values) === undefined) {
+    throw new ConfigError(
+      'AGENTOME_PASSWORD_SIGN_IN=false needs Keycloak: set AGENTOME_KEYCLOAK_ISSUER, AGENTOME_KEYCLOAK_CLIENT_ID and AGENTOME_KEYCLOAK_CLIENT_SECRET, or nobody could sign in',
+    );
+  }
+  return values.AGENTOME_PASSWORD_SIGN_IN;
 }
 
 function readKeycloak(values: z.infer<typeof Env>) {

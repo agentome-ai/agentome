@@ -1,56 +1,87 @@
 import { createServer, request, type Server } from 'node:http';
-import { connect, type AddressInfo } from 'node:net';
+import { connect, createServer as createTcpServer, type AddressInfo, type Socket } from 'node:net';
+import { connect as tlsConnect } from 'node:tls';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { type EgressEvent, egressProxy, type HostsOf } from './egress-proxy.js';
-import { hostAllowed } from './egress.js';
+import {
+  addressAllowed,
+  type EgressEvent,
+  egressProxy,
+  type HostsOf,
+  serverNameOf,
+} from './egress-proxy.js';
+import { hostAllowed, ownHost, withinBudget } from './egress.js';
 
-// The egress proxy between a place and the world, against a target on this machine: 127.0.0.1
-// stands for a host a project opens, `localhost` for one it does not.
+// The egress proxy between a place and the world, against targets on this machine. Names stand
+// for hosts: `opened.test` is one a run's project opens, `closed.test` one it does not; both
+// resolve to 127.0.0.1, which the proxy is told it may reach here (its own check refuses it).
 
+let httpPort = 0;
+let tcpPort = 0;
 const hostsOf: HostsOf = async (kind, id, token) => {
-  if (kind === 'run' && token === 'the run token') return { who: 'run r1', hosts: ['127.0.0.1'] };
+  if (kind === 'run' && token === 'the run token') {
+    return { who: 'run r1', hosts: [`opened.test:${httpPort}`, `opened.test:${tcpPort}`] };
+  }
+  if (kind === 'seat' && id === undefined && token === 'the seat token') {
+    return { who: 'seat s1', hosts: [`opened.test:${tcpPort}`] };
+  }
   if (kind === 'place' && id === 'p1' && token === 'the place token') {
     return { who: 'place p1', hosts: ['*.example.com'] };
   }
   return undefined;
 };
+const lookup = async (host: string) =>
+  host.endsWith('.test') ? [{ address: '127.0.0.1' }] : Promise.reject(new Error('no such host'));
 
 const logged: string[] = [];
-const reports: EgressEvent[] = [];
 let proxy: Server;
 let target: Server;
+let raw: ReturnType<typeof createTcpServer>;
+/** What the raw target heard on each connection. */
+const heard: Buffer[] = [];
 let proxyPort = 0;
-let targetPort = 0;
+
+function listen(server: { listen: (port: number, host: string, done: () => void) => unknown }) {
+  return new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+}
 
 beforeAll(async () => {
   target = createServer((req, res) => {
     res.end(
-      `target heard ${req.method} ${req.url} ${req.headers['proxy-authorization'] ?? 'no proxy auth'}`,
+      `target heard ${req.method} ${req.url} ${req.headers.host} ${req.headers['proxy-authorization'] ?? 'no proxy auth'}`,
     );
+  });
+  raw = createTcpServer((socket) => {
+    socket.once('data', (chunk) => {
+      heard.push(chunk);
+      socket.end('hello from the server');
+    });
   });
   proxy = egressProxy({
     hostsOf,
-    report: async (events) => void reports.push(...events),
+    report: async () => {},
     log: (line) => logged.push(line),
+    lookup,
+    reachable: () => true,
   });
-  await new Promise<void>((resolve) => target.listen(0, '127.0.0.1', resolve));
-  await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve));
-  targetPort = (target.address() as AddressInfo).port;
+  await Promise.all([listen(target), listen(raw), listen(proxy)]);
+  httpPort = (target.address() as AddressInfo).port;
+  tcpPort = (raw.address() as AddressInfo).port;
   proxyPort = (proxy.address() as AddressInfo).port;
 });
 
 afterAll(async () => {
   await new Promise((resolve) => proxy.close(resolve));
   await new Promise((resolve) => target.close(resolve));
+  await new Promise((resolve) => raw.close(resolve));
 });
 
 const basic = (user: string, token: string) =>
   `Basic ${Buffer.from(`${user}:${token}`).toString('base64')}`;
 
 /** A CONNECT as a CLI sends it; the proxy's status line. */
-function tunnel(authority: string, auth?: string) {
-  return new Promise<{ status: string; socket: import('node:net').Socket }>((resolve, reject) => {
-    const socket = connect(proxyPort, '127.0.0.1', () => {
+function tunnel(authority: string, auth?: string, port = proxyPort) {
+  return new Promise<{ status: string; socket: Socket }>((resolve, reject) => {
+    const socket = connect(port, '127.0.0.1', () => {
       socket.write(
         `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n${auth ? `Proxy-Authorization: ${auth}\r\n` : ''}\r\n`,
       );
@@ -62,66 +93,189 @@ function tunnel(authority: string, auth?: string) {
   });
 }
 
-describe('the egress proxy', () => {
-  it('matches a host exactly or under a *. pattern, and nothing that only ends alike', () => {
-    expect(hostAllowed('api.anthropic.com', ['*.anthropic.com'])).toBe(true);
-    expect(hostAllowed('API.Anthropic.com.', ['*.anthropic.com'])).toBe(true);
-    expect(hostAllowed('anthropic.com', ['*.anthropic.com'])).toBe(false);
-    expect(hostAllowed('evilanthropic.com', ['*.anthropic.com'])).toBe(false);
-    expect(hostAllowed('api.anthropic.com.evil.io', ['*.anthropic.com'])).toBe(false);
-    expect(hostAllowed('claude.ai', ['claude.ai'])).toBe(true);
-    expect(hostAllowed('x.claude.ai', ['claude.ai'])).toBe(false);
+/** The ClientHello Node's TLS sends for a server name, as a CLI's would be. */
+async function helloFor(servername: string): Promise<Buffer> {
+  const catcher = createTcpServer();
+  await listen(catcher);
+  const port = (catcher.address() as AddressInfo).port;
+  const caught = new Promise<Buffer>((resolve) =>
+    catcher.once('connection', (socket) =>
+      socket.once('data', (chunk: Buffer) => {
+        resolve(chunk);
+        socket.destroy();
+      }),
+    ),
+  );
+  const client = tlsConnect({ host: '127.0.0.1', port, servername, rejectUnauthorized: false });
+  client.on('error', () => {});
+  const hello = await caught;
+  client.destroy();
+  await new Promise((resolve) => catcher.close(resolve));
+  return hello;
+}
+
+describe('the egress rules', () => {
+  it('match a host exactly or under a *. pattern, on its port, 443 by default', () => {
+    expect(hostAllowed('api.anthropic.com', 443, ['*.anthropic.com'])).toEqual({
+      pattern: '*.anthropic.com',
+      exact: false,
+    });
+    expect(hostAllowed('API.Anthropic.com.', 443, ['*.anthropic.com'])).toBeDefined();
+    expect(hostAllowed('anthropic.com', 443, ['*.anthropic.com'])).toBeUndefined();
+    expect(hostAllowed('evilanthropic.com', 443, ['*.anthropic.com'])).toBeUndefined();
+    expect(hostAllowed('api.anthropic.com.evil.io', 443, ['*.anthropic.com'])).toBeUndefined();
+    expect(hostAllowed('claude.ai', 443, ['claude.ai'])).toEqual({
+      pattern: 'claude.ai',
+      exact: true,
+    });
+    expect(hostAllowed('x.claude.ai', 443, ['claude.ai'])).toBeUndefined();
+    // Another port only when the pattern names it.
+    expect(hostAllowed('claude.ai', 22, ['claude.ai'])).toBeUndefined();
+    expect(hostAllowed('git.corp', 8443, ['git.corp:8443'])).toBeDefined();
+    expect(hostAllowed('git.corp', 443, ['git.corp:8443'])).toBeUndefined();
+    expect(ownHost('https://agentome.example.com')).toBe('agentome.example.com:443');
+    expect(ownHost('http://localhost:4440')).toBe('localhost:4440');
   });
 
-  it("tunnels a run to a host its project opens, and through the tunnel the target's answer", async () => {
+  it("reach no loopback, link-local or metadata address, and a company's only for an exact host", () => {
+    const exact = { pattern: 'jira.corp', exact: true };
+    const wild = { pattern: '*.corp', exact: false };
+    for (const address of [
+      '127.0.0.1',
+      '::1',
+      '169.254.169.254',
+      '0.0.0.0',
+      'fe80::1',
+      '::ffff:127.0.0.1',
+    ]) {
+      expect(addressAllowed(address, exact)).toBe(false);
+    }
+    for (const address of [
+      '10.1.2.3',
+      '192.168.10.20',
+      '172.20.0.5',
+      'fd00::5',
+      '::ffff:10.0.0.1',
+    ]) {
+      expect(addressAllowed(address, exact)).toBe(true);
+      expect(addressAllowed(address, wild)).toBe(false);
+    }
+    expect(addressAllowed('104.18.32.47', wild)).toBe(true);
+  });
+
+  it("keep a run's lines of the log to 600 a minute, so a run that holds its token cannot flood it", () => {
+    const at = Date.UTC(2026, 10, 13, 12, 0, 0);
+    let kept = 0;
+    for (let n = 0; n < 700; n++) if (withinBudget('run flood', at + n)) kept++;
+    expect(kept).toBe(600);
+    // Another run, and the next minute, have their own.
+    expect(withinBudget('run quiet', at)).toBe(true);
+    expect(withinBudget('run flood', at + 60_000)).toBe(true);
+  });
+
+  it('read the server name of a ClientHello, and nothing from what is not one', async () => {
+    const hello = await helloFor('api.anthropic.com');
+    expect(serverNameOf(hello)).toBe('api.anthropic.com');
+    // Cut short, it waits for more; not TLS at all, it is no name.
+    expect(serverNameOf(hello.subarray(0, 20))).toBeUndefined();
+    expect(serverNameOf(Buffer.from('GET / HTTP/1.1\r\n\r\n'))).toBeNull();
+    expect(serverNameOf(Buffer.from('SSH-2.0-OpenSSH_9.6\r\n'))).toBeNull();
+  });
+});
+
+describe('the egress proxy', () => {
+  it('passes TLS to the name it was asked for, the ClientHello first, then both ways', async () => {
     const { status, socket } = await tunnel(
-      `127.0.0.1:${targetPort}`,
+      `opened.test:${tcpPort}`,
       basic('run', 'the run token'),
     );
     expect(status).toBe('HTTP/1.1 200 Connection established');
+    const hello = await helloFor('opened.test');
     const answer = new Promise<string>((resolve) =>
       socket.once('data', (chunk) => resolve(chunk.toString())),
     );
-    socket.write(`GET /inside HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
-    // The proxy's credentials never reach the target.
-    expect(await answer).toContain('target heard GET /inside no proxy auth');
+    socket.write(hello);
+    expect(await answer).toBe('hello from the server');
+    expect(heard.at(-1)?.equals(hello)).toBe(true);
     socket.destroy();
   });
 
-  it('refuses a host the token does not open, and says so in its log without the token', async () => {
+  it('closes a tunnel whose TLS names another server, or that is not TLS', async () => {
+    for (const first of [await helloFor('evil.example.net'), Buffer.from('SSH-2.0-x\r\n')]) {
+      const before = heard.length;
+      const { status, socket } = await tunnel(
+        `opened.test:${tcpPort}`,
+        basic('run', 'the run token'),
+      );
+      expect(status).toBe('HTTP/1.1 200 Connection established');
+      const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+      socket.write(first);
+      await closed;
+      expect(heard.length).toBe(before);
+    }
+    expect(logged).toContain(
+      `run r1: refused opened.test:${tcpPort}, it said hello to evil.example.net`,
+    );
+    expect(logged).toContain(`run r1: refused opened.test:${tcpPort}, not TLS to a named server`);
+  });
+
+  it('refuses a host the token does not open, or on another port, without the token in its log', async () => {
+    for (const authority of [`closed.test:${tcpPort}`, 'opened.test:22']) {
+      const { status, socket } = await tunnel(authority, basic('run', 'the run token'));
+      socket.destroy();
+      expect(status).toBe('HTTP/1.1 403 Forbidden');
+    }
+    expect(logged).toContain(`run r1: refused closed.test:${tcpPort}`);
+    expect(logged.join('\n')).not.toContain('the run token');
+  });
+
+  it("refuses a host whose address is not one a place may reach, with the proxy's own check", async () => {
+    const strict = egressProxy({ hostsOf, report: async () => {}, log: () => {}, lookup });
+    await listen(strict);
+    const port = (strict.address() as AddressInfo).port;
     const { status, socket } = await tunnel(
-      `localhost:${targetPort}`,
+      `opened.test:${tcpPort}`,
       basic('run', 'the run token'),
+      port,
     );
     socket.destroy();
     expect(status).toBe('HTTP/1.1 403 Forbidden');
-    expect(logged).toContain('run r1: refused localhost');
-    expect(logged.join('\n')).not.toContain('the run token');
+    await new Promise((resolve) => strict.close(resolve));
+  });
+
+  it("takes a server seat's own token as the user seat", async () => {
+    const { status, socket } = await tunnel(
+      `opened.test:${tcpPort}`,
+      basic('seat', 'the seat token'),
+    );
+    socket.destroy();
+    expect(status).toBe('HTTP/1.1 200 Connection established');
   });
 
   it('asks for credentials without them, or with a token the app refuses', async () => {
     for (const auth of [
       undefined,
       basic('run', 'forged'),
+      basic('seat', 'forged'),
       basic('p2', 'the place token'),
       basic('run', '%E0%A4%A'),
       'Bearer x',
     ]) {
-      const { status, socket } = await tunnel(`127.0.0.1:${targetPort}`, auth);
+      const { status, socket } = await tunnel(`opened.test:${tcpPort}`, auth);
       socket.destroy();
       expect(status).toBe('HTTP/1.1 407 Proxy Authentication Required');
     }
   });
 
   it('refuses an IPv6 literal or an address without a port', async () => {
-    for (const authority of [`[::1]:${targetPort}`, '127.0.0.1']) {
+    for (const authority of [`[::1]:${tcpPort}`, 'opened.test']) {
       const { status, socket } = await tunnel(authority, basic('run', 'the run token'));
       socket.destroy();
       expect(status).toBe('HTTP/1.1 400 Bad Request');
     }
   });
 
-  it('keeps an answer of the app a minute, so a run does not ask it on every call', async () => {
+  it('keeps an answer of the app 15 seconds, so a run does not ask it on every call', async () => {
     let clock = 0;
     let asks = 0;
     const counted = egressProxy({
@@ -132,31 +286,25 @@ describe('the egress proxy', () => {
       report: async () => {},
       log: () => {},
       now: () => clock,
+      lookup,
+      reachable: () => true,
     });
-    await new Promise<void>((resolve) => counted.listen(0, '127.0.0.1', resolve));
+    await listen(counted);
     const port = (counted.address() as AddressInfo).port;
-    const call = () =>
-      new Promise<void>((resolve) => {
-        const socket = connect(port, '127.0.0.1', () =>
-          socket.write(
-            `CONNECT 127.0.0.1:${targetPort} HTTP/1.1\r\nProxy-Authorization: ${basic('run', 'the run token')}\r\n\r\n`,
-          ),
-        );
-        socket.once('data', () => {
-          socket.destroy();
-          resolve();
-        });
-      });
+    const call = async () =>
+      (
+        await tunnel(`closed.test:${tcpPort}`, basic('run', 'the run token'), port)
+      ).socket.destroy();
     await call();
     await call();
     expect(asks).toBe(1);
-    clock += 61_000;
+    clock += 16_000;
     await call();
     expect(asks).toBe(2);
     await new Promise((resolve) => counted.close(resolve));
   });
 
-  it('forwards plain HTTP to an opened host without the credentials, and refuses another', async () => {
+  it('forwards plain HTTP to an opened host and port without the credentials, and refuses another', async () => {
     const send = (url: string, auth: string) =>
       new Promise<{ status: number; body: string }>((resolve, reject) => {
         const req = request(
@@ -176,14 +324,20 @@ describe('the egress proxy', () => {
         req.end();
       });
     const opened = await send(
-      `http://127.0.0.1:${targetPort}/plain?x=1`,
+      `http://opened.test:${httpPort}/plain?x=1`,
       basic('run', 'the run token'),
     );
-    expect(opened).toEqual({ status: 200, body: 'target heard GET /plain?x=1 no proxy auth' });
-    const closed = await send(`http://localhost:${targetPort}/`, basic('run', 'the run token'));
-    expect(closed.status).toBe(403);
-    const signIn = await send(`http://127.0.0.1:${targetPort}/`, basic('p1', 'the place token'));
-    expect(signIn.status).toBe(403);
+    // Sent to the address checked, with the host's own name.
+    expect(opened).toEqual({
+      status: 200,
+      body: `target heard GET /plain?x=1 opened.test:${httpPort} no proxy auth`,
+    });
+    expect(
+      (await send(`http://closed.test:${httpPort}/`, basic('run', 'the run token'))).status,
+    ).toBe(403);
+    expect(
+      (await send(`http://opened.test:${httpPort}/`, basic('p1', 'the place token'))).status,
+    ).toBe(403);
   });
 
   it('tells the app what it let out and refused, by token, a host it let out once a minute', async () => {
@@ -192,35 +346,27 @@ describe('the egress proxy', () => {
       hostsOf,
       report: async (events) => void told.push(...events),
       log: () => {},
+      lookup,
+      reachable: () => true,
     });
-    await new Promise<void>((resolve) => own.listen(0, '127.0.0.1', resolve));
+    await listen(own);
     const port = (own.address() as AddressInfo).port;
-    const call = (authority: string) =>
-      new Promise<void>((resolve) => {
-        const socket = connect(port, '127.0.0.1', () =>
-          socket.write(
-            `CONNECT ${authority} HTTP/1.1\r\nProxy-Authorization: ${basic('run', 'the run token')}\r\n\r\n`,
-          ),
-        );
-        socket.once('data', () => {
-          socket.destroy();
-          resolve();
-        });
-      });
-    for (let n = 0; n < 3; n++) await call(`127.0.0.1:${targetPort}`);
-    for (let n = 0; n < 2; n++) await call(`localhost:${targetPort}`);
+    const call = async (authority: string) =>
+      (await tunnel(authority, basic('run', 'the run token'), port)).socket.destroy();
+    for (let n = 0; n < 3; n++) await call(`opened.test:${tcpPort}`);
+    for (let n = 0; n < 2; n++) await call(`closed.test:${tcpPort}`);
     await vi.waitFor(() => expect(told.length).toBeGreaterThan(0), { timeout: 8000 });
-    const run = { kind: 'run', token: 'the run token', port: targetPort };
+    const run = { kind: 'run', token: 'the run token', port: tcpPort };
     expect(told).toEqual([
-      { ...run, host: '127.0.0.1', allowed: true, count: 3 },
-      { ...run, host: 'localhost', allowed: false, count: 2 },
+      { ...run, host: 'opened.test', allowed: true, count: 3 },
+      { ...run, host: 'closed.test', allowed: false, count: 2 },
     ]);
     // Let out again within the minute: nothing new to tell; refused again: told again.
     told.length = 0;
-    await call(`127.0.0.1:${targetPort}`);
-    await call(`localhost:${targetPort}`);
+    await call(`opened.test:${tcpPort}`);
+    await call(`closed.test:${tcpPort}`);
     await vi.waitFor(() => expect(told.length).toBeGreaterThan(0), { timeout: 8000 });
-    expect(told).toEqual([{ ...run, host: 'localhost', allowed: false, count: 1 }]);
+    expect(told).toEqual([{ ...run, host: 'closed.test', allowed: false, count: 1 }]);
     await new Promise((resolve) => own.close(resolve));
   }, 20_000);
 });

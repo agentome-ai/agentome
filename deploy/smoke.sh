@@ -83,7 +83,7 @@ echo 'ok  GET /connect and the worker it checks'
 compose exec -T app agentome backup >"$work/backup.tar.gz" || fail 'agentome backup failed'
 listing="$(tar -tzf "$work/backup.tar.gz")"
 grep -qx 'db.dump' <<<"$listing" || fail 'the backup has no db.dump'
-grep -qx 'data/secrets/secret.key' <<<"$listing" || fail 'the backup has no secret key'
+! grep -q '^data/' <<<"$listing" || fail 'the backup holds the data directory, the secret key with it'
 compose exec -T app agentome restore <"$work/backup.tar.gz" || fail 'agentome restore failed'
 [ "$(get /ready)" = 200 ] || fail 'GET /ready failed after the restore'
 echo 'ok  agentome backup and agentome restore'

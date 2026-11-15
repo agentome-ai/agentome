@@ -9,7 +9,7 @@ import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import { setupCodeIn } from './app.js';
+import { secondStepForAdmins, setupCodeIn } from './app.js';
 
 // The management MCP through the SDK's own client, as Claude Code connects: a
 // personal token opens it, its tools are the API's routes, and each call acts as the person.
@@ -41,6 +41,7 @@ beforeAll(async () => {
       admin: { name: 'Ann Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   cookie = cookieOf(setup);
 }, 120_000);
 
@@ -248,7 +249,6 @@ describe('the management MCP', () => {
         'get_project',
         'update_project',
         'read_project_environment',
-        'approve_project_environment',
         'add_agent_to_project',
         'get_agent_memory',
         'get_agent_memory_versions',

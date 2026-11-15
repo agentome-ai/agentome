@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
@@ -11,14 +12,18 @@ import {
   type Db,
   migrate,
   eq,
+  costEvents,
   modelConnections,
+  pairingCodes,
   projects,
   and,
   runs,
   seats,
   tasks,
   users,
+  logEntries,
 } from '@agentome/db';
+import { hashSecret, normalizePairingCode } from '../src/tokens.js';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -29,9 +34,15 @@ import { LaunchPackage } from '../src/protocol.js';
 import { enqueueRun } from '../src/runs/service.js';
 import type { Launcher } from '../src/places/client.js';
 import { tendPlaces } from '../src/places/tend.js';
-import { placeEgressToken } from '../src/places/egress.js';
+import {
+  cliEgressToken,
+  dockerEgressToken,
+  placeEgressToken,
+  placesKey,
+} from '../src/places/keys.js';
+import { VENDOR_HOSTS } from '../src/places/egress.js';
 import { servicesHash } from '../src/projects/environment.js';
-import { licenseEnterprise, setupCodeIn } from './app.js';
+import { licenseEnterprise, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // Server seats: a server seat takes anyone's server agents with a model connection and gets
 // the server's model relay with the run's token, never the connection's key; a computer takes its
@@ -76,6 +87,7 @@ beforeAll(async () => {
       admin: { name: 'Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   await licenseEnterprise(db);
   adminCookie = cookieOf(setup);
   adminId = (await app.inject({ url: '/api/me', headers: { cookie: adminCookie } })).json().id;
@@ -118,6 +130,13 @@ async function pair(cookie: string, kind: string) {
   const code = (
     await app.inject({ method: 'POST', url: '/api/seats/pairing-codes', headers: { cookie } })
   ).json<{ code: string }>().code;
+  // A place's code is the server's own, as it makes one for the launcher.
+  if (kind === 'subscription-server') {
+    await db
+      .update(pairingCodes)
+      .set({ forPlace: true })
+      .where(eq(pairingCodes.codeHash, hashSecret(normalizePairingCode(code))));
+  }
   return app.inject({
     method: 'POST',
     url: '/api/seats/pair',
@@ -183,6 +202,35 @@ describe('server seats', () => {
       (await patch({ modelPref: 'anthropic/claude-sonnet-4.5' })).json().error.message,
     ).toContain('Codex runs the others');
     expect((await patch({ modelPref: 'openai/gpt-5' })).statusCode).toBe(200);
+  });
+
+  it('are places only by a code the server made for a place, and a place code makes nothing else', async () => {
+    const code = async () =>
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/seats/pairing-codes',
+          headers: { cookie: memberCookie },
+        })
+      ).json<{ code: string }>().code;
+    const pairAs = (given: string, kind: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/seats/pair',
+        payload: { code: given, name: 'mine', kind, engines: ['claude-code'] },
+      });
+    // A computer that calls itself a place: it would run without the sandbox.
+    const computer = await pairAs(await code(), 'subscription-server');
+    expect(computer.statusCode).toBe(403);
+    expect(computer.json<{ error: { message: string } }>().error.message).toMatch(
+      /made from its person’s page/,
+    );
+    const placeCode = await code();
+    await db
+      .update(pairingCodes)
+      .set({ forPlace: true })
+      .where(eq(pairingCodes.codeHash, hashSecret(normalizePairingCode(placeCode))));
+    expect((await pairAs(placeCode, 'subscription-laptop')).statusCode).toBe(403);
   });
 
   it('are connected by an admin’s code only', async () => {
@@ -290,8 +338,15 @@ describe('the model relay', () => {
         body,
       });
       response.writeHead(200, { 'content-type': 'text/event-stream', 'retry-after': '3' });
-      response.write('event: message_start\ndata: {"type":"message_start"}\n\n');
-      setTimeout(() => response.end('event: message_stop\ndata: {"type":"message_stop"}\n\n'), 20);
+      response.write(
+        'event: message_start\ndata: {"type":"message_start","message":{"model":"claude-sonnet-4.5","usage":{"input_tokens":100,"cache_read_input_tokens":20,"output_tokens":1}}}\n\n',
+      );
+      response.write(
+        'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":30}}\n\n',
+      );
+      // A slow answer keeps its call going, as a long one does.
+      const ms = body.includes('"slow":true') ? 300 : 20;
+      setTimeout(() => response.end('event: message_stop\ndata: {"type":"message_stop"}\n\n'), ms);
     });
   });
   let relayApp: Awaited<ReturnType<typeof buildApp>>;
@@ -311,7 +366,10 @@ describe('the model relay', () => {
   });
 
   /** A working server run on a connection of `kind` to the provider; its token, as a seat has it. */
-  async function serverRun(kind: 'anthropic' | 'gateway') {
+  async function serverRun(
+    kind: 'anthropic' | 'gateway',
+    modelPref: string | null = 'claude-sonnet-4.5',
+  ) {
     const { port } = provider.address() as AddressInfo;
     const [connection] = await db
       .insert(modelConnections)
@@ -320,14 +378,14 @@ describe('the model relay', () => {
         kind,
         baseUrl: `http://127.0.0.1:${port}/`,
         keyCiphertext: encryptSecret(connectionsKey(config.secretKey), `the ${kind} key`),
-        models: ['claude-sonnet-4.5'],
+        models: ['claude-sonnet-4.5', 'gpt-5'],
         createdBy: adminId,
       })
       .returning();
     const { run } = await agentWithRun(memberId, {
       runsOn: 'server',
       modelConnectionId: connection?.id,
-      modelPref: 'claude-sonnet-4.5',
+      modelPref,
     });
     // Runs the tests above left queued come first, and a seat holds one run: a seat of its own
     // takes each, until one reaches this run.
@@ -397,6 +455,85 @@ describe('the model relay', () => {
       true,
     );
     expect(heard.every((call) => call.headers['x-api-key'] === undefined)).toBe(true);
+  });
+
+  it("counts what the provider says each call used, and prices the run by it, not by its seat's word", async () => {
+    const { token, runId } = await serverRun('gateway');
+    const call = () =>
+      relayApp.inject({
+        method: 'POST',
+        url: '/model/v1/messages',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        payload: '{"model":"claude-sonnet-4.5","stream":true}',
+      });
+    expect((await call()).statusCode).toBe(200);
+    expect((await call()).statusCode).toBe(200);
+    await vi.waitFor(async () => {
+      const [row] = await db
+        .select({ usage: runs.relayUsage })
+        .from(runs)
+        .where(eq(runs.id, runId));
+      expect(row?.usage).toEqual({
+        'claude-sonnet-4.5': {
+          provider: 'anthropic',
+          tokensIn: 200,
+          tokensOut: 60,
+          tokensCacheRead: 40,
+          tokensCacheWrite: 0,
+        },
+      });
+    });
+    // The seat says it used nothing: the relay's count is what the run costs.
+    const finished = await relayApp.inject({
+      method: 'POST',
+      url: `/api/runs/${runId}/finish`,
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      payload: { status: 'done', artifacts: [], usage: [] },
+    });
+    expect(finished.statusCode).toBe(200);
+    const costs = await db
+      .select({ model: costEvents.model, tokensIn: costEvents.tokensIn, source: costEvents.source })
+      .from(costEvents)
+      .where(eq(costEvents.runId, runId));
+    expect(costs).toEqual([{ model: 'claude-sonnet-4.5', tokensIn: 200, source: 'relay' }]);
+  });
+
+  it('calls only the models the run may, and a few at once', async () => {
+    const { token } = await serverRun('gateway');
+    heard.length = 0;
+    const call = (payload: string) =>
+      relayApp.inject({
+        method: 'POST',
+        url: '/model/v1/messages',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        payload,
+      });
+    // Not a model the agent has or its connection lists: refused here, never sent on.
+    const dear = await call('{"model":"claude-opus-4.1"}');
+    expect(dear.statusCode).toBe(403);
+    expect(dear.json<{ error: { message: string } }>().error.message).toBe(
+      'This run may call claude-sonnet-4.5, gpt-5, not claude-opus-4.1',
+    );
+    expect(heard).toEqual([]);
+    // Four at once go; a fifth waits its turn.
+    const answers = await Promise.all(
+      Array.from({ length: 6 }, () => call('{"model":"claude-sonnet-4.5","slow":true}')),
+    );
+    expect(answers.filter((answer) => answer.statusCode === 200)).toHaveLength(4);
+    expect(answers.filter((answer) => answer.statusCode === 429)).toHaveLength(2);
+    // Once they are done, the run calls again.
+    expect((await call('{"model":"claude-sonnet-4.5"}')).statusCode).toBe(200);
+
+    // An agent that names no model runs on its CLI's default, which the relay does not know:
+    // Codex's, say, through a gateway to any provider.
+    const free = await serverRun('gateway', null);
+    const codex = await relayApp.inject({
+      method: 'POST',
+      url: '/model/v1/responses',
+      headers: { authorization: `Bearer ${free.token}`, 'content-type': 'application/json' },
+      payload: '{"model":"gpt-5-codex"}',
+    });
+    expect(codex.statusCode).toBe(200);
   });
 
   it('opens nothing for a stopped run, a computer, no token, or a call an engine does not make', async () => {
@@ -492,7 +629,13 @@ describe("a person's place on the server", () => {
 
 describe("a person's place, made from Computers", () => {
   type State = 'none' | 'asleep' | 'awake';
-  const places = new Map<string, { state: State; startedAt?: string }>();
+  const places = new Map<string, { state: State; startedAt?: string; diskBytes?: number }>();
+  const shells = new Map<string, number>();
+  const startedRuns: {
+    id: string;
+    runId: string;
+    run: { folder?: string; shape?: { services: { name: string }[] } };
+  }[] = [];
   const orders: string[] = [];
   let lastCode = '';
   const launcher: Launcher = {
@@ -500,7 +643,8 @@ describe("a person's place, made from Computers", () => {
     status: async (id) => ({
       state: places.get(id)?.state ?? 'none',
       startedAt: places.get(id)?.startedAt,
-      terminals: 0,
+      terminals: shells.get(id) ?? 0,
+      diskBytes: places.get(id)?.diskBytes,
     }),
     create: async (id, code) => {
       orders.push(`create ${id}`);
@@ -513,7 +657,8 @@ describe("a person's place, made from Computers", () => {
     },
     sleep: async (id) => {
       orders.push(`sleep ${id}`);
-      places.set(id, { state: 'asleep' });
+      // Asleep, its volumes hold what they held.
+      places.set(id, { state: 'asleep', diskBytes: places.get(id)?.diskBytes });
     },
     remove: async (id) => {
       orders.push(`remove ${id}`);
@@ -529,10 +674,24 @@ describe("a person's place, made from Computers", () => {
       orders.push(`services ${id} ${shape.services.map((service) => service.name).join(',')}`);
       await servicesStarted;
     },
-    // A shell that says back what it is sent.
+    startRun: async (id, runId, run) => {
+      orders.push(`start run ${runId} of ${id} in ${run.folder ?? 'no folder'}`);
+      startedRuns.push({ id, runId, run });
+      return {
+        cli: { host: '10.0.0.2', port: 7419, key: 'b'.repeat(43) },
+        sandbox: { host: '10.0.0.3', port: 7420, key: 'h'.repeat(43) },
+      };
+    },
+    endRun: async (id, runId) => {
+      orders.push(`end run ${runId} of ${id}`);
+    },
+    // A shell that says back what it is sent, counted while it is open as the launcher does.
     terminal: async (id) => {
       orders.push(`terminal ${id}`);
-      return new PassThrough();
+      const shell = new PassThrough();
+      shells.set(id, (shells.get(id) ?? 0) + 1);
+      shell.once('close', () => shells.set(id, (shells.get(id) ?? 1) - 1));
+      return shell;
     },
   };
   // The services start when the test says so.
@@ -557,7 +716,7 @@ describe("a person's place, made from Computers", () => {
 
   it('is not offered without a launcher', async () => {
     const none = await app.inject({ url: '/api/me/place', headers: { cookie: adminCookie } });
-    expect(none.json()).toEqual({ available: false, place: null });
+    expect(none.json()).toEqual({ available: false, computers: true, place: null });
     const refused = await app.inject({
       method: 'POST',
       url: '/api/me/place',
@@ -567,7 +726,11 @@ describe("a person's place, made from Computers", () => {
   });
 
   it('is made by its person in the browser, with a code that pairs it as their place, once', async () => {
-    expect((await call('GET', '/api/me/place')).json()).toEqual({ available: true, place: null });
+    expect((await call('GET', '/api/me/place')).json()).toEqual({
+      available: true,
+      computers: true,
+      place: null,
+    });
     const made = await call('POST', '/api/me/place');
     expect(made.statusCode).toBe(201);
     expect(orders).toEqual([`create ${adminId}`]);
@@ -589,6 +752,34 @@ describe("a person's place, made from Computers", () => {
       place: { state: 'awake', seatId: paired.json().seatId },
     });
     expect((await call('POST', '/api/me/place')).statusCode).toBe(409);
+
+    // The server's room: with as many places as it may have, nobody else makes one.
+    const full = await buildApp(
+      { ...config, placeLimits: { ...config.placeLimits, places: 1 } },
+      { workerBundle: join(dataDir, 'no-bundle.mjs'), placeLauncher: launcher },
+    );
+    try {
+      const invitation = await full.inject({
+        method: 'POST',
+        url: '/api/invitations',
+        headers: { cookie: adminCookie },
+        payload: {},
+      });
+      const joined = await full.inject({
+        method: 'POST',
+        url: `/api/invitations/${invitation.json<{ url: string }>().url.split('/invite/')[1]}/accept`,
+        payload: { name: 'Nora', email: 'nora@example.com', password: 'nora long password' },
+      });
+      const refused = await full.inject({
+        method: 'POST',
+        url: '/api/me/place',
+        headers: { cookie: cookieOf(joined) },
+      });
+      expect(refused.statusCode).toBe(409);
+      expect(refused.json()).toMatchObject({ error: { code: 'places_full' } });
+    } finally {
+      await full.close();
+    }
 
     // Not with a token: a place runs its person's subscription.
     const token = (
@@ -713,7 +904,13 @@ describe("a person's place, made from Computers", () => {
       .set({ status: 'cancelled', endedAt: new Date() })
       .where(eq(runs.status, 'queued'));
     const services = [
-      { name: 'db', image: 'postgres:16', environment: { POSTGRES_PASSWORD: 'dev' }, volumes: [] },
+      {
+        name: 'db',
+        // Pinned, as a project's services are read.
+        image: `postgres:16@sha256:${'b'.repeat(64)}`,
+        environment: { POSTGRES_PASSWORD: 'dev' },
+        volumes: [],
+      },
     ];
     const hash = servicesHash(services);
     const [project] = await db
@@ -770,6 +967,9 @@ describe("a person's place, made from Computers", () => {
     expect(launch.run.id).toBe(run.id);
     expect(launch.workspace.services).toEqual(['db']);
     expect(launch.workspace.profile.claudeMd).toContain('- `db`: postgres:16');
+    // In a place the workspace is kept and has no sandbox, and the agent is told so.
+    expect(launch.workspace.profile.claudeMd).toContain('Shell commands run without a sandbox');
+    expect(launch.workspace.profile.claudeMd).not.toContain('It is deleted when the run ends');
 
     // Asleep, its services are stopped: the next run gets them ready again.
     await db.update(runs).set({ status: 'done', endedAt: new Date() }).where(eq(runs.id, run.id));
@@ -782,12 +982,246 @@ describe("a person's place, made from Computers", () => {
     servicesStarted = new Promise<void>((resolve) => (startServices = resolve));
   });
 
+  it('opens at most three terminals for a person at once', async () => {
+    type Client = { terminate(): void };
+    const origin = new URL(config.publicUrl).origin;
+    const open = () =>
+      placesApp.injectWS('/api/me/place/terminal', {
+        headers: { cookie: adminCookie, origin },
+      } as never) as Promise<Client>;
+    // The launcher's count, which the terminals of the tests above are not part of.
+    shells.delete(adminId);
+    const opened: Client[] = [];
+    for (let n = 0; n < 3; n++) opened.push(await open());
+    await expect(open()).rejects.toThrow();
+    // One gone, another may open.
+    opened.shift()?.terminate();
+    await vi.waitFor(() => expect(shells.get(adminId)).toBe(2));
+    opened.push(await open());
+    for (const socket of opened) socket.terminate();
+  });
+
+  it("puts a disabled person's place to sleep and does not wake it", async () => {
+    orders.length = 0;
+    places.set(adminId, { state: 'awake', startedAt: new Date().toISOString() });
+    await db.update(users).set({ disabledAt: new Date() }).where(eq(users.id, adminId));
+    try {
+      await tendPlaces(db, launcher, log);
+      expect(orders).toEqual([`sleep ${adminId}`]);
+      // A queued run and a recent presence do not wake it.
+      orders.length = 0;
+      await agentWithRun(adminId);
+      await db.update(users).set({ presentAt: new Date() }).where(eq(users.id, adminId));
+      await tendPlaces(db, launcher, log);
+      expect(orders).toEqual([]);
+    } finally {
+      await db.update(users).set({ disabledAt: null }).where(eq(users.id, adminId));
+      await db
+        .update(runs)
+        .set({ status: 'cancelled', endedAt: new Date() })
+        .where(eq(runs.status, 'queued'));
+    }
+  });
+
+  it('sleeps once it holds more than it may, and wakes for nobody until it holds less', async () => {
+    const gb = 1024 ** 3;
+    orders.length = 0;
+    places.set(adminId, {
+      state: 'awake',
+      startedAt: new Date().toISOString(),
+      diskBytes: 25 * gb,
+    });
+    await agentWithRun(adminId);
+    await db.update(users).set({ presentAt: new Date() }).where(eq(users.id, adminId));
+    try {
+      await tendPlaces(db, launcher, log, 20 * gb);
+      expect(orders).toEqual([`sleep ${adminId}`]);
+      // A queued run and its present person do not wake it, nor does its person.
+      orders.length = 0;
+      await tendPlaces(db, launcher, log, 20 * gb);
+      expect(orders).toEqual([]);
+      const wake = await call('POST', '/api/me/place/wake');
+      expect(wake.statusCode).toBe(409);
+      expect(wake.json()).toMatchObject({
+        error: {
+          code: 'place_disk_full',
+          message: expect.stringMatching(/holds 25\.0 GB of its 20\.0 GB/),
+        },
+      });
+      expect((await call('GET', '/api/me/place')).json()).toMatchObject({
+        place: { disk: { usedBytes: 25 * gb, limitBytes: 20 * gb } },
+      });
+      // Emptied below its limit, it wakes for the run.
+      places.set(adminId, { state: 'asleep', diskBytes: 2 * gb });
+      await tendPlaces(db, launcher, log, 20 * gb);
+      expect(orders).toEqual([`wake ${adminId}`]);
+    } finally {
+      places.set(adminId, { state: 'awake', startedAt: new Date().toISOString() });
+      await db
+        .update(runs)
+        .set({ status: 'cancelled', endedAt: new Date() })
+        .where(eq(runs.status, 'queued'));
+    }
+  });
+
+  it('is deleted by an admin for someone else, with its volumes, and by nobody else', async () => {
+    orders.length = 0;
+    // The member's place of the tests above was paired by hand: this one is made from the page.
+    await db
+      .update(seats)
+      .set({ status: 'revoked' })
+      .where(and(eq(seats.ownerUserId, memberId), eq(seats.kind, 'subscription-server')));
+    const made = await call('POST', '/api/me/place', { cookie: memberCookie });
+    expect(made.statusCode).toBe(201);
+    // A member cannot delete another's place; an admin cannot delete one that is not there.
+    expect(
+      (await call('DELETE', `/api/users/${adminId}/place`, { cookie: memberCookie })).statusCode,
+    ).toBe(403);
+    expect((await call('DELETE', `/api/users/${randomUUID()}/place`)).statusCode).toBe(404);
+    const deleted = await call('DELETE', `/api/users/${memberId}/place`);
+    expect(deleted.statusCode).toBe(204);
+    expect(orders).toContain(`remove ${memberId}`);
+    const [left] = await db
+      .select({ id: seats.id })
+      .from(seats)
+      .where(
+        and(
+          eq(seats.ownerUserId, memberId),
+          eq(seats.kind, 'subscription-server'),
+          eq(seats.status, 'active'),
+        ),
+      );
+    expect(left).toBeUndefined();
+  });
+
+  it('goes with its seat when its person revokes the seat in Computers', async () => {
+    orders.length = 0;
+    // The launcher pairs a place's seat as the person's computer would.
+    expect((await pair(memberCookie, 'subscription-server')).statusCode).toBe(201);
+    const [seat] = await db
+      .select({ id: seats.id })
+      .from(seats)
+      .where(
+        and(
+          eq(seats.ownerUserId, memberId),
+          eq(seats.kind, 'subscription-server'),
+          eq(seats.status, 'active'),
+        ),
+      );
+    const revoked = await call('DELETE', `/api/seats/${seat?.id}`, { cookie: memberCookie });
+    expect(revoked.statusCode).toBe(204);
+    expect(orders).toEqual([`remove ${memberId}`]);
+  });
+
+  it('runs each run in a container of its own, which only the place asks for, and reports it by its token', async () => {
+    orders.length = 0;
+    startedRuns.length = 0;
+    // The runs the tests above left queued are not this one's.
+    await db
+      .update(runs)
+      .set({ status: 'cancelled', endedAt: new Date() })
+      .where(eq(runs.status, 'queued'));
+    await db.update(users).set({ presentAt: new Date() }).where(eq(users.id, adminId));
+    const { agent, run } = await agentWithRun(adminId);
+    const place = (await pair(adminCookie, 'subscription-server')).json<{ token: string }>();
+    const taken = await placesApp.inject({
+      url: '/api/seats/claim?wait=0',
+      headers: { authorization: `Bearer ${place.token}` },
+    });
+    expect(taken.statusCode).toBe(200);
+    const launch = LaunchPackage.parse(taken.json());
+    expect(launch.run.id).toBe(run.id);
+    const byPlace = { authorization: `Bearer ${place.token}`, 'content-type': 'application/json' };
+    const byRun = {
+      authorization: `Bearer ${launch.run.token}`,
+      'content-type': 'application/json',
+    };
+    const container = (
+      method: 'PUT' | 'DELETE',
+      headers: Record<string, string>,
+      folder?: string,
+    ) =>
+      placesApp.inject({
+        method,
+        url: `/api/runs/${run.id}/container`,
+        headers: method === 'PUT' ? headers : { authorization: headers.authorization ?? '' },
+        ...(method === 'PUT' && { payload: folder === undefined ? {} : { folder } }),
+      });
+
+    // The run's token is the agent's, in its container: it starts nothing.
+    expect((await container('PUT', byRun, `folders/${agent.id}/0123456789abcdef`)).statusCode).toBe(
+      401,
+    );
+    // Another agent's folder is not this run's to have.
+    expect(
+      (await container('PUT', byPlace, `folders/${randomUUID()}/0123456789abcdef`)).statusCode,
+    ).toBe(403);
+    const made = await container('PUT', byPlace, `folders/${agent.id}/0123456789abcdef`);
+    expect(made.statusCode).toBe(200);
+    // Where the CLI container and the sandbox are, as the launcher said, and the CLI container's way out.
+    expect(made.json()).toEqual({
+      cli: { host: '10.0.0.2', port: 7419, key: 'b'.repeat(43) },
+      sandbox: { host: '10.0.0.3', port: 7420, key: 'h'.repeat(43) },
+      cliToken: cliEgressToken(placesKey(config.secretKey), run.id),
+    });
+    expect(startedRuns.at(-1)).toMatchObject({
+      id: adminId,
+      runId: run.id,
+      run: { folder: `folders/${agent.id}/0123456789abcdef` },
+    });
+
+    // The transcript and the end are the place's to report: the run's token, which the agent
+    // holds in its container, writes neither.
+    const event = {
+      seq: 0,
+      type: 'assistant_message',
+      payload: { text: 'hello' },
+      at: new Date().toISOString(),
+    };
+    const events = (headers: Record<string, string>) =>
+      placesApp.inject({
+        method: 'POST',
+        url: `/api/runs/${run.id}/events`,
+        headers,
+        payload: [event],
+      });
+    expect((await events(byRun)).statusCode).toBe(401);
+    expect((await events(byPlace)).statusCode).toBe(200);
+    // No body, so no content type.
+    const beat = (headers: Record<string, string>) =>
+      placesApp.inject({
+        method: 'POST',
+        url: `/api/runs/${run.id}/heartbeat`,
+        headers: { authorization: headers.authorization ?? '' },
+      });
+    expect((await beat(byRun)).statusCode).toBe(401);
+    expect((await beat(byPlace)).statusCode).toBe(200);
+    const finish = (headers: Record<string, string>) =>
+      placesApp.inject({
+        method: 'POST',
+        url: `/api/runs/${run.id}/finish`,
+        headers,
+        payload: { status: 'done', summary: 'Done', artifacts: [], usage: [] },
+      });
+    expect((await finish(byRun)).statusCode).toBe(401);
+    expect((await finish(byPlace)).statusCode).toBe(200);
+
+    expect((await container('DELETE', byPlace)).statusCode).toBe(204);
+    expect(orders).toContain(`end run ${run.id} of ${adminId}`);
+    // Ended, the run starts no container again.
+    expect((await container('PUT', byPlace)).statusCode).toBe(409);
+  });
+
   it('is deleted with its seat', async () => {
     orders.length = 0;
     const deleted = await call('DELETE', '/api/me/place');
     expect(deleted.statusCode).toBe(204);
     expect(orders).toEqual([`remove ${adminId}`]);
-    expect((await call('GET', '/api/me/place')).json()).toEqual({ available: true, place: null });
+    expect((await call('GET', '/api/me/place')).json()).toEqual({
+      available: true,
+      computers: true,
+      place: null,
+    });
   });
 });
 
@@ -795,7 +1229,7 @@ describe("the places' egress", () => {
   const hostsFor = (body: object) =>
     app.inject({ method: 'POST', url: '/api/egress/hosts', payload: body });
 
-  it("opens to a run Agentome, the vendors and its project's hosts, which only an admin sets", async () => {
+  it("opens to a run Agentome and its project's hosts, which only an admin sets, and the vendors to its CLI container alone", async () => {
     const made = await app.inject({
       method: 'POST',
       url: '/api/projects',
@@ -818,16 +1252,84 @@ describe("the places' egress", () => {
       payload: { allowedHosts: ['http://x.example/'] },
     });
     expect(odd.statusCode).toBe(400);
+    // Not the platform's own services by their short names, not a whole domain, not this
+    // machine or the cloud's metadata.
+    for (const host of [
+      'postgres',
+      '*.com',
+      'localhost',
+      '127.0.0.1',
+      '169.254.169.254',
+      'a.example:0',
+    ]) {
+      const refused = await app.inject({
+        method: 'PATCH',
+        url: `/api/projects/${project.id}`,
+        headers: { cookie: adminCookie },
+        payload: { allowedHosts: [host] },
+      });
+      expect(refused.statusCode, host).toBe(400);
+    }
     const set = await app.inject({
       method: 'PATCH',
       url: `/api/projects/${project.id}`,
       headers: { cookie: adminCookie },
-      payload: { allowedHosts: [' GitLab.Corp.Example ', '*.jira.corp.example', '10.0.4.12'] },
+      payload: {
+        allowedHosts: [
+          ' GitLab.Corp.Example ',
+          '*.jira.corp.example',
+          '10.0.4.12',
+          'git.corp.example:8443',
+        ],
+      },
     });
+    // Not with a token, an admin's though it is: an assistant holding one could be led by a
+    // repository's words to open the company's network, or to approve its services.
+    const assistant = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/me/tokens',
+        headers: { cookie: adminCookie },
+        payload: { name: 'Assistant', scope: 'write', expiresInDays: 7 },
+      })
+    ).json<{ token: string }>().token;
+    const byToken = { authorization: `Bearer ${assistant}` };
+    expect(
+      (
+        await app.inject({
+          method: 'PATCH',
+          url: `/api/projects/${project.id}`,
+          headers: byToken,
+          payload: { allowedHosts: ['jira.corp.example'] },
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/api/projects/${project.id}/environment/approve`,
+          headers: byToken,
+          payload: { hash: 'a'.repeat(64) },
+        })
+      ).statusCode,
+    ).toBe(403);
+    // The rest of the project, an assistant still changes.
+    expect(
+      (
+        await app.inject({
+          method: 'PATCH',
+          url: `/api/projects/${project.id}`,
+          headers: byToken,
+          payload: { description: 'Payments' },
+        })
+      ).statusCode,
+    ).toBe(200);
     expect(set.json<{ allowedHosts: string[] }>().allowedHosts).toEqual([
       'gitlab.corp.example',
       '*.jira.corp.example',
       '10.0.4.12',
+      'git.corp.example:8443',
     ]);
 
     const { run } = await agentWithRun(memberId, {
@@ -854,24 +1356,77 @@ describe("the places' egress", () => {
       hosts: string[];
     }>();
     expect(opened.who).toBe(`run ${run.id}`);
-    expect(opened.hosts).toEqual(
-      expect.arrayContaining([
-        'agentome.example.com',
-        '*.anthropic.com',
-        'chatgpt.com',
-        'gitlab.corp.example',
-        '*.jira.corp.example',
-        '10.0.4.12',
-      ]),
-    );
+    // The server seat's own token opens npm alone, for its CLI; a computer's, nothing.
+    const server = (await pair(adminCookie, 'api-server')).json<{ token: string }>();
+    expect((await hostsFor({ kind: 'seat', token: server.token })).json()).toEqual({
+      who: expect.stringMatching(/^seat [0-9a-f-]{36}$/),
+      hosts: ['registry.npmjs.org'],
+    });
+    const computer = (await pair(adminCookie, 'subscription-laptop')).json<{ token: string }>();
+    expect((await hostsFor({ kind: 'seat', token: computer.token })).statusCode).toBe(401);
+    expect(opened.hosts).toEqual([
+      'agentome.example.com:443',
+      'gitlab.corp.example',
+      '*.jira.corp.example',
+      '10.0.4.12',
+      'git.corp.example:8443',
+    ]);
+    // The vendors are the CLI container's, the CLI's alone: its own token, derived for the run.
+    const cli = cliEgressToken(placesKey(config.secretKey), run.id);
+    expect((await hostsFor({ kind: 'cli', id: run.id, token: cli })).json()).toEqual({
+      who: `run ${run.id}`,
+      hosts: ['agentome.example.com:443', ...VENDOR_HOSTS],
+    });
+    expect((await hostsFor({ kind: 'cli', id: randomUUID(), token: cli })).statusCode).toBe(401);
+    expect((await hostsFor({ kind: 'cli', id: run.id, token })).statusCode).toBe(401);
+    // The run's own Docker pulls from its project's hosts, and reaches nothing else.
+    const pulls = dockerEgressToken(placesKey(config.secretKey), run.id);
+    expect((await hostsFor({ kind: 'docker', id: run.id, token: pulls })).json()).toEqual({
+      who: `run ${run.id}`,
+      hosts: ['gitlab.corp.example', '*.jira.corp.example', '10.0.4.12', 'git.corp.example:8443'],
+    });
+    expect((await hostsFor({ kind: 'docker', id: run.id, token: cli })).statusCode).toBe(401);
+    // What the proxy refused the project's runs this week, for an admin to allow: not what it
+    // allows already, nor what is older than a week.
+    const refusal = (host: string, count: number, at?: Date) => ({
+      level: 40,
+      source: 'server' as const,
+      message: `a place was refused ${host}: not an allowed host`,
+      context: { host, port: 443, count },
+      runId: run.id,
+      ...(at && { at }),
+    });
+    await db
+      .insert(logEntries)
+      .values([
+        refusal('registry.npmjs.org', 2),
+        refusal('registry.npmjs.org', 2),
+        refusal('gitlab.corp.example', 1),
+        refusal('old.example', 1, new Date(Date.now() - 8 * 24 * 3600 * 1000)),
+      ]);
+    const refused = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${project.id}/refused-hosts`,
+      headers: { cookie: adminCookie },
+    });
+    expect(refused.json<{ hosts: unknown[] }>().hosts).toEqual([
+      expect.objectContaining({ host: 'registry.npmjs.org', port: 443, count: 4 }),
+    ]);
+    const asMember = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${project.id}/refused-hosts`,
+      headers: { cookie: memberCookie },
+    });
+    expect(asMember.statusCode).toBe(403);
     // A stopped run opens nothing.
     await db.update(runs).set({ cancelRequestedAt: new Date() }).where(eq(runs.id, run.id));
     expect((await hostsFor({ kind: 'run', token })).statusCode).toBe(401);
+    expect((await hostsFor({ kind: 'cli', id: run.id, token: cli })).statusCode).toBe(401);
     expect((await hostsFor({ kind: 'run', token: 'not a token' })).statusCode).toBe(401);
   });
 
   it("takes the proxy's account of hosts by each line's own token, and nothing else", async () => {
-    const token = placeEgressToken(config.secretKey, memberId);
+    const token = placeEgressToken(placesKey(config.secretKey), memberId);
     const told = await app.inject({
       method: 'POST',
       url: '/api/egress/events',
@@ -915,17 +1470,51 @@ describe("the places' egress", () => {
       },
     });
     expect(odd.statusCode).toBe(400);
+    // A host is a name as the proxy saw it, not a line of the log of its own.
+    const forged = await app.inject({
+      method: 'POST',
+      url: '/api/egress/events',
+      payload: {
+        events: [
+          {
+            kind: 'place',
+            id: memberId,
+            token,
+            host: 'x.example\n{"level":50,"msg":"an admin signed in"}',
+            port: 443,
+            allowed: true,
+            count: 1,
+          },
+        ],
+      },
+    });
+    expect(forged.statusCode).toBe(400);
   });
 
   it("opens to a place's own token Agentome, the vendors and npm, and to no other token", async () => {
-    const token = placeEgressToken(config.secretKey, memberId);
+    // The member's place, paired again: the tests above deleted theirs.
+    expect((await pair(memberCookie, 'subscription-server')).statusCode).toBe(201);
+    const token = placeEgressToken(placesKey(config.secretKey), memberId);
     const opened = await hostsFor({ kind: 'place', id: memberId, token });
     expect(opened.json<{ hosts: string[] }>().hosts).toEqual(
-      expect.arrayContaining(['agentome.example.com', 'claude.ai', 'registry.npmjs.org']),
+      expect.arrayContaining(['agentome.example.com:443', 'claude.ai', 'registry.npmjs.org']),
     );
+    // The vendors' exact hosts, not their domains.
+    expect(opened.json<{ hosts: string[] }>().hosts).not.toContain('*.anthropic.com');
     expect(opened.json<{ hosts: string[] }>().hosts).not.toContain('gitlab.corp.example');
     // Another person's id with this token, or no id, opens nothing.
     expect((await hostsFor({ kind: 'place', id: adminId, token })).statusCode).toBe(401);
     expect((await hostsFor({ kind: 'place', token })).statusCode).toBe(401);
+    // Once the place is gone, its token, which is derived and cannot be revoked, opens nothing.
+    const placeSeats = and(eq(seats.ownerUserId, memberId), eq(seats.kind, 'subscription-server'));
+    const before = await db
+      .select({ id: seats.id, status: seats.status })
+      .from(seats)
+      .where(placeSeats);
+    await db.update(seats).set({ status: 'revoked' }).where(placeSeats);
+    expect((await hostsFor({ kind: 'place', id: memberId, token })).statusCode).toBe(401);
+    for (const seat of before) {
+      await db.update(seats).set({ status: seat.status }).where(eq(seats.id, seat.id));
+    }
   });
 });

@@ -67,6 +67,25 @@ describe('Your place on the server', () => {
 });
 
 describe('the terminal of a place', () => {
+  it('says when it holds more than it may, and what to do', async () => {
+    const gb = 1024 ** 3;
+    mockApi({
+      'GET /api/me/place': {
+        ...awake,
+        place: {
+          ...awake.place,
+          state: 'asleep',
+          signedOut: [],
+          disk: { usedBytes: 25 * gb, limitBytes: 20 * gb },
+        },
+      },
+    });
+    render(<PlaceSection />);
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Your place holds 25.0 GB of its 20.0 GB, so it sleeps and takes no runs. Start an agent’s folders fresh below, then wake it.',
+    );
+  });
+
   it('opens on the same host, over wss behind https', () => {
     expect(terminalUrl({ protocol: 'https:', host: 'agentome.example.com' })).toBe(
       'wss://agentome.example.com/api/me/place/terminal',

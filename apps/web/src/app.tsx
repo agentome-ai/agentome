@@ -13,6 +13,7 @@ import { AgentsPage } from './agents/agents-page';
 import { ApprovalsPage } from './approvals/approvals-page';
 import { InvitePage } from './auth/invite-page';
 import { LoginPage } from './auth/login-page';
+import { TwoStepPage } from './auth/two-step-page';
 import { ResetPage } from './auth/reset-page';
 import { SetupPage } from './auth/setup-page';
 import { DashboardPage } from './dashboard/dashboard-page';
@@ -71,6 +72,7 @@ export function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/invite/:token" element={<InvitePage />} />
           <Route path="/reset-password" element={<ResetPage />} />
+          <Route path="/two-step" element={<TwoStepPage />} />
           <Route element={<SessionShell />}>
             {[...mainSections, ...footerSections].map((section) => (
               <Route

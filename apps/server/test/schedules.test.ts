@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { localNow, runDueSchedules, whenOf } from '../src/schedules/service.js';
-import { projectOfAgent, setupCodeIn } from './app.js';
+import { projectOfAgent, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // An agent's recurring tasks: made and run at their day and minute in their zone.
 
@@ -37,6 +37,7 @@ beforeAll(async () => {
       admin: { name: 'Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   const setCookie = setup.headers['set-cookie'] ?? [];
   cookie = (Array.isArray(setCookie) ? setCookie : [setCookie])
     .map((value) => value.split(';', 1)[0])

@@ -16,9 +16,12 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { LaunchPackage } from './client.js';
 import { launchPackage } from '../test/fake-server.js';
 import {
   branchArtifact,
+  foreignHost,
+  gitAtServer,
   cliProjectDir,
   prepareWorkspace,
   removeRun,
@@ -87,7 +90,7 @@ describe('prepareWorkspace', () => {
         failIfUnavailable: true,
         autoAllowBashIfSandboxed: true,
         allowUnsandboxedCommands: false,
-        network: { allowedDomains: ['agentome.test'], strictAllowlist: true },
+        network: { allowedDomains: ['127.0.0.1'], strictAllowlist: true },
         // The person's home folder closed whole, and the run's own folder open.
         filesystem: {
           denyRead: [join(home, 'config.json'), join(dir, 'person')],
@@ -98,6 +101,8 @@ describe('prepareWorkspace', () => {
       },
       permissions: {
         deny: [
+          // A repository's skills grant no tools: no skill of Claude Code's own runs.
+          'Skill',
           'Read(//proc)',
           'Read(//proc/**)',
           'Read(//sys)',
@@ -531,6 +536,39 @@ describe('branchArtifact', () => {
   });
 });
 
+describe("a computer's launch package", () => {
+  const server = 'https://agentome.example.com';
+  const launch = (hosts: string[], mcp = `${server}/mcp`, git?: string) => {
+    const made = launchPackage();
+    made.workspace.profile.settings.sandbox = { enabled: true, network: { allowedDomains: hosts } };
+    made.workspace.mcp = { url: mcp };
+    if (git) made.workspace.git = { url: git, username: 'run', password: 'p' };
+    return made;
+  };
+
+  it('is taken when it points at the server this computer was connected to', () => {
+    expect(
+      foreignHost(launch(['agentome.example.com'], `${server}/mcp`, `${server}/git/r.git`), server),
+    ).toBeUndefined();
+  });
+
+  it('is refused when its sandbox, its gateway or its git proxy names another host', () => {
+    expect(foreignHost(launch(['agentome.example.com', 'attacker.example']), server)).toMatch(
+      /sent this run to attacker\.example, while this computer is connected to https:\/\/agentome\.example\.com/,
+    );
+    expect(
+      foreignHost(launch(['agentome.example.com'], 'https://attacker.example/mcp'), server),
+    ).toMatch(/to https:\/\/attacker\.example,/);
+    // The same name on plain HTTP is another origin, which anyone on the network may answer for.
+    expect(
+      foreignHost(
+        launch(['agentome.example.com'], `${server}/mcp`, 'http://agentome.example.com/git/r.git'),
+        server,
+      ),
+    ).toMatch(/to http:\/\/agentome\.example\.com,/);
+  });
+});
+
 describe('removeWorkspace', () => {
   it('removes folders the agent made read-only', async () => {
     const workspace = await prepareWorkspace(home, launchPackage(), options);
@@ -606,5 +644,23 @@ describe("a computer's closed home folder", () => {
       ['.cargo', '.nvm', '.zsh_history', 'code'].map((name) => join(person, name)),
     );
     rmSync(person, { recursive: true, force: true });
+  });
+});
+
+describe('the git proxy of a place', () => {
+  it('is the server at the address the worker reaches it, inside the server', () => {
+    const at = (url: string) =>
+      ({ workspace: { git: { url, username: 'run', password: 'p' } } }) as unknown as LaunchPackage;
+    expect(
+      gitAtServer(at('https://agentome.example.com/git/acme/shop.git'), 'http://app:3000').workspace
+        .git?.url,
+    ).toBe('http://app:3000/git/acme/shop.git');
+    // A public address under a path of its own: the proxy's path is what follows it.
+    expect(
+      gitAtServer(at('https://example.com/agentome/git/acme/shop.git'), 'http://app:3000/')
+        .workspace.git?.url,
+    ).toBe('http://app:3000/git/acme/shop.git');
+    const none = { workspace: {} } as unknown as LaunchPackage;
+    expect(gitAtServer(none, 'http://app:3000')).toBe(none);
   });
 });

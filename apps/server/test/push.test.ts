@@ -23,7 +23,7 @@ import {
   vapidKeys,
 } from '../src/push/service.js';
 import { setupCode } from '../src/setup-code.js';
-import { projectOfAgent } from './app.js';
+import { projectOfAgent, secondStepForAdmins } from './app.js';
 
 // Web push against the real server and database; the push services themselves are
 // web-push's sendNotification, replaced where a test sends.
@@ -67,6 +67,7 @@ beforeAll(async () => {
       admin: { name: 'Ann Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   admin = { id: setup.json<{ id: string }>().id, cookie: cookieOf(setup) };
 }, 120_000);
 

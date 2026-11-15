@@ -11,13 +11,28 @@ worker=/usr/local/lib/agentome/agentome-worker.mjs
 # connect and status take no run: they need no CLI.
 [ "${1:-run}" = run ] || exec node "$worker" "$@"
 
+# Not connected yet: the worker says how, with no CLI to install.
+[ -f "$AGENTOME_WORKER_HOME/config.json" ] || exec node "$worker" "$@"
+
 list=/usr/local/lib/agentome/claude-code
 cli=/seat/cli
 mkdir -p "$cli"
 cp "$list/package.json" "$list/package-lock.json" "$cli/"
+# Behind the egress proxy (compose.yaml) npm's registry is reached through it, signed in as this
+# seat; a mirror of the company's directly. Only npm gets the seat's token: it claims every
+# agent's runs, and the CLI's environment is the agent's to read. A person's place is not a
+# server seat: the proxy refuses its seat's token, and its own proxy address, in HTTPS_PROXY,
+# opens npm.
+proxy=
+if [ -n "${AGENTOME_PLACE_EGRESS:-}" ] && [ -z "${AGENTOME_WORKER_PLACE:-}" ] &&
+  [ -z "${NPM_CONFIG_REGISTRY:-}${npm_config_registry:-}" ]; then
+  token=$(node -e 'process.stdout.write(encodeURIComponent(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).token))' "$AGENTOME_WORKER_HOME/config.json")
+  proxy="http://seat:$token@$AGENTOME_PLACE_EGRESS"
+fi
 # The binary is an optional package of its platform: npm leaves out one whose checksum is wrong
 # and still ends well, so the CLI is asked for its version before the seat takes a run with it.
-if ! npm ci --prefix "$cli" --cache /seat/npm-cache --prefer-offline --no-audit --no-fund \
+if ! env ${proxy:+npm_config_https_proxy=$proxy npm_config_proxy=$proxy} \
+  npm ci --prefix "$cli" --cache /seat/npm-cache --prefer-offline --no-audit --no-fund \
   --no-update-notifier --loglevel=error >&2 ||
   ! "$cli/node_modules/.bin/claude" --version >/dev/null 2>&1; then
   echo 'agentome: Claude Code could not be installed, so the seat takes no runs. It installs it from the npm registry at its first start and from its own cache after that. Give the seat a way to the registry, or a mirror in NPM_CONFIG_REGISTRY.' >&2

@@ -26,7 +26,7 @@ import { LaunchPackage } from '../src/protocol.js';
 import { returnDueAgents } from '../src/agents/ownership.js';
 import { enqueueRun } from '../src/runs/service.js';
 import { prepareInstallation } from '../src/setup.js';
-import { licenseEnterprise, projectOfAgent, setupCodeIn } from './app.js';
+import { licenseEnterprise, projectOfAgent, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // The agents API against the real server and database:
 // every route checks a grant, and the preview shows what a run of the agent gets.
@@ -88,6 +88,7 @@ beforeAll(async () => {
       admin: { name: 'Ann Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   await licenseEnterprise(db);
   admin = { ...setup.json<Omit<Person, 'cookie'>>(), cookie: cookieOf(setup) };
 }, 120_000);

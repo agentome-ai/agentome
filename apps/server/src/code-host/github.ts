@@ -1,5 +1,6 @@
 import { Octokit } from 'octokit';
 import { z } from 'zod';
+import { actionFiles, localActions, MAX_PIPELINE_FILES } from './pipeline.js';
 import { CodeHostError, kindOfStatus } from './errors.js';
 import { fetchThrough, type RequestOptions } from './http.js';
 import type {
@@ -259,6 +260,70 @@ export function githubHost(options: {
           basehead: `${older}...${newer}`,
         });
         return data.status === 'ahead' || data.status === 'identical';
+      }),
+
+    pipelineDiffers: (repository, base, head) =>
+      call(async () => {
+        const repo = split(repository);
+        // The `.github` folder alone, not the whole repository: GitHub cuts a large tree short.
+        const folderAt = async (ref: string) => {
+          const { data: root } = await octokit.rest.git.getTree({ ...repo, tree_sha: ref });
+          const folder = root.tree.find(
+            (entry) => entry.path === '.github' && entry.type === 'tree',
+          );
+          if (!folder?.sha) return { files: new Map<string, string>(), truncated: false };
+          const { data } = await octokit.rest.git.getTree({
+            ...repo,
+            tree_sha: folder.sha,
+            recursive: 'true',
+          });
+          const files = new Map(
+            data.tree
+              .filter((entry) => entry.type === 'blob' && entry.path && entry.sha)
+              .map((entry) => [`.github/${String(entry.path)}`, String(entry.sha)]),
+          );
+          return { files, truncated: data.truncated };
+        };
+        /** A file's id at a commit, by its path; undefined where it has none. */
+        const fileAt = async (path: string, ref: string) => {
+          try {
+            const { data } = await octokit.rest.repos.getContent({ ...repo, path, ref });
+            return Array.isArray(data) ? 'a folder' : data.sha;
+          } catch (error) {
+            if ((error as { status?: number }).status === 404) return undefined;
+            throw error;
+          }
+        };
+        const text = async (sha: string) => {
+          const { data } = await octokit.rest.git.getBlob({ ...repo, file_sha: sha });
+          return Buffer.from(data.content, 'base64').toString('utf8');
+        };
+        const [before, after] = await Promise.all([folderAt(base), folderAt(head)]);
+        if (before.truncated || after.truncated) return true;
+        const folder = new Set([...before.files.keys(), ...after.files.keys()]);
+        if ([...folder].some((path) => before.files.get(path) !== after.files.get(path)))
+          return true;
+        // Actions reads every workflow from `.github`, and a workflow's `uses: ./folder` the
+        // action defined there, which may use others the same way.
+        const actions = new Map<string, string | undefined>();
+        const queue: string[] = [];
+        const follow = async (sha: string) => {
+          for (const folder of localActions(await text(sha))) queue.push(...actionFiles(folder));
+        };
+        for (const [path, sha] of before.files) {
+          if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) await follow(sha);
+        }
+        for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+          if (actions.has(next) || next.startsWith('.github/')) continue;
+          if (actions.size >= MAX_PIPELINE_FILES) return true;
+          const sha = await fileAt(next, base);
+          actions.set(next, sha);
+          if (sha !== undefined && sha !== 'a folder') await follow(sha);
+        }
+        for (const [path, sha] of actions) {
+          if ((await fileAt(path, head)) !== sha) return true;
+        }
+        return false;
       }),
 
     // GitHub takes the token as the password under any user name; x-access-token is the one

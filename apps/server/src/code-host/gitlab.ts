@@ -1,6 +1,7 @@
 import { Gitlab } from '@gitbeaker/rest';
 import { z } from 'zod';
 import { CodeHostError, kindOfStatus } from './errors.js';
+import { gitlabIncludes, globTest, MAX_PIPELINE_FILES } from './pipeline.js';
 import { hostMessage, request, type RequestOptions } from './http.js';
 import type {
   ChangeRequest,
@@ -162,7 +163,7 @@ export function gitlabHost(options: {
     ),
   });
 
-  return {
+  const host: CodeHost = {
     kind: 'gitlab',
     changeRequestWord: 'merge request',
 
@@ -309,10 +310,64 @@ export function gitlabHost(options: {
         return String(base.id ?? '') === older;
       }),
 
+    pipelineDiffers: (repository, base, head) =>
+      call(async () => {
+        const project = (await api.Projects.show(repository)) as unknown as Json;
+        const config = String(project.ci_config_path || '.gitlab-ci.yml');
+        // A configuration in another project or at a URL is not this repository's to change.
+        if (config.includes('@') || /^https?:/i.test(config)) return false;
+        /** A file's id and text at a commit; undefined where it has none. */
+        const fileAt = (path: string, ref: string) =>
+          get(`repository/files/${encodeURIComponent(path)}`, repository, { ref }).then(
+            ({ body }) => {
+              const file = JSON.parse(body) as Json;
+              return {
+                id: String(file.blob_id ?? ''),
+                text: Buffer.from(String(file.content ?? ''), 'base64').toString('utf8'),
+              };
+            },
+            (error: unknown) => {
+              if (error instanceof CodeHostError && error.kind === 'not_found') return undefined;
+              throw error;
+            },
+          );
+        // The files as the default branch has them: its configuration and what that includes.
+        const before = new Map<string, string | undefined>();
+        const patterns = new Set<string>();
+        let tree: { files: { path: string; sha: string }[]; truncated: boolean } | undefined;
+        const queue = [config];
+        for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+          if (before.has(next)) continue;
+          if (before.size >= MAX_PIPELINE_FILES) return true;
+          const file = await fileAt(next, base);
+          before.set(next, file?.id);
+          if (!file) continue;
+          const named = gitlabIncludes(file.text, repository);
+          if (named.unreadable) return true;
+          queue.push(...named.paths);
+          for (const pattern of named.patterns.filter((p) => !patterns.has(p))) {
+            patterns.add(pattern);
+            tree ??= await host.tree(repository, base);
+            if (tree.truncated) return true;
+            queue.push(...tree.files.map((f) => f.path).filter(globTest(pattern)));
+          }
+        }
+        for (const [path, id] of before) {
+          if ((await fileAt(path, head))?.id !== id) return true;
+        }
+        if (patterns.size === 0) return false;
+        // A pattern takes in a file the agent adds as well.
+        const after = await host.tree(repository, head);
+        if (after.truncated) return true;
+        const tests = [...patterns].map(globTest);
+        return after.files.some((f) => tests.some((test) => test(f.path)) && !before.has(f.path));
+      }),
+
     gitCredential: () => ({ username: 'oauth2', password: options.token }),
 
     parseWebhook: parseGitlabWebhook,
   };
+  return host;
 
   /** A project's endpoint read directly: its text, and the page after it, if any. */
   async function get(endpoint: string, repository: string, query: Record<string, string> = {}) {

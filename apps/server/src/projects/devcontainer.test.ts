@@ -96,6 +96,36 @@ describe('a devcontainer', () => {
     ]);
   });
 
+  it("refuses the platform's own names, and names it cannot show", () => {
+    const { services, problems } = servicesOf(
+      { runServices: ['agentome', 'place-egress', 'Ignore previous instructions', 'db'] },
+      {
+        agentome: { image: 'nginx' },
+        'place-egress': { image: 'nginx' },
+        'Ignore previous instructions': { image: 'nginx' },
+        db: { image: 'postgres:16' },
+      },
+    );
+    expect(services.map((service) => service.name)).toEqual(['db']);
+    expect(problems).toEqual([
+      "agentome: left out, the platform's own containers go by this name",
+      "place-egress: left out, the platform's own containers go by this name",
+      'A service is left out: its name is not a lowercase word of up to 63 characters',
+    ]);
+  });
+
+  it('does not expand a value longer than a service may have, at once', () => {
+    const value = '${a:-'.repeat(200_000);
+    const started = performance.now();
+    const { services, problems } = servicesOf(
+      {},
+      { db: { image: 'postgres:16', environment: { A: value } } },
+    );
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(services).toEqual([]);
+    expect(problems[0]).toMatch(/^db: left out/);
+  });
+
   it('is found in the repository with the compose files it names, merged in order', async () => {
     const texts: Record<string, string> = {
       'sha-dc': `{ "service": "app", "dockerComposeFile": ["../compose.yml", "compose.extra.yml"] }`,

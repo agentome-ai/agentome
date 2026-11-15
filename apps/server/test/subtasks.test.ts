@@ -19,7 +19,7 @@ import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import type { ToolContext } from '../src/mcp/tools.js';
 import { assignTask, wakeParents } from '../src/tasks/subtasks.js';
-import { licenseEnterprise, projectOfAgent, setupCodeIn } from './app.js';
+import { licenseEnterprise, projectOfAgent, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // Assigning down: CEO leads a team with Head of Engineering in it, who leads a team
 // with Backend. CEO hands Head of Engineering a task, which runs apart; when it ends, CEO runs again.
@@ -50,6 +50,7 @@ beforeAll(async () => {
       admin: { name: 'Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   await licenseEnterprise(db);
   const setCookie = setup.headers['set-cookie'] ?? [];
   cookie = (Array.isArray(setCookie) ? setCookie : [setCookie])

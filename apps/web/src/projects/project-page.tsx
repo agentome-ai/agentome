@@ -26,6 +26,7 @@ import { Row } from '../ui/list-row';
 import { NewProjectTask, ProjectFields } from './project-fields';
 import type { ProjectView } from './projects-data';
 import { RepositoriesSection } from './repositories-section';
+import { NetworkSection } from './network-section';
 import { ServicesSection } from './services-section';
 import { Triggers } from './triggers';
 
@@ -220,6 +221,8 @@ export function ProjectPage() {
           isAdmin={isAdmin}
           onChanged={setProject}
         />
+
+        <NetworkSection project={project} isAdmin={isAdmin} onChanged={setProject} />
 
         <Triggers project={project} canEdit={canEdit} onSaved={setProject} />
 

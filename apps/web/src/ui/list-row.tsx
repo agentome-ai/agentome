@@ -14,6 +14,8 @@ export function Row(props: {
   detail?: ReactNode;
   tag?: string;
   menu?: ReactNode;
+  /** One action shown in the row itself, where it is the row's whole point: Allow a host. */
+  action?: ReactNode;
   /** What the "…" acts on, for its name: "Actions for Developer". */
   what: string;
 }) {
@@ -30,6 +32,7 @@ export function Row(props: {
         </span>
       )}
       <span className="max-md:col-start-3 max-md:row-start-1">
+        {props.action}
         {props.tag && (
           <span className="inline-flex h-5 items-center rounded-sm border border-line-strong px-1.5 text-small text-ink-2">
             {props.tag}

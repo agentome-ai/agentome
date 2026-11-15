@@ -45,7 +45,8 @@ function serve(
   {
     role = 'member',
     windowsCommand = null,
-  }: { role?: string; windowsCommand?: string | null } = {},
+    computers = true,
+  }: { role?: string; windowsCommand?: string | null; computers?: boolean } = {},
 ) {
   const calls: Call[] = [];
   vi.stubGlobal(
@@ -61,6 +62,8 @@ function serve(
       if (url === '/api/license') return Response.json({ status: 'valid' });
       if (url === '/api/approvals') return Response.json({ approvals: [] });
       if (url.startsWith('/api/tasks?')) return Response.json({ tasks: [], nextBefore: null });
+      if (url === '/api/me/place')
+        return Response.json({ available: false, computers, place: null });
       const method = init.method ?? 'GET';
       calls.push({ method, url, body: init.body ? JSON.parse(String(init.body)) : undefined });
       if (method === 'GET') {
@@ -120,13 +123,36 @@ describe('Admin, Computers', () => {
     expect(screen.getAllByRole('button', { name: 'Connect a computer' })).toHaveLength(1);
   });
 
+  it('offers a member nothing to connect when this server takes no computers', async () => {
+    serve([], INSTALLER, { computers: false });
+    renderSeats();
+    expect(await screen.findByText('Your agents run in your place on the server.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Connect/ })).toBeNull();
+  });
+
+  it('lets an admin connect only the server seat when this server takes no computers', async () => {
+    serve([idle], INSTALLER, { role: 'admin', computers: false });
+    const user = renderSeats();
+    expect(await screen.findByText(/runs agents only on the server/)).toBeTruthy();
+    await user.click(await screen.findByRole('button', { name: 'Connect the server seat' }));
+    const dialog = screen.getByRole('dialog', { name: 'Connect the server seat' });
+    expect(
+      await within(dialog).findByText(
+        'docker compose run --rm seat connect K7QX-M2PH --server http://app:3000',
+      ),
+    ).toBeTruthy();
+    expect(within(dialog).queryByText(INSTALLER)).toBeNull();
+  });
+
   it('says what went wrong when the seats do not load, and retries', async () => {
     const calls = serve(new Error('Sign in to continue.'));
     const user = renderSeats();
     expect(await screen.findByText("Couldn't load the computers")).toBeTruthy();
     expect(screen.getByText('Sign in to continue.')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(calls.filter((call) => call.method === 'GET' && call.url === '/api/seats')).toHaveLength(2);
+    expect(calls.filter((call) => call.method === 'GET' && call.url === '/api/seats')).toHaveLength(
+      2,
+    );
   });
 
   it('connects a computer with a one-time code and a command to copy', async () => {

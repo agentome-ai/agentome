@@ -28,6 +28,7 @@ const signInFrom = (location: Location) =>
 export function ApiErrorState(props: { title: string; error: ApiError; onRetry: () => void }) {
   const location = useLocation();
   if (props.error.code === 'unauthorized') return <Navigate to={signInFrom(location)} replace />;
+  if (props.error.code === 'two_factor_required') return <Navigate to="/two-step" replace />;
   return (
     <ErrorState title={props.title} onRetry={props.onRetry}>
       {props.error.message}
@@ -67,6 +68,7 @@ export function SessionShell() {
 
   if (error?.code === 'unauthorized') return <Navigate to={signInFrom(location)} replace />;
   if (error?.code === 'setup_required') return <Navigate to="/setup" replace />;
+  if (error?.code === 'two_factor_required') return <Navigate to="/two-step" replace />;
   if (error) {
     return (
       <main className="mx-auto max-w-110 px-4 pt-[12vh]">

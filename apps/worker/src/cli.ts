@@ -12,6 +12,8 @@ import type { Settings } from './config.js';
 import { ENGINES, runWorker, WAITS_FOR_SANDBOX } from './loop.js';
 import { installService, serviceFile, serviceMain, serviceSpec } from './service.js';
 import { uninstallService } from './service.js';
+import { sandboxMain } from './sandbox.js';
+import { knockOnPlace, RUN_PORT, runServer } from './remote.js';
 
 // `agentome-worker`: connects this computer, runs the seat, installs it as a service and says
 // what it is doing. Its arguments are few enough to read by hand.
@@ -36,6 +38,10 @@ export async function main(args: readonly string[], env: NodeJS.ProcessEnv = pro
   if (command === 'team-hook') return teamHookMain(rest[0]);
   // What the Windows task runs (service.ts); not a command for people either.
   if (command === 'service') return serviceMain(rest[0]);
+  // A run's own container in a person's place starts it; not a command for people.
+  if (command === 'run-server') return runServerMain(rest[0], env);
+  // The CLI container's /bin/bash in a run in a place; not a command for people.
+  if (command === 'sandbox') return sandboxMain(rest, env);
   try {
     const settings = readSettings(env);
     if (command === 'connect') return await connect(rest, settings);
@@ -186,11 +192,28 @@ function ago(iso: string): string {
   return `${new Date(iso).toLocaleString()} (${minutes} min ago)`;
 }
 
-/** The address as typed, without credentials, query or a trailing slash; a path is kept. */
-function serverUrlOf(input: string): string {
+/**
+ * The address as typed, without credentials, query or a trailing slash; a path is kept. Plain
+ * HTTP only to this machine or to a service by its one-word name (`app`, `agentome` beside it in
+ * compose or a cluster): across a network, whoever sits on it would read the seat's token and
+ * could hand the worker runs of their own.
+ */
+export function serverUrlOf(input: string): string {
   const url = URL.canParse(input.trim()) ? new URL(input.trim()) : undefined;
   if (url?.protocol !== 'https:' && url?.protocol !== 'http:') {
     throw new UserError(`${input} is not a server address: it starts with https:// or http://.`);
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  const near =
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    /^127\.\d+\.\d+\.\d+$/.test(host) ||
+    host === '::1' ||
+    /^[a-z0-9-]+$/i.test(host);
+  if (url.protocol === 'http:' && !near) {
+    throw new UserError(
+      `${input} is plain HTTP across a network: connect to the server's https:// address.`,
+    );
   }
   return `${url.origin}${url.pathname}`.replace(/\/+$/, '');
 }
@@ -205,3 +228,27 @@ function isEntry(): boolean {
 }
 
 if (isEntry()) process.exitCode = await main(process.argv.slice(2));
+
+/**
+ * A run's container's side of a run in a person's place, its CLI container or its sandbox: it serves the
+ * place's worker, or the CLI container's `bash`, until the worker deletes the container.
+ */
+async function runServerMain(runId: string | undefined, env: NodeJS.ProcessEnv): Promise<number> {
+  if (!runId || !/^[0-9a-f-]{36}$/.test(runId)) {
+    console.error('run-server takes the id of the run');
+    return 1;
+  }
+  const key = env.AGENTOME_RUN_KEY;
+  if (!key) {
+    console.error('run-server takes its key in AGENTOME_RUN_KEY');
+    return 1;
+  }
+  const port = Number(env.AGENTOME_RUN_PORT) || RUN_PORT;
+  // A run's CLI container marks itself, for the image's bash and git: they pass commands to its sandbox.
+  const cli = env.AGENTOME_RUN_ROLE === 'cli';
+  await runServer(key, (text) => console.error(text), port, cli);
+  knockOnPlace();
+  // The worker deletes the container when the run ends; until then, this serves.
+  await new Promise<never>(() => undefined);
+  return 0;
+}

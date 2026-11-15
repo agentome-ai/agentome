@@ -6,6 +6,61 @@ What changed in each release of Agentome. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-16
+
+A run on your server now keeps the person's subscription apart from the agent's commands. Each run
+in a place is two containers: the CLI container, with the official Claude Code or Codex and the
+person's sign-in, and the sandbox, where every command the agent runs goes. Places and runs get a
+kernel of their own under gVisor, a run may have a Docker of its own for its tests, and an agent's
+push reaches its branch only after a check. The guide has new pages for deploying on your server
+and for security.
+
+### Added
+
+- A CLI container and a sandbox for each run in a place. The CLI's `bash` and `git` pass every
+  command to the sandbox, which has the task's repository and nothing of the sign-in. The CLI goes
+  out to the model vendors under a token of its own; commands reach only Agentome and the hosts the
+  project allows.
+- gVisor for places and runs: `AGENTOME_PLACE_RUNTIME=runsc` on Docker, or a RuntimeClass on
+  Kubernetes, where a run is one pod with both containers and the project's services.
+- A Docker of a run's own, for testcontainers and compose stacks: with
+  `AGENTOME_PLACE_DOCKER_RUNTIME`, a dockerd inside gVisor beside the sandbox, pulling through the
+  egress proxy and deleted with the run.
+- A project's **Network** section: the hosts its runs may reach, the hosts the proxy refused them
+  in the last week with **Allow** beside each, and **Add public package registries**.
+- `agentome rotate-key`, which seals every secret the database keeps under a new key, for one that
+  may have leaked, and keeps the installation's id for its license.
+- A docker guard in front of Docker's socket: the place launcher no longer holds the socket or runs
+  as root, and the guard passes only the calls that make places and runs.
+- `AGENTOME_COMPUTERS=false`, for agents on the server only, with no person's computer connected.
+- Two-step sign-in with an authenticator app, without Keycloak, required of every admin; with
+  Keycloak, password sign-in can be turned off.
+- `agentome`, one program on npm: `npx agentome install` sets up the server with Docker Compose,
+  and `agentome mcp` connects an MCP client to the server's management tools.
+- The API is documented at `/openapi.json` and in the guide's reference.
+- The guide's **Deploy on your server** and **Security** pages.
+
+### Changed
+
+- An agent's push lands first on a ref of the git proxy's own, on which no pipeline runs, and moves
+  its branch only when it keeps the branch's history and leaves the CI configuration as the default
+  branch has it: on GitLab the CI file and every file it includes, child pipelines too; on GitHub
+  the `.github` folder and the local actions its workflows use.
+- The egress proxy reads the server name of each tunnel and lets through port 443 only, unless a
+  host is listed with another; it connects only to the address it checked.
+- Places on Docker each have a network of their own, and a backup holds the database without the
+  secret key.
+
+### Fixed
+
+- A place clones its task's repository where the server has an HTTPS address.
+- A run in a place under gVisor starts at once, not after up to a minute.
+- A place takes runs again after Claude Code's token expired and a sign-in check left its lock.
+- The server seat reaches the internet only through the egress proxy.
+- A task's repository gets credentials only when its project lists it, and a computer runs only
+  what points at the server it was connected to.
+- The API has a rate limit, and the images are signed.
+
 ## [0.2.0] - 2026-11-13
 
 Agents now run in containers on your server. Each person gets a place of their own, where their

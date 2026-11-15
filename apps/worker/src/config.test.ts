@@ -31,6 +31,8 @@ describe('readSettings', () => {
       keepWorkspaces: true,
       server: true,
       place: true,
+      // A place's home holds the person's sign-in, which its runs' containers mount.
+      signInHome: homedir(),
     });
   });
 

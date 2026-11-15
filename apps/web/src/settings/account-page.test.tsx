@@ -80,4 +80,55 @@ describe('Settings, Account', () => {
     );
     expect((screen.getByLabelText('New password') as HTMLInputElement).value).toBe('');
   });
+
+  it('turns on two-step sign-in: the password, the app, its first code, then backup codes', async () => {
+    const uri = 'otpauth://totp/Agentome:ann%40acme.com?secret=JBSWY3DPEHPK3PXP&issuer=Agentome';
+    const { last, user } = await renderPage({
+      'GET /api/me/two-factor': { available: true, enabled: false },
+      'POST /api/auth/two-factor/enable': {
+        totpURI: uri,
+        backupCodes: ['aaaaa-bbbbb', 'ccccc-ddddd'],
+      },
+      'POST /api/auth/two-factor/verify-totp': { status: true },
+    });
+    await user.click(await screen.findByRole('button', { name: 'Turn on' }));
+    await user.type(screen.getByLabelText('Your password'), 'correct horse battery');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(last('POST /api/auth/two-factor/enable')?.body).toEqual({
+      password: 'correct horse battery',
+    });
+    expect(
+      await screen.findByRole('img', { name: 'QR code for your authenticator app' }),
+    ).toBeTruthy();
+    expect(screen.getByText('JBSWY3DPEHPK3PXP')).toBeTruthy();
+    await user.type(screen.getByLabelText('Code from the app'), '12a3456');
+    await user.click(screen.getByRole('button', { name: 'Turn on' }));
+    expect(last('POST /api/auth/two-factor/verify-totp')?.body).toEqual({ code: '123456' });
+    const list = await screen.findByRole('list', { name: 'Backup codes' });
+    expect(list.textContent).toBe('aaaaa-bbbbbccccc-ddddd');
+  });
+
+  it('shows nothing of it to someone whom Keycloak alone signs in', async () => {
+    await renderPage({ 'GET /api/me/two-factor': { available: false, enabled: false } });
+    await screen.findByRole('heading', { name: 'Password' });
+    expect(screen.queryByRole('heading', { name: 'Two-step sign-in' })).toBeNull();
+  });
+
+  it('keeps an admin from turning it off', async () => {
+    await renderPage({ 'GET /api/me/two-factor': { available: true, enabled: true } });
+    expect(await screen.findByRole('button', { name: 'New backup codes' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Turn off' })).toBeNull();
+  });
+});
+
+describe('an admin without the second step', () => {
+  it('is sent to set it up before anything else', async () => {
+    mockApi({ 'GET /api/me': failure(403, 'two_factor_required') });
+    render(
+      <MemoryRouter initialEntries={['/agents']}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('heading', { name: 'Set up two-step sign-in' })).toBeTruthy();
+  });
 });

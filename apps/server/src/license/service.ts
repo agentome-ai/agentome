@@ -65,13 +65,14 @@ export function useLicenseKey(key: KeyObject): void {
 
 /**
  * This installation's id, which a key may be bound to: drawn from the secret key, so it stays
- * the same across restarts and updates and differs between installations.
+ * the same across restarts and updates and differs between installations. A rotation of the
+ * key keeps the old one in the database (rotate-key.ts), so that its licenses go on working.
  */
 export const installationIdOf = (secretKey: string) =>
   (deriveKey(secretKey, 'installation-id').slice(0, 16).match(/.{4}/g) ?? []).join('-');
 
-export function useInstallation(secretKey: string): void {
-  installationId = installationIdOf(secretKey);
+export function useInstallation(id: string): void {
+  installationId = id;
   forgetLicense();
 }
 

@@ -1,0 +1,37 @@
+{
+  "name": "agentome",
+  "version": "0.3.0",
+  "description": "Install the Agentome server, connect this computer to one, or reach it as an MCP server.",
+  "mcpName": "io.github.agentome-ai/agentome",
+  "license": "Elastic-2.0",
+  "homepage": "https://agentome.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentome-ai/agentome.git",
+    "directory": "apps/cli"
+  },
+  "type": "module",
+  "bin": {
+    "agentome": "dist/agentome.mjs"
+  },
+  "files": [
+    "dist/agentome.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "tsx src/bin.ts",
+    "build": "esbuild src/bin.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/agentome.mjs --banner:js='#!/usr/bin/env node' --define:AGENTOME_VERSION=\\\"$npm_package_version\\\" --log-level=warning",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run --config ../../vitest.config.ts",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "tsx": "^4.23.15"
+  }
+}

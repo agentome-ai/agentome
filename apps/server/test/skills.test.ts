@@ -10,7 +10,7 @@ import { loadConfig } from '../src/config.js';
 import { LaunchPackage } from '../src/protocol.js';
 import { parseSkill, seedSkills } from '../src/library/skills.js';
 import { prepareInstallation } from '../src/setup.js';
-import { setupCodeIn } from './app.js';
+import { secondStepForAdmins, setupCodeIn } from './app.js';
 
 // The skills of the library against the real server: who sees
 // which, versions, sharing, an agent's pinned skills, and what a run of it gets.
@@ -66,6 +66,7 @@ beforeAll(async () => {
       admin: { name: 'Ann Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   admin = { id: setup.json<{ id: string }>().id, cookie: cookieOf(setup) };
   const invitation = await call(admin, 'POST', '/api/invitations', {});
   const token = invitation.json<{ url: string }>().url.split('/invite/')[1];

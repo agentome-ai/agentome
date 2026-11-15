@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { prepareInstallation } from '../src/setup.js';
-import { setupCodeIn } from './app.js';
+import { secondStepForAdmins, setupCodeIn } from './app.js';
 
 // An agent's memory against the real server and database:
 // every write is a version, and revert and delete are versions too.
@@ -53,6 +53,7 @@ beforeAll(async () => {
       admin: { name: 'Ann Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   admin = { ...setup.json<Omit<Person, 'cookie'>>(), cookie: cookieOf(setup) };
 }, 120_000);
 

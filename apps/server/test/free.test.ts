@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { forgetLicense } from '../src/license/service.js';
-import { licenseEnterprise, setupCodeIn } from './app.js';
+import { licenseEnterprise, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // Free without a key: the server refuses what goes past it, whatever the client says,
 // and an Enterprise key lets the same through.
@@ -68,6 +68,7 @@ beforeAll(async () => {
       admin: { name: 'Ann Admin', email: 'ann@acme.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   expect(setup.statusCode).toBe(201);
   cookie = cookieOf(setup);
 }, 120_000);
@@ -126,7 +127,11 @@ describe('Free without a key', () => {
   });
 
   it('keeps Keycloak off: not offered, and its sign-in refused', async () => {
-    expect((await call('GET', '/api/setup')).json()).toEqual({ completed: true, keycloak: false });
+    expect((await call('GET', '/api/setup')).json()).toEqual({
+      completed: true,
+      keycloak: false,
+      password: true,
+    });
     const signIn = await app.inject({
       method: 'POST',
       url: '/api/auth/sign-in/social',
@@ -148,12 +153,20 @@ describe('Free without a key', () => {
       200,
     );
     expect((await call('GET', `/api/agents/${first}/quality`)).statusCode).toBe(200);
-    expect((await call('GET', '/api/setup')).json()).toEqual({ completed: true, keycloak: true });
+    expect((await call('GET', '/api/setup')).json()).toEqual({
+      completed: true,
+      keycloak: true,
+      password: true,
+    });
   });
 
   it('turns Keycloak off when the key and its grace end; passwords still sign in', async () => {
     await licenseEnterprise(db, -15);
-    expect((await call('GET', '/api/setup')).json()).toEqual({ completed: true, keycloak: false });
+    expect((await call('GET', '/api/setup')).json()).toEqual({
+      completed: true,
+      keycloak: false,
+      password: true,
+    });
     const signIn = await app.inject({
       method: 'POST',
       url: '/api/auth/sign-in/email',

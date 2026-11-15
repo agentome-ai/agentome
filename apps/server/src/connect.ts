@@ -263,6 +263,10 @@ export const connectRoutes: FastifyPluginAsync<{ bundle: WorkerBundle; server: s
       .header('cache-control', 'no-store')
       .send(windows),
   );
+  // For `agentome connect`, which reads the checksum it checks the worker against from here.
+  app.get('/connect/worker.json', { schema: { hide: true } }, (_request, reply) =>
+    reply.header('cache-control', 'no-store').send({ sha256: bundle.sha256 }),
+  );
   app.get('/connect/agentome-worker.mjs', { schema: { hide: true } }, (_request, reply) =>
     reply
       .header('content-type', 'text/javascript; charset=utf-8')

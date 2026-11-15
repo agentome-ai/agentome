@@ -22,7 +22,7 @@ import {
 import type { RunStatus } from '@agentome/shared';
 import { z } from 'zod';
 import { grantedTo } from '../agents/service.js';
-import { connectionFor } from '../connections/service.js';
+import { connectionFor, projectConnectionFor, repositoryKey } from '../connections/service.js';
 import { AppError } from '../errors.js';
 import { enqueueRun, type Tx } from '../runs/service.js';
 import { taskRepository } from './repository.js';
@@ -345,6 +345,7 @@ export async function projectIntake(db: Db | Tx, projectId: string) {
     leadId: project.leadId,
     auto: project.intake === 'auto',
     repository: project.repositories[0] ?? null,
+    repositories: project.repositories,
   };
 }
 
@@ -381,6 +382,19 @@ export async function createTask(
     }
     await assertActive(tx, agentId, userId);
     await assertOnProject(tx, input.projectId, agentId);
+    // A repository of the project's connections that its list leaves out gets no credentials
+    // (connectionFor): said here, rather than as a clone that fails in the run.
+    const key = repositoryKey(repository);
+    if (
+      repository &&
+      !intake.repositories.some((listed) => repositoryKey(listed) === key) &&
+      (await projectConnectionFor(tx, input.projectId, repository))
+    ) {
+      throw new AppError(
+        'validation_failed',
+        `${repository} is not one of this project's repositories. Add it on the project's page first.`,
+      );
+    }
     const [task] = await tx
       .insert(tasks)
       .values({

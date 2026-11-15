@@ -200,6 +200,9 @@ async function work(
       keepWorkspace,
       server: settings.server,
       place: settings.place,
+      // In a person's place each run's CLI runs in a container of its own, with the
+      // sign-in folders of the place's home.
+      ...(settings.place && settings.signInHome && { signInHome: settings.signInHome }),
       ...options.run,
     };
     const status = await executeRun(launch, deps);

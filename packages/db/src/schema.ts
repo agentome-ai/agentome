@@ -95,6 +95,9 @@ export const users = pgTable(
     presentAt: at('present_at'),
     // Required by better-auth. Nobody verifies an address: people join by invitation.
     emailVerified: boolean('email_verified').notNull().default(false),
+    // A password sign-in asks for a code from the person's authenticator app as well; the
+    // secret is in two_factors.
+    twoFactorEnabled: boolean('two_factor_enabled').notNull().default(false),
     image: text('image'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -140,6 +143,21 @@ export const accounts = pgTable(
   (t) => [index('accounts_user_id_idx').on(t.userId)],
 );
 
+// better-auth's second step for a password sign-in: the authenticator app's secret and the
+// backup codes, both encrypted with the installation's secret. `verified` is false between
+// turning it on and the first good code; the failures lock the account for a while.
+export const twoFactors = pgTable('two_factors', {
+  id: id(),
+  userId: userFk().unique(),
+  secret: text('secret').notNull(),
+  backupCodes: text('backup_codes').notNull(),
+  verified: boolean('verified').notNull().default(true),
+  failedVerificationCount: integer('failed_verification_count').notNull().default(0),
+  lockedUntil: at('locked_until'),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
 export const verifications = pgTable(
   'verifications',
   {
@@ -165,6 +183,9 @@ export const installation = pgTable(
     // An HMAC of a fixed string under the secret key: the server refuses to start under
     // another key instead of silently losing everything signed with the old one.
     secretKeyFingerprint: text('secret_key_fingerprint').notNull(),
+    // The id licenses are made out to, kept here once the secret key has been rotated: it is
+    // drawn from the key the installation was set up with. Empty, it is drawn from the key now.
+    installationId: text('installation_id'),
     // The license key an admin pasted, checked against the public key on
     // every read; empty while the installation is Free.
     license: text('license'),
@@ -348,6 +369,9 @@ export const pairingCodes = pgTable('pairing_codes', {
   createdBy: fk('created_by', () => users.id).notNull(),
   expiresAt: at('expires_at').notNull(),
   usedAt: at('used_at'),
+  // A code the server made for a person's place, which the launcher pairs at once: only such a
+  // code pairs a place, and it pairs nothing else. What a client calls itself is not taken.
+  forPlace: boolean('for_place').notNull().default(false),
   createdAt: createdAt(),
 });
 
@@ -556,6 +580,15 @@ export const taskComments = pgTable(
   (t) => [index('task_comments_task_id_idx').on(t.taskId)],
 );
 
+/** A model's tokens in one server run, as the relay counted them. */
+export interface RelayTokens {
+  provider: 'anthropic' | 'openai';
+  tokensIn: number;
+  tokensOut: number;
+  tokensCacheRead: number;
+  tokensCacheWrite: number;
+}
+
 export const runs = pgTable(
   'runs',
   {
@@ -583,6 +616,9 @@ export const runs = pgTable(
     limits: jsonb('limits').$type<{ maxMinutes: number; maxTurns: number; maxTokens: number }>(),
     // A team run's members with their gateway tokens' hashes, and its steps.
     team: jsonb('team'),
+    // A server run's tokens as the model relay counted them from the provider's answers, by
+    // model: what the run is priced by, not what its seat says.
+    relayUsage: jsonb('relay_usage').$type<Record<string, RelayTokens>>(),
     // The seat learns about a cancel from its next heartbeat or batch of events.
     cancelRequestedAt: at('cancel_requested_at'),
     // The reaper closes a running run whose seat has been silent too long.

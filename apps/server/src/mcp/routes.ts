@@ -413,7 +413,12 @@ export const mcpRoutes: FastifyPluginAsyncZod<{
             const text = answer.content
               .map((part) => (part.type === 'text' ? part.text : `[${part.type}]`))
               .join('\n');
-            return { text, summary: `${remote.name}: ${text}`, passThrough: answer, from: remote.name };
+            return {
+              text,
+              summary: `${remote.name}: ${text}`,
+              passThrough: answer,
+              from: remote.name,
+            };
           },
         };
         server.registerTool(
@@ -539,25 +544,36 @@ export const mcpRoutes: FastifyPluginAsyncZod<{
  * server's own parameters; anything zod cannot read is passed on unchecked for the server to judge.
  */
 /**
- * The schema a library server gave, without its defaults: zod would fill an omitted parameter
- * with the default before the call, and a server that declares `{ type: 'string', default:
- * null }` then refuses its own null ("None is not of type 'string'"). Its defaults are its own
- * to apply (seen with a Jira MCP server behind LiteLLM).
+ * The schema a library server gave, made safe to check the agent's arguments with on this
+ * server's one thread, and without its defaults:
+ * - zod would fill an omitted parameter with the default before the call, and a server that
+ *   declares `{ type: 'string', default: null }` then refuses its own null ("None is not of type
+ *   'string'"). Its defaults are its own to apply (seen with a Jira MCP server behind LiteLLM).
+ * - A `pattern` is a regular expression of the server's choosing, run on what the agent sends:
+ *   one that backtracks would hold the thread. The server checks its own patterns.
+ * - Past a depth, anything goes, and a schema too big to read is not read: the server is the one
+ *   that refuses what it does not take.
  */
-function withoutDefaults(value: unknown, names = false): unknown {
-  if (Array.isArray(value)) return value.map((item) => withoutDefaults(item));
+const MAX_SCHEMA_DEPTH = 16;
+const MAX_SCHEMA_BYTES = 64 * 1024;
+const LEFT_TO_THE_SERVER = new Set(['default', 'pattern', 'patternProperties']);
+
+function checkable(value: unknown, names = false, depth = 0): unknown {
+  if (depth > MAX_SCHEMA_DEPTH) return {};
+  if (Array.isArray(value)) return value.map((item) => checkable(item, false, depth + 1));
   if (value === null || typeof value !== 'object') return value;
   // Under `properties` the keys are parameter names, and a parameter may be called default.
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([key]) => names || key !== 'default')
-      .map(([key, inner]) => [key, withoutDefaults(inner, !names && key === 'properties')]),
+      .filter(([key]) => names || !LEFT_TO_THE_SERVER.has(key))
+      .map(([key, inner]) => [key, checkable(inner, !names && key === 'properties', depth + 1)]),
   );
 }
 
 function inputOf(schema: Record<string, unknown>) {
+  if (JSON.stringify(schema).length > MAX_SCHEMA_BYTES) return z.looseObject({});
   try {
-    const read = z.fromJSONSchema(withoutDefaults(schema) as Record<string, unknown>);
+    const read = z.fromJSONSchema(checkable(schema) as Record<string, unknown>);
     if (read instanceof z.ZodObject) return read;
   } catch (error) {
     if (!(error instanceof Error)) throw error;

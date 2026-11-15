@@ -22,7 +22,7 @@ import { buildApp } from '../src/app.js';
 import { codeHostFor } from '../src/code-host/index.js';
 import { loadConfig } from '../src/config.js';
 import { createJobs } from '../src/jobs.js';
-import { licenseEnterprise, setupCodeIn } from './app.js';
+import { licenseEnterprise, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // The webhook endpoints against the real server, database and pg-boss: a delivery
 // is checked against its connection's secret, recorded once, and applied by the queue to the
@@ -89,6 +89,7 @@ beforeAll(async () => {
       admin: { name: 'Ann Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   await licenseEnterprise(db);
   cookie = cookieOf(setup);
   const project = (await asAdmin('POST', '/api/projects', { name: 'Payments' })).json<{

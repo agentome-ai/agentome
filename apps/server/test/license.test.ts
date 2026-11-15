@@ -10,7 +10,7 @@ import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { forgetLicense, installationIdOf, signLicense } from '../src/license/service.js';
 import { enqueueRun } from '../src/runs/service.js';
-import { setupCodeIn } from './app.js';
+import { secondStepForAdmins, setupCodeIn } from './app.js';
 
 // The license, signed with a pair of the test's own: Free without a key, a key,
 // grace, back to Free or read-only over it, cutting back, the installation a key is made out to,
@@ -76,6 +76,7 @@ beforeAll(async () => {
       admin: { name: 'Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   cookie = cookieOf(setup);
 }, 120_000);
 

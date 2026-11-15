@@ -7,7 +7,7 @@ import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import { licenseEnterpriseAt, setupCodeIn } from './app.js';
+import { licenseEnterpriseAt, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // Teams as their own thing, against the real server and database.
 
@@ -39,6 +39,7 @@ beforeAll(async () => {
       admin: { name: 'Ann Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   await licenseEnterpriseAt(container.getConnectionUri());
   cookie = cookieOf(setup);
 }, 120_000);

@@ -379,6 +379,70 @@ describe('both hosts answer the same questions', () => {
     expect(await prefix.api.isAncestor('acme/api', sha, 'new')).toBe(true);
   });
 
+  it('tells whether a commit runs another pipeline than the default branch', async () => {
+    const blob = (text: string) => ({
+      body: { content: Buffer.from(text).toString('base64'), encoding: 'base64' },
+    });
+    const gh = (deploy: string) =>
+      host('github', {
+        'GET /repos/acme/api/git/trees/main': {
+          body: {
+            tree: [
+              { path: '.github', type: 'tree', sha: 'g1' },
+              { path: 'src', type: 'tree', sha: 's' },
+            ],
+          },
+        },
+        'GET /repos/acme/api/git/trees/new': {
+          body: {
+            tree: [
+              { path: '.github', type: 'tree', sha: 'g1' },
+              { path: 'src', type: 'tree', sha: 's2' },
+            ],
+          },
+        },
+        'GET /repos/acme/api/git/trees/g1': {
+          body: { truncated: false, tree: [{ path: 'workflows/ci.yml', type: 'blob', sha: 'w1' }] },
+        },
+        'GET /repos/acme/api/git/blobs/w1': blob('steps:\n  - uses: ./tools/deploy\n'),
+        'GET /repos/acme/api/git/blobs/a1': blob('runs:\n  using: composite\n'),
+        // Read at the default branch first, then at the commit.
+        'GET /repos/acme/api/contents/tools%2Fdeploy%2Faction.yml': [
+          { body: { sha: 'a1' } },
+          { body: { sha: deploy } },
+        ],
+        'GET /repos/acme/api/contents/tools%2Fdeploy%2Faction.yaml': { status: 404, body: {} },
+      });
+    expect(await gh('a1').api.pipelineDiffers('acme/api', 'main', 'new')).toBe(false);
+    // A local action a workflow uses is configuration too, wherever it lives.
+    expect(await gh('a2').api.pipelineDiffers('acme/api', 'main', 'new')).toBe(true);
+
+    const file = (id: string, text: string) => ({
+      body: { blob_id: id, content: Buffer.from(text).toString('base64') },
+    });
+    const gl = (child: string) =>
+      host('gitlab', {
+        'GET /api/v4/projects/acme%2Fapi': { body: { ci_config_path: null } },
+        'GET /api/v4/projects/acme%2Fapi/repository/files/.gitlab-ci.yml': [
+          file('c1', 'deploy:\n  trigger:\n    include: ci/child.yml\n'),
+          file('c1', ''),
+        ],
+        'GET /api/v4/projects/acme%2Fapi/repository/files/ci%2Fchild.yml': [
+          file('k1', 'job:\n  script: make\n'),
+          file(child, ''),
+        ],
+      });
+    expect(await gl('k1').api.pipelineDiffers('acme/api', 'main', 'new')).toBe(false);
+    // A child pipeline's file, which GitLab's merged configuration leaves out.
+    const changed = gl('k2');
+    expect(await changed.api.pipelineDiffers('acme/api', 'main', 'new')).toBe(true);
+    // Read at the default branch first, then at the commit.
+    const refs = changed.seen
+      .filter((call) => call.path.includes('/repository/files/'))
+      .map((call) => new URL(`https://x${call.path}`).searchParams.get('ref'));
+    expect(refs).toEqual(['main', 'main', 'new', 'new']);
+  });
+
   it('lists the files of a branch and reads one by the id of its content', async () => {
     const gh = host('github', {
       'GET /repos/acme/api/git/trees/main': {

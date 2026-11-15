@@ -6,7 +6,10 @@ import { request } from 'node:http';
 export type DockerAnswer = { status: number; body: unknown };
 export type Docker = (method: string, path: string, body?: unknown) => Promise<DockerAnswer>;
 
-/** Docker's API on the socket at `socketPath`, its version named in each path. */
+/**
+ * Docker's API on the socket at `socketPath`, its version named in each path: 1.45, Engine 26's,
+ * the first to mount part of a volume (`VolumeOptions.Subpath`), which a run's two containers need.
+ */
 export function dockerAt(socketPath: string): Docker {
   return (method, path, body) =>
     new Promise((resolve, reject) => {
@@ -15,7 +18,7 @@ export function dockerAt(socketPath: string): Docker {
         {
           socketPath,
           method,
-          path: `/v1.43${path}`,
+          path: `/v1.45${path}`,
           headers: payload
             ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }
             : {},
@@ -65,7 +68,7 @@ export function dockerAttachAt(socketPath: string): DockerAttach {
       const call = request({
         socketPath,
         method: 'POST',
-        path: `/v1.43/exec/${execId}/start`,
+        path: `/v1.45/exec/${execId}/start`,
         headers: {
           'content-type': 'application/json',
           'content-length': Buffer.byteLength(body),

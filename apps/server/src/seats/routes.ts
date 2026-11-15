@@ -112,6 +112,9 @@ const PairingCode = z.object({
   checkout: z.boolean(),
 });
 
+/** Why a computer is refused when AGENTOME_COMPUTERS is off. */
+const COMPUTERS_OFF = 'This server runs agents on the server only and takes no computers';
+
 export const seatRoutes: FastifyPluginAsyncZod<{
   db: Db;
   config: Config;
@@ -195,8 +198,21 @@ export const seatRoutes: FastifyPluginAsyncZod<{
               sql`exists (select 1 from ${users} where ${users.id} = ${pairingCodes.createdBy} and ${users.disabledAt} is null)`,
             ),
           )
-          .returning({ ownerUserId: pairingCodes.createdBy });
+          .returning({ ownerUserId: pairingCodes.createdBy, forPlace: pairingCodes.forPlace });
         if (!spent) throw await pairingRefusal(tx, codeHash);
+        // A place is what the server made a code for: a computer that calls itself one would
+        // take its person's runs without the sandbox, and without an admin's leave on Windows.
+        if (seat.kind === 'subscription-laptop' && !config.computers) {
+          throw new AppError('forbidden', COMPUTERS_OFF);
+        }
+        if ((seat.kind === 'subscription-server') !== spent.forPlace) {
+          throw new AppError(
+            'forbidden',
+            spent.forPlace
+              ? 'This code connects a place on the server only'
+              : 'A place on the server is made from its person’s page, not with a code',
+          );
+        }
         // A server seat runs anyone's server agents with the company's model keys: only
         // an admin's code makes one. A local-model seat is not used: its model is a connection's.
         // A computer and a person's own place on the server run only that person's agents.
@@ -231,6 +247,9 @@ export const seatRoutes: FastifyPluginAsyncZod<{
     },
     async (request, reply) => {
       const found = await requireSeat(db, request);
+      if (found.kind === 'subscription-laptop' && !config.computers) {
+        throw new AppError('forbidden', `${COMPUTERS_OFF}: this computer takes no runs`);
+      }
       const { engines, worker, signedOut = [], platform } = request.query;
       const changed = engines !== undefined && !sameSet(engines, found.engines);
       // A worker that names no build is one from before it did: what an earlier one said goes,
@@ -405,17 +424,27 @@ export const seatRoutes: FastifyPluginAsyncZod<{
     { schema: { summary: 'Revokes a seat and stops its run', params: IdParams } },
     async (request, reply) => {
       const user = await requireUser(db, request);
-      await db.transaction(async (tx) => {
+      const revoked = await db.transaction(async (tx) => {
         const [seat] = await tx
           .update(seats)
           .set({ status: 'revoked' })
           .where(and(eq(seats.id, request.params.id), eq(seats.ownerUserId, user.id)))
-          .returning({ id: seats.id });
+          .returning({ id: seats.id, kind: seats.kind });
         if (!seat) throw new AppError('not_found', 'Seat not found');
         // A cancel rather than a cut: the run token still reaches finish, so the seat can
         // report what the run used before it stops.
         await requestStop(tx, eq(runs.seatId, seat.id));
+        return seat;
       });
+      // A place's seat revoked is the place gone: its container and volumes, with the sign-in to
+      // the CLIs, are not left running with nobody to tend them.
+      if (revoked.kind === 'subscription-server' && placeLauncher) {
+        await placeLauncher.remove(user.id);
+        request.log.info(
+          { userId: user.id, seatId: revoked.id },
+          'deleted a place on the server, with its volumes: its seat was revoked',
+        );
+      }
       return reply.code(204).send();
     },
   );

@@ -7,6 +7,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -15,7 +16,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, win32 } from 'node:path';
 
 import { teamDir, type TeamHookConfig } from './claude/team-hook.js';
@@ -426,7 +427,9 @@ async function refreshFolder(
  * own git, which runs outside the sandbox, reads only what the worker wrote.
  */
 function proxyOf(dir: string, access: NonNullable<LaunchPackage['workspace']['git']>) {
-  const file = join(dir, 'git-credentials');
+  // In a folder of its own: a run's sandbox mounts it, and nothing else of the run's folder.
+  mkdirSync(join(dir, 'git'), { recursive: true });
+  const file = join(dir, 'git', 'credentials');
   writeFileSync(file, `username=${access.username}\npassword=${access.password}\n`, {
     mode: 0o600,
   });
@@ -555,6 +558,39 @@ const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
  * reach, which are the platform's own, and connections to this computer itself when those hosts
  * are this computer and nothing else (a server tried out on the computer).
  */
+/**
+ * Why a computer's run may not start, or nothing: its gateway, its git proxy or a host its
+ * sandbox would open is not the server this computer was connected to. A server broken into, or
+ * someone answering for it, would otherwise point the run's tools and network anywhere.
+ */
+export function foreignHost(launch: LaunchPackage, serverUrl: string): string | undefined {
+  const server = new URL(serverUrl);
+  const { mcp, git } = launch.workspace;
+  const urls = [...(mcp ? [mcp.url] : []), ...(git ? [git.url] : [])];
+  const away = urls.find((url) => !URL.canParse(url) || new URL(url).origin !== server.origin);
+  const host = platformHosts(launch.workspace.profile.settings.sandbox).find(
+    (name) => name !== server.hostname,
+  );
+  const what = away === undefined ? host : URL.canParse(away) ? new URL(away).origin : away;
+  if (what === undefined) return undefined;
+  return `The server sent this run to ${what.slice(0, 200)}, while this computer is connected to ${server.origin}. The run did not start. If the server moved to a new address, connect this computer to it again.`;
+}
+
+/**
+ * The launch package with its git proxy at the server's address inside the server, for a place
+ * and the server seat: they reach the server only there, with no DNS, and their way out does not
+ * open its public name. The proxy's path from `/git/` on is the same at either address.
+ */
+export function gitAtServer(launch: LaunchPackage, serverUrl: string): LaunchPackage {
+  const git = launch.workspace.git;
+  if (!git || !URL.canParse(git.url)) return launch;
+  const path = new URL(git.url).pathname;
+  const at = path.indexOf('/git/');
+  if (at < 0) return launch;
+  const url = `${serverUrl.replace(/\/+$/, '')}${path.slice(at)}`;
+  return { ...launch, workspace: { ...launch.workspace, git: { ...git, url } } };
+}
+
 /** The hosts a computer run may reach, as the launch package's sandbox names them. */
 export function platformHosts(sandbox: Record<string, unknown>): string[] {
   return strings(((sandbox.network ?? {}) as Record<string, unknown>).allowedDomains);
@@ -630,6 +666,11 @@ function profileSettings(
     // the way left to it. Read rules hold for Grep and Glob too.
     permissions: {
       deny: [
+        // No skill of Claude Code's own: a repository's .claude/skills could otherwise grant its
+        // tools without a prompt (`allowed-tools`). Leaving out the setting sources keeps them
+        // unloaded already; this holds whatever a CLI version does with an empty list. The
+        // agent's and the repository's skills are files it reads, listed in CLAUDE.md.
+        'Skill',
         'Read(//proc)',
         'Read(//proc/**)',
         'Read(//sys)',
@@ -809,6 +850,10 @@ const GIT_NULL = '/dev/null';
 // when the proxy turns a password down. And git never fetches an object the clone lacks: a
 // promisor remote's `uploadpack` is a command line.
 const GIT_ENV = {
+  // No Kerberos ticket of the person's, and an empty home (git below): git's HTTP reads their
+  // ~/.netrc, and a server could name a clone on a host where either opens a repository only
+  // they may read. Windows signs in as the person by itself (SSPI): nothing here stops it.
+  KRB5CCNAME: 'FILE:/dev/null',
   GIT_TERMINAL_PROMPT: '0',
   GIT_ASKPASS: '',
   GIT_CONFIG_NOSYSTEM: '1',
@@ -817,6 +862,14 @@ const GIT_ENV = {
 };
 const GIT_FLAGS = ['credential.helper=', 'core.fsmonitor=false', `core.hooksPath=${GIT_NULL}`];
 type GitOptions = { signal?: AbortSignal; timeout?: number; allow?: string; create?: boolean };
+
+let emptyFolder: string | undefined;
+/** A folder of the worker's own with nothing in it, for git's home. */
+function emptyHome(): string {
+  const folder = emptyFolder ?? mkdtempSync(join(tmpdir(), 'agentome-git-home-'));
+  emptyFolder = folder;
+  return folder;
+}
 
 /**
  * git by its absolute path on Windows, which looks for a program in the working directory first:
@@ -847,7 +900,15 @@ function git(args: string[], cwd: string, options: GitOptions = {}) {
     GIT_ALLOW_PROTOCOL: allow,
     ...(create ? { GIT_CEILING_DIRECTORIES: dirname(cwd) } : { GIT_DIR: own, GIT_COMMON_DIR: own }),
   };
-  const env = { ...Object.fromEntries(inherited), ...GIT_ENV, ...scope };
+  const home = emptyHome();
+  const env = {
+    ...Object.fromEntries(inherited),
+    ...GIT_ENV,
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: home,
+    ...scope,
+  };
   const flags = GIT_FLAGS.flatMap((setting) => ['-c', setting]);
   const command = args.find((arg, index) => !arg.startsWith('-') && args[index - 1] !== '-c');
   return new Promise<string>((resolve, reject) => {

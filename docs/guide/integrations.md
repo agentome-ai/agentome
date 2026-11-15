@@ -40,7 +40,8 @@ agents do (branches, change requests, comments) shows that account's name on the
 
 - **GitLab** (self-hosted): a token with `api` scope for the group.
 - **GitHub** (github.com): a fine-grained token with **Contents** and **Pull requests**, read and
-  write, for the repositories the agents should reach.
+  write, for the repositories the agents should reach. Leave out **Workflows**: without it GitHub
+  refuses a push that changes `.github/workflows`, so an agent cannot rewrite what CI runs.
 
 Give the account access only to what the agents need.
 
@@ -70,17 +71,40 @@ The token is stored encrypted and never shown again.
 ### Cloning and pushing
 
 A run clones the task's repository through the git proxy, on the computer that runs it. The agent
-commits there and pushes back through the proxy. The proxy enforces three rules, whatever the agent
+commits there and pushes back through the proxy. The proxy enforces four rules, whatever the agent
 tries:
 
 - It pushes only to branches named `agent/…`, such as `agent/add-readme`. It cannot push to `main`
   or any other branch.
 - It cannot delete a branch.
-- It cannot rewrite history. A push that does is undone, and the agent is told to rebase and push
+- It cannot rewrite history. A push that does is refused, and the agent is told to rebase and push
   again.
+- It cannot change what the pipeline runs. On GitLab that is the CI configuration file and every
+  file of the repository it includes, the files of child pipelines (`trigger: include`) among them;
+  on GitHub the `.github` folder and the local actions its workflows use (`uses: ./…`). The branch
+  must carry them as the default branch has them now: an agent whose branch started before a person
+  changed them there rebases onto it. A push that changes them is refused, and the agent says in its
+  change request what a person should change.
+
+The proxy checks a push before the branch moves. The commits land first on a ref of its own under
+`refs/agentome/`, on which no pipeline runs; the branch moves to them only once they pass, and the
+ref is deleted. So a pipeline never starts on a commit the proxy refused.
 
 The proxy opens only for a run that is still working. When the run ends, is cancelled or reaches its
 time limit, its access ends with it.
+
+### What CI runs for an agent's push
+
+A push to `agent/…` starts the repository's pipeline, as anyone's push does: that is how **Fix failed
+pipelines** (below) learns the agent's change broke something. The pipeline is the one on your
+default branch, but it runs the agent's code: its tests and the scripts its jobs call. So keep CI
+secrets out of its reach:
+
+- **GitLab**: mark every CI/CD variable a pipeline must not hand out **Protected**, and do not protect
+  `agent/*`. Protected variables reach only pipelines of protected branches and tags.
+- **GitHub**: keep deployment secrets in **environments** whose deployment branches are `main` or
+  your release branches, not in repository secrets, which every workflow of every branch reads. With
+  the token above, the agent cannot change the workflows themselves.
 
 ### Change requests
 

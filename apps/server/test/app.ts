@@ -1,7 +1,16 @@
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { agents, createDb, type Db, eq, installation, projectAgents, projects } from '@agentome/db';
+import {
+  agents,
+  createDb,
+  type Db,
+  eq,
+  installation,
+  projectAgents,
+  projects,
+  users,
+} from '@agentome/db';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { forgetLicense, signLicense, useLicenseKey } from '../src/license/service.js';
@@ -67,6 +76,40 @@ export async function licenseEnterpriseAt(databaseUrl: string): Promise<void> {
 }
 
 /**
+ * Marks every admin as having set up the second step of a password sign-in, which an admin needs
+ * before anything else: for a suite about something else. Their session stays; a new password
+ * sign-in would ask for a code, which they have none of.
+ */
+export async function secondStepForAdmins(databaseUrl: string): Promise<void> {
+  const db = createDb(databaseUrl, () => {});
+  try {
+    await db.update(users).set({ twoFactorEnabled: true }).where(eq(users.role, 'admin'));
+  } finally {
+    await db.$client.end();
+  }
+}
+
+/**
+ * Lists a repository in a project straight in the database, which its connection then gives
+ * credentials for: the route would also sync the project's documents from the host.
+ */
+export async function listRepository(
+  databaseUrl: string,
+  projectId: string,
+  repository: string,
+): Promise<void> {
+  const db = createDb(databaseUrl, () => {});
+  try {
+    await db
+      .update(projects)
+      .set({ repositories: [repository] })
+      .where(eq(projects.id, projectId));
+  } finally {
+    await db.$client.end();
+  }
+}
+
+/**
  * A project the agent is on, made straight in the database when it is on none: every new task is
  * filed in a project, and a suite about something else needs only that there is one.
  */
@@ -86,4 +129,20 @@ export async function projectOfAgent(db: Db, agentId: string): Promise<string> {
   if (!project) throw new Error('The project was not inserted');
   await db.insert(projectAgents).values({ projectId: project.id, agentId });
   return project.id;
+}
+
+/**
+ * An image registry for a suite that reads projects' services: each tag's digest is the hash of
+ * its manifest's path, unless `moved` names another (a tag pushed again).
+ */
+export function fakeRegistry(moved: Record<string, string> = {}) {
+  const digestOf = (path: string) =>
+    moved[path] ?? `sha256:${createHash('sha256').update(path).digest('hex')}`;
+  return async (url: string | URL) => {
+    const path = new URL(url).pathname;
+    return new Response(null, {
+      status: 200,
+      headers: { 'docker-content-digest': digestOf(path) },
+    });
+  };
 }

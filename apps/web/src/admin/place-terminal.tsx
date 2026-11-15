@@ -29,6 +29,8 @@ export function PlaceTerminal(props: { open: boolean; onClose: () => void }) {
   // A ref the dialog sets once its content is in the page: the portal mounts after this renders.
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<'connecting' | 'open' | 'closed'>('connecting');
+  // Why the server closed it, when it says: idle too long, signed out.
+  const [why, setWhy] = useState('');
 
   useEffect(() => {
     if (!props.open || !host) return;
@@ -44,6 +46,7 @@ export function PlaceTerminal(props: { open: boolean; onClose: () => void }) {
     terminal.open(element);
     fit.fit();
     setStatus('connecting');
+    setWhy('');
     const socket = new WebSocket(terminalUrl(window.location));
     socket.binaryType = 'arraybuffer';
     const encoder = new TextEncoder();
@@ -59,7 +62,10 @@ export function PlaceTerminal(props: { open: boolean; onClose: () => void }) {
     };
     socket.onmessage = (event: MessageEvent<ArrayBuffer>) =>
       terminal.write(new Uint8Array(event.data));
-    socket.onclose = () => setStatus('closed');
+    socket.onclose = (event) => {
+      setWhy(event.reason);
+      setStatus('closed');
+    };
     const typed = terminal.onData((data) => {
       if (socket.readyState === WebSocket.OPEN) socket.send(encoder.encode(data));
     });
@@ -96,7 +102,7 @@ export function PlaceTerminal(props: { open: boolean; onClose: () => void }) {
             {status === 'connecting'
               ? 'Waking your place and opening the terminal…'
               : status === 'closed'
-                ? 'The terminal is closed. Open it again for a new one.'
+                ? `${why ? `${why}. ` : ''}The terminal is closed. Open it again for a new one, or close another tab’s: three can be open at once.`
                 : 'Connected.'}
           </p>
           <D.DialogClose asChild>

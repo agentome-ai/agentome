@@ -1,13 +1,18 @@
-import { clearShape } from './shape.js';
 import type { Duplex } from 'node:stream';
-import { agents, and, type Db, eq, pairingCodes, runs, seats } from '@agentome/db';
+import { agents, and, count, type Db, eq, pairingCodes, runs, seats, tasks } from '@agentome/db';
+import type { FastifyBaseLogger, FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { browserOnly, signedInWithToken } from '../auth.js';
 import { AppError } from '../errors.js';
 import { isLive, requestStop } from '../runs/service.js';
-import { hashSecret, newPairingCode } from '../tokens.js';
+import { bearerToken, hashSecret, newPairingCode } from '../tokens.js';
+import { approvedServices } from '../projects/environment.js';
+import { clearShape, PlaceShape } from './shape.js';
+import { diskFull, overDisk } from './tend.js';
 import type { Launcher } from './client.js';
+import { cliEgressToken, placesKey } from './keys.js';
+import { RunAddresses } from './launcher.js';
 import type { PlaceState } from './protocol.js';
 
 // A person's own place on the server, from Computers: they make it, wake it, put it to sleep
@@ -17,6 +22,8 @@ import type { PlaceState } from './protocol.js';
 const Place = z.object({
   /** Whether this installation has a place launcher at all. */
   available: z.boolean(),
+  /** Whether people's own computers may run agents here (AGENTOME_COMPUTERS). */
+  computers: z.boolean(),
   place: z
     .object({
       seatId: z.uuid().nullable(),
@@ -26,6 +33,8 @@ const Place = z.object({
       lastSeenAt: z.iso.datetime().nullable(),
       /** The person's agents that work in the place, each with its own folders there. */
       agents: z.array(z.object({ id: z.uuid(), name: z.string() })),
+      /** What the place holds on Docker and may hold; null where the launcher does not count. */
+      disk: z.object({ usedBytes: z.number(), limitBytes: z.number() }).nullable(),
     })
     .nullable(),
 });
@@ -49,7 +58,9 @@ async function seatOf(db: Db, userId: string) {
 interface Socket {
   readonly OPEN: number;
   readonly readyState: number;
-  send(data: Buffer, options: { binary: boolean }): void;
+  /** Bytes queued to the browser and not yet sent. */
+  readonly bufferedAmount: number;
+  send(data: Buffer, options: { binary: boolean }, done?: () => void): void;
   on(
     event: 'message',
     listener: (data: Buffer | ArrayBuffer | Buffer[], binary: boolean) => void,
@@ -58,11 +69,27 @@ interface Socket {
   close(code?: number, reason?: string): void;
 }
 
+/** A browser that reads slower than the shell writes holds the shell, not the server's memory. */
+const PAUSE_AT = 1024 * 1024;
+const RESUME_AT = 256 * 1024;
+/** What a browser may send before the shell is open. */
+const MAX_TYPED = 64 * 1024;
+/** Terminals a person may have open at once, across their tabs. */
+const MAX_TERMINALS = 3;
+/** A terminal nobody typed in for this long closes, and lets the place sleep. */
+const IDLE_MS = 30 * 60_000;
+/** How often an open terminal checks that its person is still signed in. */
+const RECHECK_MS = 60_000;
+
 export const placeRoutes: FastifyPluginAsyncZod<{
   db: Db;
   launcher?: Launcher;
   publicUrl: string;
-}> = async (app, { db, launcher, publicUrl }) => {
+  limits: { diskBytes: number; places: number };
+  computers: boolean;
+  /** The installation's secret, from which a run's CLI container's egress token is derived. */
+  secretKey: string;
+}> = async (app, { db, launcher, publicUrl, limits, computers, secretKey }) => {
   const ownOrigin = new URL(publicUrl).origin;
   const need = (): Launcher => {
     if (!launcher) throw new AppError('not_found', 'This installation has no places on the server');
@@ -70,10 +97,11 @@ export const placeRoutes: FastifyPluginAsyncZod<{
   };
 
   async function view(userId: string): Promise<z.infer<typeof Place>> {
-    if (!launcher) return { available: false, place: null };
+    if (!launcher) return { available: false, computers, place: null };
     const seat = await seatOf(db, userId);
-    const state: PlaceState | 'unknown' = await launcher.state(userId).catch(() => 'unknown');
-    if (state === 'none' && !seat) return { available: true, place: null };
+    const status = await launcher.status(userId).catch(() => undefined);
+    const state: PlaceState | 'unknown' = status?.state ?? 'unknown';
+    if (state === 'none' && !seat) return { available: true, computers, place: null };
     const own = await db
       .select({ id: agents.id, name: agents.name })
       .from(agents)
@@ -87,12 +115,17 @@ export const placeRoutes: FastifyPluginAsyncZod<{
       .orderBy(agents.name);
     return {
       available: true,
+      computers,
       place: {
         seatId: seat?.id ?? null,
         state,
         signedOut: seat?.capabilities.signedOut ?? [],
         lastSeenAt: seat?.lastSeenAt?.toISOString() ?? null,
         agents: own,
+        disk:
+          status?.diskBytes === undefined
+            ? null
+            : { usedBytes: status.diskBytes, limitBytes: limits.diskBytes },
       },
     };
   }
@@ -122,10 +155,22 @@ export const placeRoutes: FastifyPluginAsyncZod<{
       const me = request.user.id;
       if (await seatOf(db, me))
         throw new AppError('place_exists', 'You have a place on the server');
+      // Anyone who can sign in may make one, Keycloak's newcomers too: the server's room is not.
+      const [made] = await db
+        .select({ count: count() })
+        .from(seats)
+        .where(and(eq(seats.kind, 'subscription-server'), eq(seats.status, 'active')));
+      if ((made?.count ?? 0) >= limits.places) {
+        throw new AppError(
+          'places_full',
+          `This server has ${limits.places} places, all it may have. Ask an admin to delete one that is not used, or to raise AGENTOME_PLACES_MAX.`,
+        );
+      }
       // The launcher pairs the place with this code, at once; it is spent like any other.
       const code = newPairingCode();
       await db.insert(pairingCodes).values({
         codeHash: hashSecret(code),
+        forPlace: true,
         createdBy: me,
         expiresAt: new Date(Date.now() + 10 * 60_000),
       });
@@ -153,6 +198,12 @@ export const placeRoutes: FastifyPluginAsyncZod<{
       },
       async (request) => {
         browserOnly(request);
+        if (action === 'wake') {
+          const { diskBytes } = await need().status(request.user.id);
+          if (diskBytes !== undefined && overDisk(diskBytes, limits.diskBytes)) {
+            throw new AppError('place_disk_full', diskFull(diskBytes, limits.diskBytes));
+          }
+        }
         await need()[action](request.user.id);
         // Asleep, its services are stopped too: the next run gets them ready again.
         if (action === 'sleep') await clearShape(db, request.user.id);
@@ -205,6 +256,27 @@ export const placeRoutes: FastifyPluginAsyncZod<{
     },
   );
 
+  /** Deletes a person's place with its volumes, revokes its seat and stops its run. */
+  async function removePlace(userId: string, log: FastifyBaseLogger, why: string) {
+    const seatId = (await seatOf(db, userId))?.id;
+    await need().remove(userId);
+    log.info({ userId, seatId }, `deleted a place on the server, with its volumes: ${why}`);
+    await db.transaction(async (tx) => {
+      const gone = await tx
+        .update(seats)
+        .set({ status: 'revoked' })
+        .where(
+          and(
+            eq(seats.ownerUserId, userId),
+            eq(seats.kind, 'subscription-server'),
+            eq(seats.status, 'active'),
+          ),
+        )
+        .returning({ id: seats.id });
+      for (const seat of gone) await requestStop(tx, eq(runs.seatId, seat.id));
+    });
+  }
+
   app.delete(
     '/api/me/place',
     {
@@ -216,24 +288,126 @@ export const placeRoutes: FastifyPluginAsyncZod<{
     },
     async (request, reply) => {
       browserOnly(request);
-      const me = request.user.id;
-      const seatId = (await seatOf(db, me))?.id;
-      await need().remove(me);
-      request.log.info({ userId: me, seatId }, 'deleted a place on the server, with its volumes');
-      await db.transaction(async (tx) => {
-        const gone = await tx
-          .update(seats)
-          .set({ status: 'revoked' })
+      await removePlace(request.user.id, request.log, 'its person asked');
+      return reply.code(204).send(null);
+    },
+  );
+
+  // An admin deletes someone's place: they left, or their sign-in in it must go. The sign-in to
+  // the CLIs lives on its volume, which goes with it.
+  app.delete(
+    '/api/users/:id/place',
+    {
+      onRequest: app.requireAdmin,
+      schema: {
+        summary:
+          "Deletes a person's place on the server, its sign-in and working folders with it; an admin's",
+        params: z.object({ id: z.uuid() }),
+        response: { 204: z.null() },
+      },
+    },
+    async (request, reply) => {
+      browserOnly(request);
+      const id = request.params.id.toLowerCase();
+      const state = await need()
+        .state(id)
+        .catch(() => 'unknown' as const);
+      if (state === 'none' && !(await seatOf(db, id))) {
+        throw new AppError('not_found', 'This person has no place on the server');
+      }
+      await removePlace(id, request.log, `an admin, ${request.user.id}, asked`);
+      return reply.code(204).send(null);
+    },
+  );
+
+  /**
+   * The place's worker asks for its run's own container, by the place's seat token:
+   * the launcher makes it with the run's folder, the agent's folder and the services its project
+   * runs with; deleting it ends whatever the run left running.
+   */
+  async function placeRun(request: FastifyRequest, runId: string) {
+    const token = bearerToken(request);
+    const [seat] = token
+      ? await db
+          .select({ id: seats.id, ownerUserId: seats.ownerUserId, shape: seats.placeShape })
+          .from(seats)
           .where(
             and(
-              eq(seats.ownerUserId, me),
+              eq(seats.tokenHash, hashSecret(token)),
               eq(seats.kind, 'subscription-server'),
               eq(seats.status, 'active'),
             ),
           )
-          .returning({ id: seats.id });
-        for (const seat of gone) await requestStop(tx, eq(runs.seatId, seat.id));
+      : [];
+    if (!seat) throw new AppError('unauthorized', 'Only a place asks for its runs');
+    const [run] = await db
+      .select({ id: runs.id, agentId: runs.agentId, projectId: tasks.projectId })
+      .from(runs)
+      .leftJoin(tasks, eq(tasks.id, runs.taskId))
+      .where(and(eq(runs.id, runId), eq(runs.seatId, seat.id)));
+    if (!run) throw new AppError('not_found', 'Run not found');
+    return { seat, run };
+  }
+
+  const RunFolder = z.object({ folder: z.string().max(200).optional() });
+
+  app.put(
+    '/api/runs/:id/container',
+    {
+      schema: {
+        summary: "Makes a place's run its own container: the place's worker asks, by its seat",
+        params: z.object({ id: z.uuid() }),
+        body: RunFolder,
+        response: { 200: RunAddresses.extend({ cliToken: z.string() }) },
+      },
+    },
+    async (request) => {
+      const { seat, run } = await placeRun(request, request.params.id);
+      const [live] = await db
+        .select({ id: runs.id })
+        .from(runs)
+        .where(and(eq(runs.id, run.id), isLive()));
+      if (!live) throw new AppError('run_in_progress', 'This run is not going any more');
+      // Only the agent's own folders: the worker names one, the server checks whose it is.
+      const { folder } = request.body;
+      if (folder !== undefined && !folder.startsWith(`folders/${run.agentId}/`)) {
+        throw new AppError('forbidden', "Not this run's agent's folder");
+      }
+      // The project's approved services, when the place has them running for it.
+      const wanted = run.projectId ? await approvedServices(db, run.projectId) : null;
+      const shape = PlaceShape.safeParse(seat.shape);
+      const ready =
+        wanted &&
+        shape.success &&
+        shape.data.state === 'ready' &&
+        shape.data.projectId === run.projectId &&
+        shape.data.hash === wanted.hash;
+      const addresses = await need().startRun(seat.ownerUserId, run.id, {
+        ...(folder !== undefined && { folder }),
+        ...(ready &&
+          run.projectId && {
+            shape: { project: run.projectId, hash: wanted.hash, services: wanted.services },
+          }),
       });
+      request.log.info({ seatId: seat.id, runId: run.id }, "made a place's run its containers");
+      // The CLI container's own way to its model: the run's token no longer opens the vendors.
+      return { ...addresses, cliToken: cliEgressToken(placesKey(secretKey), run.id) };
+    },
+  );
+
+  app.delete(
+    '/api/runs/:id/container',
+    {
+      schema: {
+        summary: "Deletes a place's run's container and what runs in it: the place's worker asks",
+        params: z.object({ id: z.uuid() }),
+        response: { 204: z.null() },
+      },
+    },
+    async (request, reply) => {
+      const { seat, run } = await placeRun(request, request.params.id);
+      await need().endRun(seat.ownerUserId, run.id);
+      request.log.info({ seatId: seat.id, runId: run.id }, "deleted a place's run's container");
       return reply.code(204).send(null);
     },
   );
@@ -251,7 +425,16 @@ export const placeRoutes: FastifyPluginAsyncZod<{
         if (signedInWithToken(request) || request.headers.origin !== ownOrigin) {
           throw new AppError('forbidden', 'Open the terminal from Agentome in the browser');
         }
-        need();
+        // The launcher counts the terminals open in the place, whichever app opened them.
+        const { terminals } = await need()
+          .status(request.user.id)
+          .catch(() => ({ terminals: 0 }));
+        if (terminals >= MAX_TERMINALS) {
+          throw new AppError(
+            'too_many_terminals',
+            `You have ${MAX_TERMINALS} terminals open in your place: close one first`,
+          );
+        }
       },
       schema: { hide: true },
     },
@@ -267,14 +450,31 @@ export const placeRoutes: FastifyPluginAsyncZod<{
       const typed: Buffer[] = [];
       let size: { cols: number; rows: number } | undefined;
       let gone = false;
-      socket.once('close', () => (gone = true));
+      let lastTyped = Date.now();
+      // Signed out, disabled or idle, the terminal closes: the session is checked again while it
+      // is open, not only when it opened.
+      const watch = setInterval(() => {
+        if (Date.now() - lastTyped > IDLE_MS) {
+          socket.close(1000, 'Closed after 30 minutes without typing');
+          return;
+        }
+        app.requireSession(request).catch(() => socket.close(1008, 'Signed out'));
+      }, RECHECK_MS);
+      watch.unref();
+      socket.once('close', () => {
+        gone = true;
+        clearInterval(watch);
+      });
+      let typedBytes = 0;
       const resize = (cols: number, rows: number) =>
         void places.resize(me, cols, rows).catch(() => undefined);
       socket.on('message', (data, binary) => {
         const bytes = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer);
         if (binary) {
+          lastTyped = Date.now();
           if (shell) shell.write(bytes);
-          else typed.push(bytes);
+          else if ((typedBytes += bytes.length) <= MAX_TYPED) typed.push(bytes);
+          else socket.close(1009, 'Too much typed before the terminal opened');
           return;
         }
         try {
@@ -303,7 +503,13 @@ export const placeRoutes: FastifyPluginAsyncZod<{
             { userId: me, seatId: placeSeat },
             'a terminal opened in a place on the server',
           );
-          opened.on('data', (chunk: Buffer) => socket.send(chunk, { binary: true }));
+          opened.on('data', (chunk: Buffer) => {
+            if (socket.readyState !== socket.OPEN) return;
+            socket.send(chunk, { binary: true }, () => {
+              if (opened.isPaused() && socket.bufferedAmount < RESUME_AT) opened.resume();
+            });
+            if (socket.bufferedAmount > PAUSE_AT) opened.pause();
+          });
           for (const bytes of typed.splice(0)) opened.write(bytes);
           if (size) resize(size.cols, size.rows);
           const close = () => {

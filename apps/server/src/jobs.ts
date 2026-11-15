@@ -87,7 +87,7 @@ export function createJobs(config: Config) {
         const launcher = placeLauncher(config.placeLauncherUrl, config.secretKey);
         await boss.createQueue(PLACES);
         await boss.schedule(PLACES, '* * * * *');
-        await boss.work(PLACES, () => tendPlaces(db, launcher, log));
+        await boss.work(PLACES, () => tendPlaces(db, launcher, log, config.placeLimits.diskBytes));
       }
       // Each minute, the tasks whose assigned tasks have all ended.
       await boss.createQueue(WAKE);

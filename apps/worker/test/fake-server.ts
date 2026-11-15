@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import type { FinishBody, LaunchPackage, WireEvent } from '../src/client.js';
+import { runServer } from '../src/remote.js';
 
 // The server half of the seat protocol as the server speaks it, on `node:http`: enough to
 // drive the worker through pairing, claims, events, heartbeats, finish and every 401, and to
@@ -43,6 +44,8 @@ export interface FakeServer {
   idleMinutes?: number;
   /** A revoked seat: every claim is refused with 401. */
   revoked: boolean;
+  /** The run containers a place's worker asked for, and ended: `start <run> <folder>`. */
+  readonly containers: string[];
   /** Puts a run in the queue; a claim waiting in its long poll gets it at once. */
   enqueue(launch: LaunchPackage): FakeRun;
   close(): Promise<void>;
@@ -72,7 +75,7 @@ export function launchPackage(
           allowedTools: ['Bash', 'Glob', 'Grep', 'Read', 'TodoWrite'],
           sandbox: {
             enabled: true,
-            network: { allowedDomains: ['agentome.test'], strictAllowlist: true },
+            network: { allowedDomains: ['127.0.0.1'], strictAllowlist: true },
           },
         },
       },
@@ -80,7 +83,17 @@ export function launchPackage(
   };
 }
 
-export async function startFakeServer(options: { holdMs?: number } = {}): Promise<FakeServer> {
+export async function startFakeServer(
+  options: {
+    holdMs?: number;
+    /**
+     * A place's worker home: a run's container asked for listens there, in this process, as
+     * the launcher's would in its own container.
+     */
+    placeHome?: string;
+  } = {},
+): Promise<FakeServer> {
+  const listening = new Map<string, { close: () => void }[]>();
   const queue: FakeRun[] = [];
   const waiting = new Set<() => void>();
   const byToken = new Map<string, FakeRun>();
@@ -155,8 +168,40 @@ export async function startFakeServer(options: { holdMs?: number } = {}): Promis
       return send(response, 200, run.launch);
     }
 
+    const container = /^\/api\/runs\/([^/]+)\/container$/.exec(url.pathname);
+    if (container?.[1]) {
+      if (bearer(request) !== server.seatToken || !options.placeHome) {
+        return refuse(response, 401, 'unauthorized', 'Only a place asks for its runs');
+      }
+      const id = container[1];
+      if (request.method === 'PUT') {
+        server.containers.push(
+          `start ${id} ${(body as { folder?: string }).folder ?? 'no folder'}`,
+        );
+        // The CLI container and the sandbox, both in this process, each on a port of its own.
+        const cli = await runServer('b'.repeat(43), () => {}, 0);
+        const sandbox = await runServer('h'.repeat(43), () => {}, 0);
+        listening.set(id, [cli, sandbox]);
+        return send(response, 200, {
+          cli: { host: '127.0.0.1', port: cli.port, key: 'b'.repeat(43) },
+          sandbox: { host: '127.0.0.1', port: sandbox.port, key: 'h'.repeat(43) },
+          cliToken: `cli-token-${id}`,
+        });
+      }
+      server.containers.push(`end ${id}`);
+      for (const each of listening.get(id) ?? []) each.close();
+      listening.delete(id);
+      return send(response, 204);
+    }
+
     const route = /^\/api\/runs\/([^/]+)\/(events|heartbeat|finish)$/.exec(url.pathname);
-    const run = byToken.get(bearer(request) ?? '');
+    // A place reports its runs by its seat's token; anything else by the run's.
+    const run =
+      options.placeHome && bearer(request) === server.seatToken
+        ? server.runs.get(route?.[1] ?? '')
+        : options.placeHome
+          ? undefined
+          : byToken.get(bearer(request) ?? '');
     if (request.method !== 'POST' || route === null)
       return refuse(response, 404, 'not_found', 'Not found');
     if (run === undefined || !run.open || run.launch.run.id !== route[1]) {
@@ -209,6 +254,7 @@ export async function startFakeServer(options: { holdMs?: number } = {}): Promis
     code: 'K7QX-M2PH',
     seatToken: `seat-${randomUUID()}`,
     pairings: [],
+    containers: [],
     logLines: [],
     runs: new Map(),
     claims: 0,

@@ -9,7 +9,7 @@ import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import { setupCodeIn } from './app.js';
+import { secondStepForAdmins, setupCodeIn } from './app.js';
 
 // Admin → Models: an admin's connections to models, checked by reading their models,
 // with the key kept encrypted and never answered.
@@ -72,6 +72,7 @@ beforeAll(async () => {
       admin: { name: 'Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   adminCookie = cookieOf(setup);
   const invitation = await app.inject({
     method: 'POST',

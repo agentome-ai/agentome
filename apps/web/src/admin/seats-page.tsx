@@ -69,6 +69,10 @@ function lastSeen(seat: Seat): string {
 export function SeatsPage() {
   const { seats, error, reload } = useSeats();
   const [connecting, setConnecting] = useState(false);
+  // Off (AGENTOME_COMPUTERS=false), agents run only on the server: nobody connects a computer,
+  // and an admin's code connects only the server seat.
+  const [computers, setComputers] = useState(true);
+  const admin = useMe().role === 'admin';
   const [renaming, setRenaming] = useState<Seat | null>(null);
   const [revoking, setRevoking] = useState<Seat | null>(null);
   const [removing, setRemoving] = useState<Seat | null>(null);
@@ -91,22 +95,24 @@ export function SeatsPage() {
         setConnecting(true);
       }}
     >
-      Connect a computer
+      {computers ? 'Connect a computer' : 'Connect the server seat'}
     </Button>
   );
+  const canConnect = computers || admin;
 
   return (
     <>
       <PageHeader
         title="Computers"
         crumbs={[{ label: 'Admin', to: '/admin' }]}
-        actions={seats?.length ? connect : undefined}
+        actions={seats?.length && canConnect ? connect : undefined}
       />
       <div className={cn('pt-4 pb-24', frame.wide)}>
-        <PlaceSection />
+        <PlaceSection onComputers={setComputers} />
         <p className="mb-4 max-w-[72ch] text-read text-ink-2">
-          The computers that run your agents. A computer takes runs only while you are signed in to
-          it and using it.
+          {computers
+            ? 'The computers that run your agents. A computer takes runs only while you are signed in to it and using it.'
+            : 'This server runs agents only on the server. A computer connected earlier takes no runs: disconnect it here.'}
         </p>
         {seats === null && error ? (
           <ErrorState title="Couldn't load the computers" onRetry={() => void reload()}>
@@ -115,9 +121,10 @@ export function SeatsPage() {
         ) : seats === null ? (
           <LoadingState label="Loading the computers" />
         ) : seats.length === 0 ? (
-          <EmptyState title="No computers connected" action={connect}>
-            Connect the computer you work on, and your agents run there with your Claude
-            subscription.
+          <EmptyState title="No computers connected" action={canConnect ? connect : undefined}>
+            {computers
+              ? 'Connect the computer you work on, and your agents run there with your Claude subscription.'
+              : 'Your agents run in your place on the server.'}
           </EmptyState>
         ) : (
           <SeatsTable
@@ -138,6 +145,7 @@ export function SeatsPage() {
       </div>
       <ConnectDialog
         open={connecting}
+        computers={computers}
         onCloseAutoFocus={refocus}
         onOpenChange={(open) => {
           setConnecting(open);
@@ -314,6 +322,8 @@ function SeatsTable(props: {
 }
 
 function ConnectDialog(props: {
+  /** Off, the code connects only the server seat. */
+  computers: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCloseAutoFocus: (event: Event) => void;
@@ -338,10 +348,13 @@ function ConnectDialog(props: {
   return (
     <D.Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <D.DialogContent size="wide" onCloseAutoFocus={props.onCloseAutoFocus}>
-        <D.DialogTitle>Connect a computer</D.DialogTitle>
+        <D.DialogTitle>
+          {props.computers ? 'Connect a computer' : 'Connect the server seat'}
+        </D.DialogTitle>
         <D.DialogDescription>
-          Run this command in a terminal on the computer you want to connect. It needs Node.js 20 or
-          later and Claude Code or Codex, signed in with your own subscription.
+          {props.computers
+            ? 'Run this command in a terminal on the computer you want to connect. It needs Node.js 20 or later and Claude Code or Codex, signed in with your own subscription.'
+            : 'Run this command on the machine that runs Agentome. The server seat runs agents set to the server, on a model connection.'}
         </D.DialogDescription>
         {pairing === null ? (
           <p role="status" className="py-6 text-ink-2">
@@ -361,7 +374,7 @@ function ConnectDialog(props: {
                 Works once, until {time(pairing.expiresAt)}.
               </p>
             </div>
-            {!pairing.windowsCommand ? (
+            {!props.computers ? null : !pairing.windowsCommand ? (
               <div>
                 <Copyable label="Copy command" value={pairing.command} />
                 {pairing.checkout && (
@@ -390,10 +403,12 @@ function ConnectDialog(props: {
             )}
             {/* An admin's code also connects the server seat, for agents set to the server. */}
             {admin && (
-              <div className="grid gap-2 border-t border-line pt-4">
-                <p className="text-small text-ink-2">
-                  Or connect the server seat with it, on the machine that runs Agentome:
-                </p>
+              <div className={cn('grid gap-2', props.computers && 'border-t border-line pt-4')}>
+                {props.computers && (
+                  <p className="text-small text-ink-2">
+                    Or connect the server seat with it, on the machine that runs Agentome:
+                  </p>
+                )}
                 <Copyable
                   label="Copy command"
                   value={`docker compose run --rm seat connect ${pairing.code} --server http://app:3000`}

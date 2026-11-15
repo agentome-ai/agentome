@@ -10,7 +10,7 @@ import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import { licenseEnterprise, setupCodeIn } from './app.js';
+import { licenseEnterprise, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // Sign-in with Keycloak against a stand-in realm: its discovery, its keys and a token
 // endpoint whose id_token, signed as Keycloak signs it, names whoever `person` is at the time.
@@ -21,6 +21,8 @@ let realm: Server;
 let app: Awaited<ReturnType<typeof buildApp>>;
 let db: Db;
 let dataDir: string;
+// The admin's session from the setup: a password sign-in would ask them for a code.
+let adminCookie: string;
 let person: { sub: string; email: string; name: string; email_verified?: boolean } = {
   sub: 'k-1',
   email: 'kim@acme.com',
@@ -108,6 +110,8 @@ beforeAll(async () => {
   });
   await licenseEnterprise(db);
   expect(setup.statusCode).toBe(201);
+  await secondStepForAdmins(container.getConnectionUri());
+  adminCookie = cookieOf(setup);
 }, 120_000);
 
 afterAll(async () => {
@@ -155,7 +159,47 @@ async function signInWithKeycloak() {
 describe('sign-in with Keycloak', () => {
   it('says the server has Keycloak', async () => {
     const setup = await app.inject({ method: 'GET', url: '/api/setup' });
-    expect(setup.json()).toEqual({ completed: true, keycloak: true });
+    expect(setup.json()).toEqual({ completed: true, keycloak: true, password: true });
+  });
+
+  it('takes no password when the company turns password sign-in off, and no invitation', async () => {
+    const keycloakOnly = await buildApp(
+      loadConfig({
+        AGENTOME_DATABASE_URL: container.getConnectionUri(),
+        AGENTOME_DATA_DIR: dataDir,
+        AGENTOME_LOG_LEVEL: 'silent',
+        AGENTOME_PUBLIC_URL: publicUrl,
+        AGENTOME_KEYCLOAK_ISSUER: 'http://127.0.0.1:1/realms/acme/',
+        AGENTOME_KEYCLOAK_CLIENT_ID: 'agentome',
+        AGENTOME_KEYCLOAK_CLIENT_SECRET: 'the client secret',
+        AGENTOME_PASSWORD_SIGN_IN: 'false',
+      }),
+      { workerBundle: join(dataDir, 'no-bundle.mjs') },
+    );
+    try {
+      const setup = await keycloakOnly.inject({ method: 'GET', url: '/api/setup' });
+      expect(setup.json()).toEqual({ completed: true, keycloak: true, password: false });
+      // The admin's own password, right as it is, opens nothing: Keycloak and its second factor do.
+      const signIn = await keycloakOnly.inject({
+        method: 'POST',
+        url: '/api/auth/sign-in/email',
+        remoteAddress: nextAddress(),
+        headers: { origin: publicUrl },
+        payload: { email: 'ann@acme.com', password: 'the admin password' },
+      });
+      expect(signIn.statusCode).toBeGreaterThanOrEqual(400);
+      expect(signIn.headers['set-cookie']).toBeUndefined();
+      const accept = await keycloakOnly.inject({
+        method: 'POST',
+        url: '/api/invitations/any-token/accept',
+        headers: { origin: publicUrl },
+        payload: { name: 'Bob', email: 'bob@acme.com', password: 'a long password!' },
+      });
+      expect(accept.statusCode).toBe(403);
+      expect(accept.json<{ error: { message: string } }>().error.message).toMatch(/Keycloak/);
+    } finally {
+      await keycloakOnly.close();
+    }
   });
 
   it('makes a member of a new person and signs them in', async () => {
@@ -199,17 +243,10 @@ describe('sign-in with Keycloak', () => {
   });
 
   it('never joins an account whose address came from an open invitation', async () => {
-    const admin = await app.inject({
-      method: 'POST',
-      url: '/api/auth/sign-in/email',
-      remoteAddress: nextAddress(),
-      headers: { origin: publicUrl },
-      payload: { email: 'ann@acme.com', password: 'the admin password' },
-    });
     const invited = await app.inject({
       method: 'POST',
       url: '/api/invitations',
-      headers: { origin: publicUrl, cookie: cookieOf(admin) },
+      headers: { origin: publicUrl, cookie: adminCookie },
       payload: {},
     });
     const token = invited.json<{ url: string }>().url.split('/invite/')[1];
@@ -235,17 +272,10 @@ describe('sign-in with Keycloak', () => {
   });
 
   it('stops joining a sign-in to an account whose address its owner changed', async () => {
-    const admin = await app.inject({
-      method: 'POST',
-      url: '/api/auth/sign-in/email',
-      remoteAddress: nextAddress(),
-      headers: { origin: publicUrl },
-      payload: { email: 'ann@acme.com', password: 'the admin password' },
-    });
     const changed = await app.inject({
       method: 'PATCH',
       url: '/api/me',
-      headers: { origin: publicUrl, cookie: cookieOf(admin) },
+      headers: { origin: publicUrl, cookie: adminCookie },
       payload: { email: 'boss@acme.com', currentPassword: 'the admin password' },
     });
     expect(changed.statusCode).toBe(200);

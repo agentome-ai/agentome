@@ -4,6 +4,8 @@ import { codeHostOf, projectConnectionFor } from '../connections/service.js';
 import { AppError } from '../errors.js';
 import type { Tx } from '../runs/service.js';
 import { ProjectEnvironment, readEnvironmentFrom, type ServiceSpec } from './devcontainer.js';
+import type { FetchLike } from '../mcp/remote.js';
+import { allPinned, pinImages } from './registry.js';
 
 // A project's environment: the services its main repository's devcontainer asks for, read from
 // the code host when a person asks, and approved by an admin before any place runs them, since
@@ -24,12 +26,21 @@ export function environmentView(row: { environment: unknown; environmentApproved
   };
 }
 
+/** Where a project's service images may come from, and how their registries are asked. */
+export type Registries = { registries: readonly string[]; fetchImpl?: FetchLike };
+
 /**
  * Reads the project's environment from its main repository, the first of its list, and keeps
- * it. What the host refuses is kept as a problem for a person to read. A changed list of
- * services needs an admin's approval again; the same list keeps it.
+ * it, each image pinned to the digest its tag points at now. What the host refuses is kept as a
+ * problem for a person to read. A changed list of services, or a tag that moved, needs an
+ * admin's approval again; the same list keeps it.
  */
-export async function readProjectEnvironment(db: Db, key: Buffer, projectId: string) {
+export async function readProjectEnvironment(
+  db: Db,
+  key: Buffer,
+  projectId: string,
+  images: Registries,
+) {
   const [project] = await db
     .select({ repositories: projects.repositories })
     .from(projects)
@@ -44,7 +55,13 @@ export async function readProjectEnvironment(db: Db, key: Buffer, projectId: str
   try {
     const connection = await projectConnectionFor(db, projectId, repository);
     if (!connection) throw new Error(`No connection of the project reaches ${repository}`);
-    read = await readEnvironmentFrom(await codeHostOf(db, key, connection.id), repository);
+    const found = await readEnvironmentFrom(await codeHostOf(db, key, connection.id), repository);
+    const pinned = await pinImages(found.services, images.registries, images.fetchImpl);
+    read = {
+      ...found,
+      services: pinned.services,
+      problems: [...found.problems, ...pinned.problems],
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     read = { repository, devcontainer: null, services: [], problems: [message] };
@@ -89,5 +106,7 @@ export async function approvedServices(
   const parsed = ProjectEnvironment.safeParse(project?.environment);
   if (!parsed.success || parsed.data.services.length === 0) return null;
   if (parsed.data.hash !== project?.approved) return null;
+  // Approved before images were pinned: read again and approved again, by digest.
+  if (!allPinned(parsed.data.services)) return null;
   return { hash: parsed.data.hash, services: parsed.data.services };
 }

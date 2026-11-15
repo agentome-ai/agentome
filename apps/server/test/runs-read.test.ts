@@ -23,7 +23,7 @@ import { loadConfig } from '../src/config.js';
 import { LaunchPackage } from '../src/protocol.js';
 import { streamRun } from '../src/runs/read.js';
 import { enqueueRun } from '../src/runs/service.js';
-import { licenseEnterprise, setupCodeIn } from './app.js';
+import { licenseEnterprise, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // The runs from the side of the people who read them: the
 // list, one run, its transcript and the stream, against the real server and database. Runs
@@ -56,6 +56,7 @@ beforeAll(async () => {
       admin: { name: 'Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   await licenseEnterprise(db);
   adminCookie = cookieOf(setup);
 }, 120_000);

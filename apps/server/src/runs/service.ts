@@ -227,6 +227,7 @@ export async function claimRun(
       task: task ?? null,
       publicUrl: options.publicUrl,
       onServer,
+      inPlace: seat.kind === 'subscription-server',
     });
   });
   if (shaping) options.shape?.(shaping);
@@ -391,18 +392,36 @@ async function withGit(
 }
 
 /** What a run token opens: its own run, and only while the run is running. */
-const live = (runId: string, tokenHash: string) =>
-  and(eq(runs.id, runId), eq(runs.tokenHash, tokenHash), isLive());
+/**
+ * Who reports a run: its own token, or, for a run in a person's place, the place's seat. An
+ * agent in a place holds its run's token, for the gateway and the way out; it
+ * does not hold the place's, so it cannot write the run's transcript or end it.
+ */
+export type RunReporter = { tokenHash: string } | { seatId: string };
+
+const inPlace = sql`(select ${seats.id} from ${seats} where ${seats.kind} = 'subscription-server')`;
+
+const live = (runId: string, by: RunReporter) =>
+  'seatId' in by
+    ? and(eq(runs.id, runId), eq(runs.seatId, by.seatId), isLive())
+    : and(
+        eq(runs.id, runId),
+        eq(runs.tokenHash, by.tokenHash),
+        isLive(),
+        // A run in a place is reported by the place: its token in the run's container is the
+        // agent's, and opens the gateway and the way out only.
+        sql`(${runs.seatId} is null or ${runs.seatId} not in ${inPlace})`,
+      );
 
 /**
  * A sign of life from a running run: locks its row, so the reaper and finish wait for the
  * batch instead of racing it. Undefined when the token does not open the run (any more).
  */
-async function touchRun(tx: Db | Tx, runId: string, tokenHash: string) {
+async function touchRun(tx: Db | Tx, runId: string, by: RunReporter) {
   const [run] = await tx
     .update(runs)
     .set({ lastHeartbeatAt: sql`now()` })
-    .where(live(runId, tokenHash))
+    .where(live(runId, by))
     .returning({ seatId: runs.seatId, cancelRequestedAt: runs.cancelRequestedAt });
   return run;
 }
@@ -410,11 +429,11 @@ async function touchRun(tx: Db | Tx, runId: string, tokenHash: string) {
 export async function recordEvents(
   db: Db,
   runId: string,
-  tokenHash: string,
+  by: RunReporter,
   events: z.infer<typeof EventsBody>,
 ) {
   return db.transaction(async (tx) => {
-    const run = await touchRun(tx, runId, tokenHash);
+    const run = await touchRun(tx, runId, by);
     if (!run) return null;
     // A batch sent again, whole or in part, adds nothing: seq is unique within a run.
     const inserted = events.length
@@ -436,8 +455,8 @@ export async function recordEvents(
   });
 }
 
-export async function heartbeat(db: Db, runId: string, tokenHash: string) {
-  const run = await touchRun(db, runId, tokenHash);
+export async function heartbeat(db: Db, runId: string, by: RunReporter) {
+  const run = await touchRun(db, runId, by);
   if (!run) return null;
   // A seat busy with a long run claims nothing, so its heartbeat is what keeps it "seen".
   // Not in one transaction with the run: revoking a seat locks the seat before its run.
@@ -462,7 +481,7 @@ export async function heartbeat(db: Db, runId: string, tokenHash: string) {
 export async function finishRun(
   db: Db,
   runId: string,
-  tokenHash: string,
+  by: RunReporter,
   body: z.infer<typeof FinishBody>,
 ) {
   return db.transaction(async (tx) => {
@@ -475,8 +494,13 @@ export async function finishRun(
         errorCode: body.errorCode ?? null,
         tokenHash: null,
       })
-      .where(live(runId, tokenHash))
-      .returning({ agentId: runs.agentId, status: runs.status, taskId: runs.taskId });
+      .where(live(runId, by))
+      .returning({
+        agentId: runs.agentId,
+        status: runs.status,
+        taskId: runs.taskId,
+        relayUsage: runs.relayUsage,
+      });
     if (!run) return null;
     if (body.artifacts.length) {
       await tx.insert(runArtifacts).values(body.artifacts.map((item) => ({ runId, ...item })));
@@ -492,9 +516,21 @@ export async function finishRun(
     // The seat reports tokens, never dollars: the server prices them from LiteLLM's table, and a
     // model the table does not know stays unpriced (usd null) rather than guessed. priceUsage
     // throws only for counts the finish schema already refuses, so pricing cannot veto a finish.
-    if (body.usage.length) {
+    // A server run that called its model through the relay is priced by what the relay counted
+    // from the provider's answers: a run with a shell holds its token and could call more than it
+    // reports. Otherwise, what the seat counted.
+    const relayed = Object.entries(run.relayUsage ?? {});
+    const usageRows = relayed.length
+      ? relayed.map(([model, tokens]) => ({
+          ...tokens,
+          model,
+          tokensCacheWrite1h: 0,
+          source: 'relay',
+        }))
+      : body.usage;
+    if (usageRows.length) {
       await tx.insert(costEvents).values(
-        body.usage.map((usage) => ({
+        usageRows.map((usage) => ({
           runId,
           agentId: run.agentId,
           ...usage,

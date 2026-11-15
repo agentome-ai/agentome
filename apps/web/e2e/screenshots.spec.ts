@@ -909,6 +909,25 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
+// What a project's runs may reach, what they were refused this week, and adding a host.
+for (const theme of ['light', 'dark'] as const) {
+  test(`project network ${theme}`, async ({ page }) => {
+    await page.addInitScript((value) => localStorage.setItem('agentome-theme', value), theme);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await mockApi(page);
+    await page.goto('/projects/p1');
+    const refused = page.getByRole('list', { name: 'Refused hosts' });
+    await refused.getByText('pypi.org').waitFor();
+    await refused.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(300);
+    await shoot(page, `project-network-${theme}-1280`);
+    await page.getByRole('button', { name: 'Add host' }).click();
+    await page.getByRole('dialog', { name: 'Add a host' }).getByLabel('Host', { exact: true }).fill('nexus.northfold.dev:8443');
+    await settle(page);
+    await shoot(page, `project-network-add-${theme}-1280`);
+  });
+}
+
 // A project's repositories, and New task starting in the agent's main one.
 for (const theme of ['light', 'dark'] as const) {
   test(`project repositories ${theme}`, async ({ page }) => {

@@ -91,6 +91,11 @@ export type ClaudeBilling =
   | { readonly mode: 'gateway'; readonly baseUrl: string; readonly token: string };
 
 export interface ClaudeRunOptions {
+  /**
+   * How the CLI is started: here by default, or in the run's own container of a person's
+   * place, where the same paths hold the run's files.
+   */
+  readonly spawn?: typeof spawn;
   /** The workspace: the git worktree the agent works in. */
   readonly cwd: string;
   /** The task, written to stdin: an argument would show it in the process list. */
@@ -151,7 +156,11 @@ export interface ClaudeRunOutcome {
 /** Receives every event of the run, numbered and stamped, in order. */
 export type RunEventSink = (event: RunEvent) => void;
 
-function claudeEnvironment(env: NodeJS.ProcessEnv, billing: ClaudeBilling): NodeJS.ProcessEnv {
+function claudeEnvironment(
+  env: NodeJS.ProcessEnv,
+  billing: ClaudeBilling,
+  model?: string,
+): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(env)) {
     const inherited = inheritedVar(name, INHERITED_VARS) || name.startsWith(FAKE_PREFIX);
@@ -168,6 +177,12 @@ function claudeEnvironment(env: NodeJS.ProcessEnv, billing: ClaudeBilling): Node
     delete result[OAUTH_TOKEN_VAR];
     result.ANTHROPIC_BASE_URL = billing.baseUrl;
     result.ANTHROPIC_AUTH_TOKEN = billing.token;
+    // The server's relay lets a run call its agent's model and those the connection lists: the
+    // CLI's own background calls go to the agent's model too, not to a model nobody chose.
+    if (model) {
+      result.ANTHROPIC_SMALL_FAST_MODEL = model;
+      result.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
+    }
   }
   return result;
 }
@@ -376,10 +391,10 @@ export async function runClaude(
     let child: ChildProcess;
     try {
       const [file, ...first] = cliCommand(cliPath, options.env ?? process.env);
-      child = spawn(file, [...first, ...claudeArgs(options, resume)], {
+      child = (options.spawn ?? spawn)(file, [...first, ...claudeArgs(options, resume)], {
         cwd: options.cwd,
         env: {
-          ...claudeEnvironment(options.env ?? process.env, options.billing),
+          ...claudeEnvironment(options.env ?? process.env, options.billing, options.model),
           // The CLI reads the CLAUDE.md of an `--add-dir` folder only with this, and the
           // profile's CLAUDE.md holds the agent's instructions.
           CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',

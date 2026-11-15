@@ -1,6 +1,7 @@
-# PostgreSQL 16 for Agentome alone, with its data on a volume of its own. Only pods in the
-# namespace reach it, by the name `postgres`; the password is PGPASSWORD of the Secret
-# `agentome`, which PostgreSQL applies only when it creates the volume.
+# PostgreSQL 16 for Agentome alone, with its data on a volume of its own. Only the app's pods
+# reach it, by the name `postgres` (the NetworkPolicy at the end, where the cluster enforces
+# them); the password is PGPASSWORD of the Secret `agentome`, which PostgreSQL applies only when
+# it creates the volume.
 apiVersion: v1
 kind: Service
 metadata:
@@ -102,3 +103,25 @@ spec:
         resources:
           requests:
             storage: 10Gi
+---
+# The app's pods alone: not the place launcher, not a place, not anything else in the namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: agentome
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+      app.kubernetes.io/part-of: agentome
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentome
+      ports:
+        - port: 5432

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { type BrowserContext, expect, test, type Page } from '@playwright/test';
 
 // Runs with playwright.flow.config.ts against the real server and an empty database. The
@@ -24,6 +24,21 @@ function setupCode() {
   return output.toString().trim();
 }
 
+// The admin's authenticator app: the key the setup shows, and the code it gives now.
+let adminKey = '';
+function totp(secret: string) {
+  let bits = '';
+  for (const char of secret) {
+    bits += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'.indexOf(char).toString(2).padStart(5, '0');
+  }
+  const key = Buffer.from(bits.match(/.{8}/g)?.map((byte) => parseInt(byte, 2)) ?? []);
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30_000)));
+  const mac = createHmac('sha1', key).update(counter).digest();
+  const offset = (mac.at(-1) ?? 0) & 0xf;
+  return String((mac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(6, '0');
+}
+
 async function signIn(page: Page, email: string, password: string) {
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password', { exact: true }).fill(password);
@@ -43,6 +58,19 @@ test('a clean installation: setup, sign-in, an invitation, a second person', asy
   await page.getByLabel('Password', { exact: true }).fill(adminPassword);
   await page.getByLabel('Confirm password').fill(adminPassword);
   await page.getByRole('button', { name: 'Create the administrator account' }).click();
+
+  // An admin sets up two-step sign-in before anything else.
+  await expect(page.getByRole('heading', { name: 'Set up two-step sign-in' })).toBeVisible();
+  await page.getByLabel('Your password').fill(adminPassword);
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('img', { name: 'QR code for your authenticator app' })).toBeVisible();
+  adminKey = (await page.getByText(/^[A-Z2-7]{32,}$/).textContent()) ?? '';
+  await page.getByLabel('Code from the app').fill(totp(adminKey));
+  await page.getByRole('button', { name: 'Turn on' }).click();
+  await expect(page.getByRole('list', { name: 'Backup codes' }).getByRole('listitem')).toHaveCount(
+    10,
+  );
+  await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Ann Admin' }).click();
@@ -55,6 +83,8 @@ test('a clean installation: setup, sign-in, an invitation, a second person', asy
   await signIn(page, 'ann@acme.test', 'not the password at all');
   await expect(page.getByRole('alert')).toContainText('The email or password is wrong');
   await signIn(page, 'ann@acme.test', adminPassword);
+  await page.getByLabel('Code', { exact: true }).fill(totp(adminKey));
+  await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/admin\/people$/);
   await expect(page.getByRole('cell', { name: 'ann@acme.test', exact: true })).toBeVisible();
 

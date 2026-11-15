@@ -17,6 +17,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      # Signing without a key: sigstore's certificate names this workflow and this tag.
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,6 +42,7 @@ jobs:
           username: agentome
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        id: app
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -52,12 +55,97 @@ jobs:
       # The server seat: the worker with Codex and what installs Claude Code at its start, from
       # the same build.
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        id: seat
         with:
           context: .
           target: seat
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tags.outputs.seat }}
+      # Each image signed by its digest, without a key: an installation checks with
+      # `cosign verify` that what it pulls was built here, from this tag (OPERATIONS).
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign the images
+        env:
+          APP: docker.io/agentome/agentome@${{ steps.app.outputs.digest }}
+          SEAT: docker.io/agentome/agentome-seat@${{ steps.seat.outputs.digest }}
+        run: cosign sign --yes "$APP" "$SEAT"
+
+  # The `agentome` program on npm, at the tag's version: `npx agentome install` sets up this very
+  # release. After the images, so that what it installs is there.
+  npm:
+    name: npm
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+      - name: Build the program
+        run: |
+          pnpm install --frozen-lockfile --filter agentome
+          cd apps/cli
+          npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+          pnpm run build
+          cp ../../LICENSE LICENSE
+      - name: Publish it
+        working-directory: apps/cli
+        env:
+          # An npm automation token of the account that owns the package, kept in this
+          # repository's secrets.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+  # The record of Agentome's MCP in the official MCP Registry, which MCP clients and catalogs read:
+  # a remote at the person's own server, and the `agentome mcp` of the npm package. After npm, since
+  # the registry checks that the package names this server (mcpName). It signs in as this
+  # repository through GitHub's OIDC, which proves the io.github.agentome-ai namespace: no secret.
+  mcp-registry:
+    name: mcp-registry
+    needs: npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      # The publisher of the release named above, checked against the registry's own signature.
+      - name: Get mcp-publisher
+        run: |
+          set -euo pipefail
+          archive=mcp-publisher_linux_amd64.tar.gz
+          base=https://github.com/modelcontextprotocol/registry/releases/download/$MCP_PUBLISHER_VERSION
+          curl -fsSL -o "$archive" "$base/$archive"
+          curl -fsSL -o "$archive.sigstore.json" "$base/$archive.sigstore.json"
+          cosign verify-blob --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/$MCP_PUBLISHER_VERSION" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$archive"
+          tar xzf "$archive" mcp-publisher
+      - name: Publish the record
+        working-directory: apps/cli
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const record = JSON.parse(fs.readFileSync("server.json", "utf8"));
+            record.version = record.packages[0].version = process.argv[1];
+            fs.writeFileSync("server.json", JSON.stringify(record, null, 2));
+          ' "${GITHUB_REF_NAME#v}"
+          ../../mcp-publisher login github-oidc
+          ../../mcp-publisher publish
 
   release:
     name: release

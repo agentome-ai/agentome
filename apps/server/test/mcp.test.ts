@@ -30,7 +30,7 @@ import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { decideToolCall } from '../src/mcp/policy.js';
 import { LaunchPackage } from '../src/protocol.js';
-import { licenseEnterprise, setupCodeIn } from './app.js';
+import { licenseEnterprise, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // The gateway against the real server and database, through the SDK's own MCP
 // client: a run's token opens it, every call is a row before it runs, ask waits for the owner,
@@ -77,6 +77,7 @@ beforeAll(async () => {
       admin: { name: 'Ann Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   await licenseEnterprise(db);
   admin = { id: setup.json<{ id: string }>().id, cookie: cookieOf(setup) };
   stubGithub();
@@ -170,6 +171,13 @@ async function liveRun(
     config: { kind: 'github', owner: 'acme' },
     token: HOST_TOKEN,
   });
+  // The project lists the task's repository when its connection reaches it.
+  if (repository?.startsWith('https://github.com/acme/')) {
+    await db
+      .update(projects)
+      .set({ repositories: [repository] })
+      .where(eq(projects.id, project.id));
+  }
   await asAdmin('PUT', `/api/projects/${project.id}/agents/${agent.id}`);
   const task = await asAdmin('POST', '/api/tasks', {
     agentId: agent.id,
@@ -1118,7 +1126,11 @@ describe('a library MCP server', () => {
             title: 'Create an issue',
             description: 'Files an issue',
             // An optional field whose default is null, as the Jira MCP declares its own.
-            inputSchema: { summary: z.string(), labels: z.string().nullable().default(null) },
+            // A pattern is the server's to run: the gateway does not run it on this thread.
+            inputSchema: {
+              summary: z.string().regex(/^[\w ]+$/),
+              labels: z.string().nullable().default(null),
+            },
           },
           ({ summary }) => ({ content: [{ type: 'text', text: `Created TRK-1: ${summary}` }] }),
         );
@@ -1208,6 +1220,7 @@ describe('a library MCP server', () => {
     const { tools } = await client.listTools();
     const listed = tools.find((tool) => tool.name === 'tracker__create_issue');
     expect(listed?.inputSchema.properties).toHaveProperty('summary');
+    expect(JSON.stringify(listed?.inputSchema)).not.toContain('pattern');
     const calling = client.callTool({
       name: 'tracker__create_issue',
       arguments: { summary: 'Refunds fail' },

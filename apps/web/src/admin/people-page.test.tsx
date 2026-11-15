@@ -95,6 +95,33 @@ describe('Admin, People', () => {
     expect(calls.map((call) => call.route)).toContain('DELETE /api/invitations/i1');
   });
 
+  it("deletes a person's place on the server after asking, and offers it only to those with one", async () => {
+    const place = {
+      id: 's9',
+      name: 'Place on the server',
+      owner: { id: member.id, name: member.name },
+      kind: 'subscription-server',
+      status: 'active',
+      lastSeenAt: null,
+      idleMinutes: 15,
+      updateCommand: null,
+      signedOut: [],
+      platform: null,
+      sandbox: { none: false, allowedAt: null },
+      activeRun: null,
+    };
+    const { calls, user } = renderPeople({
+      'GET /api/seats': [place],
+      [`DELETE /api/users/${member.id}/place`]: answer(204),
+    });
+    await user.click(await screen.findByRole('button', { name: 'Actions for Bob Member' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete place' }));
+    const confirm = screen.getByRole('dialog', { name: 'Delete Bob Member’s place?' });
+    expect(confirm.textContent).toContain('sign-in to Claude Code and Codex');
+    await user.click(within(confirm).getByRole('button', { name: 'Delete place' }));
+    expect(calls.map((call) => call.route)).toContain(`DELETE /api/users/${member.id}/place`);
+  });
+
   it('transfers everything a person owns to the one the admin picks', async () => {
     const { calls, user } = renderPeople({
       'POST /api/users/u2/transfer-agents': {

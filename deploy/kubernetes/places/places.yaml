@@ -17,6 +17,10 @@ rules:
   - apiGroups: ['']
     resources: [pods, persistentvolumeclaims]
     verbs: [get, create, delete]
+  # A place's run pods, to remove what a run left when the place sleeps.
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [list]
   # Why a pairing failed, in the worker's words.
   - apiGroups: ['']
     resources: [pods/log]
@@ -68,7 +72,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: place-launcher
-          image: docker.io/agentome/agentome:0.2.0
+          image: docker.io/agentome/agentome:0.3.0
           command: ['agentome', 'place-launcher']
           ports:
             - name: http
@@ -137,7 +141,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: place-egress
-          image: docker.io/agentome/agentome:0.2.0
+          image: docker.io/agentome/agentome:0.3.0
           command: ['agentome', 'place-egress']
           ports:
             - name: proxy
@@ -168,8 +172,9 @@ spec:
       port: 3128
       targetPort: proxy
 ---
-# A place takes no connection, and makes only three: to the server, to the egress proxy, and to
-# the cluster's DNS. Not to another place, the database or the launcher.
+# A place takes no connection, and makes only two: to the server and to the egress proxy. Not to
+# the cluster's DNS, whose forwarding would carry names out; it is given the two addresses
+# instead. Not to another place, the database or the launcher.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -179,7 +184,24 @@ spec:
     matchLabels:
       app.kubernetes.io/name: agentome-place
   policyTypes: [Ingress, Egress]
+  # A place's worker starts the CLI in its run's CLI container, which serves on 7419 and takes
+  # only a connection that opens with the run's key.
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentome-place
+      ports:
+        - port: 7419
+          protocol: TCP
   egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentome-place
+      ports:
+        - port: 7419
+          protocol: TCP
     - to:
         - podSelector:
             matchLabels:
@@ -193,16 +215,6 @@ spec:
               app.kubernetes.io/name: place-egress
       ports:
         - port: 3128
-          protocol: TCP
-    - to:
-        - namespaceSelector: {}
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
           protocol: TCP
 ---
 # Only the server gives the launcher orders.

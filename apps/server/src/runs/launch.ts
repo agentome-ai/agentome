@@ -71,6 +71,8 @@ export function buildLaunchPackage(input: {
   publicUrl: string;
   /** A server seat's claim: the profile without a shell unless an admin allowed one. */
   onServer?: boolean;
+  /** A person's place on the company's server: kept folders, no sandbox, a proxy out. */
+  inPlace?: boolean;
 }): LaunchPackage {
   const { agent, task } = input;
   return {
@@ -89,7 +91,7 @@ export function buildLaunchPackage(input: {
     task: task && { id: task.id, ...wordsForRun(task), repository: task.repository },
     workspace: {
       mcp: { url: `${input.publicUrl.replace(/\/+$/, '')}/mcp` },
-      profile: profileFor(agent, input.publicUrl, input.onServer),
+      profile: profileFor(agent, input.publicUrl, input.onServer, input.inPlace),
     },
   };
 }
@@ -105,6 +107,7 @@ export function profileFor(
   agent: ProfileSource,
   publicUrl: string,
   onServer = false,
+  inPlace = false,
 ): LaunchPackage['workspace']['profile'] {
   // On a server seat the shell is off unless an admin allowed it: with one, the agent could read
   // the model connection's key from its environment. In -p mode a tool not allowed is a
@@ -113,7 +116,7 @@ export function profileFor(
   const shell = !onServer || agent.serverShell === true;
   const tools = shell ? ALLOWED_TOOLS : ALLOWED_TOOLS.filter((tool) => tool !== 'Bash');
   return {
-    claudeMd: claudeMd(agent) + (onServer ? serverSection(shell) : ''),
+    claudeMd: claudeMd(agent, inPlace) + (onServer ? serverSection(shell) : ''),
     settings: {
       permissionMode: 'acceptEdits',
       // The gateway's tools run without the CLI asking: nobody is there to answer in -p mode,
@@ -161,7 +164,16 @@ function networkFor(publicUrl: string) {
   };
 }
 
-function claudeMd(agent: ProfileSource): string {
+/** Where the agent works, as it is: a place keeps its folders and has no sandbox of the CLI. */
+function workspaceLines(inPlace: boolean): string {
+  return inPlace
+    ? `- Work only inside this workspace. It is your working folder for this repository in your owner's place on the company's server, and it is kept for your next run there, with what git ignores: commit what should stay, and describe everything else in your final answer.
+- Shell commands run without a sandbox, in that place: the files outside this workspace (your owner's sign-in, other agents' folders) are not yours to read or change. The network goes out through a proxy that lets out only the Agentome server, the model's vendor and the hosts the project allows.`
+    : `- Work only inside this workspace. It is deleted when the run ends: commit what should stay, and describe everything else in your final answer.
+- Shell commands run in a sandbox: the network is closed except for the Agentome server, and only this workspace is writable, not \`.git/\` or the temporary folder. Keep notes in your answer or in commits. Package registries are out of reach too: install offline, from this computer's caches.`;
+}
+
+function claudeMd(agent: ProfileSource, inPlace = false): string {
   const role = agent.roleTitle.trim() ? `, ${agent.roleTitle.trim()}` : '';
   return `# ${agent.name}
 
@@ -173,8 +185,7 @@ ${agent.instructions.trim() || 'Your owner has not written instructions yet. Fol
 
 ## Workspace
 
-- Work only inside this workspace. It is deleted when the run ends: commit what should stay, and describe everything else in your final answer.
-- Shell commands run in a sandbox: the network is closed except for the Agentome server, and only this workspace is writable, not \`.git/\` or the temporary folder. Keep notes in your answer or in commits. Package registries are out of reach too: install offline, from this computer's caches.
+${workspaceLines(inPlace)}
 - When this task belongs to a project, PROJECT.md beside this file says what the project is for and what it aims at. Read it before you start.
 - Your memory is beside this file: MEMORY.md and memory/*.md, as it was when the run started (there may be none yet). Read it first. To remember something for your later runs, write the whole document with the memory_write tool, giving the version you read; your owner reads your memory and can revert it.
 - To look something up in your projects' documentation, use knowledge_search, then knowledge_read for a whole document.

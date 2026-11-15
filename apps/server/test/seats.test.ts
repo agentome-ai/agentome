@@ -30,7 +30,7 @@ import { LaunchPackage } from '../src/protocol.js';
 import { createJobs } from '../src/jobs.js';
 import { claimRun, enqueueRun, isWorking, reapOrphanedRuns } from '../src/runs/service.js';
 import { hashSecret } from '../src/tokens.js';
-import { setupCodeIn } from './app.js';
+import { licenseEnterprise, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // The seat protocol from the seat's side: a fake seat pairs, claims, reports
 // and finishes against the real server and database.
@@ -64,6 +64,7 @@ beforeAll(async () => {
       admin: { name: 'Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   adminCookie = cookieOf(setup);
 }, 120_000);
 
@@ -95,6 +96,8 @@ async function person() {
     headers: { cookie: adminCookie },
     payload: {},
   });
+  if (invitation.statusCode !== 201)
+    throw new Error(`no invitation: ${invitation.statusCode} ${invitation.body}`);
   const token = invitation.json<{ url: string }>().url.split('/invite/')[1];
   const accepted = await app.inject({
     method: 'POST',
@@ -1143,5 +1146,89 @@ describe('the OpenAPI document', () => {
         '/api/runs/{id}/cancel',
       ]),
     );
+  });
+});
+
+describe('with computers turned off', () => {
+  let off: Awaited<ReturnType<typeof buildApp>>;
+  beforeAll(async () => {
+    // The suites before leave the shared installation over Free.
+    await licenseEnterprise(db);
+    off = await buildApp(
+      loadConfig({
+        AGENTOME_DATABASE_URL: container.getConnectionUri(),
+        AGENTOME_DATA_DIR: dataDir,
+        AGENTOME_LOG_LEVEL: 'silent',
+        AGENTOME_PUBLIC_URL: 'https://agentome.example.com',
+        AGENTOME_COMPUTERS: 'false',
+      }),
+      { workerBundle: join(dataDir, 'no-bundle.mjs') },
+    );
+  });
+  afterAll(async () => {
+    await off?.close();
+  });
+
+  it('gives a computer connected earlier no run', async () => {
+    const owner = await person();
+    const { token } = await pairSeat(owner.email);
+    const response = await off.inject({
+      method: 'GET',
+      url: '/api/seats/claim?wait=0',
+      headers: bearer(token),
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json<{ error: { message: string } }>().error.message).toMatch(
+      /runs agents on the server only.*takes no runs/,
+    );
+  });
+
+  it('connects no computer, and still the server seat with an admin’s code', async () => {
+    const owner = await person();
+    const { code } = await newCode(owner.email);
+    const refused = await off.inject({
+      method: 'POST',
+      url: '/api/seats/pair',
+      payload: { ...seatBody, code },
+    });
+    expect(refused.statusCode).toBe(403);
+    const [unspent] = await db
+      .select({ usedAt: pairingCodes.usedAt })
+      .from(pairingCodes)
+      .where(eq(pairingCodes.codeHash, hashSecret(code)));
+    expect(unspent?.usedAt).toBeNull();
+
+    const made = await off.inject({
+      method: 'POST',
+      url: '/api/seats/pairing-codes',
+      headers: { cookie: adminCookie },
+    });
+    const server = await off.inject({
+      method: 'POST',
+      url: '/api/seats/pair',
+      payload: {
+        ...seatBody,
+        name: 'server',
+        kind: 'api-server',
+        code: made.json<{ code: string }>().code,
+      },
+    });
+    expect(server.statusCode).toBe(201);
+  });
+
+  it('tells the web app that computers are off', async () => {
+    const owner = await person();
+    const place = await off.inject({
+      method: 'GET',
+      url: '/api/me/place',
+      headers: asUser(owner.email),
+    });
+    expect(place.json<{ computers: boolean }>().computers).toBe(false);
+    const on = await app.inject({
+      method: 'GET',
+      url: '/api/me/place',
+      headers: asUser(owner.email),
+    });
+    expect(on.json<{ computers: boolean }>().computers).toBe(true);
   });
 });

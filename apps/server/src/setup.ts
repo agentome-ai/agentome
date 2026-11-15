@@ -10,7 +10,7 @@ import { type Config, ConfigError, Password } from './config.js';
 import { AppError } from './errors.js';
 import { isSetupCode, setupCode } from './setup-code.js';
 import { Email, insertUser, Name, toUser, User } from './routes/users.js';
-import { keycloakAllowed } from './license/service.js';
+import { keycloakAllowed, useInstallation } from './license/service.js';
 
 const SetupBody = z.object({
   code: z.string().max(64),
@@ -61,13 +61,15 @@ export async function prepareInstallation(config: Config, log: FastifyBaseLogger
   const db = createDb(config.databaseUrl, (notice) => log.warn({ notice }, 'database notice'));
   try {
     const [row] = await db
-      .select({ fingerprint: installation.secretKeyFingerprint })
+      .select({ fingerprint: installation.secretKeyFingerprint, id: installation.installationId })
       .from(installation);
     if (row && row.fingerprint !== keyFingerprint(config.secretKey)) {
       throw new ConfigError(
         'The secret key changed; restore AGENTOME_SECRET_KEY or the secrets volume',
       );
     }
+    // A key rotated since the setup: the licenses are made out to the id of the first one.
+    if (row?.id) useInstallation(row.id);
     await seedTemplates(db);
     await seedSkills(db);
     if (!row && !config.setupAdmin) {
@@ -113,14 +115,23 @@ export const setupRoutes: FastifyPluginAsyncZod<{ db: Db; auth: Auth; config: Co
     '/api/setup',
     {
       schema: {
-        summary: 'Whether the setup is complete, and whether people can sign in with Keycloak',
-        response: { 200: z.object({ completed: z.boolean(), keycloak: z.boolean() }) },
+        summary:
+          'Whether the setup is complete, and whether people can sign in with Keycloak and with a password',
+        response: {
+          200: z.object({
+            completed: z.boolean(),
+            keycloak: z.boolean(),
+            // Whether the sign-in page asks for a password at all.
+            password: z.boolean(),
+          }),
+        },
       },
     },
     async () => ({
       completed: await isSetupComplete(db),
       // Keycloak is Enterprise: the sign-in page offers it once a key has been in.
       keycloak: config.keycloak !== undefined && (await keycloakAllowed(db)),
+      password: config.passwordSignIn,
     }),
   );
 

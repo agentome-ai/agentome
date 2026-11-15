@@ -2,8 +2,9 @@ import { normalizeUsage } from '@agentome/costs';
 import { RUN_CANCELLED_CODE } from '@agentome/shared';
 import type { RunEvent } from '@agentome/shared';
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import type { spawn } from 'node:child_process';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 
 import { probe, runClaude } from './claude/launcher.js';
 import { type CodexBilling, probeCodex, runCodex } from './codex/launcher.js';
@@ -12,9 +13,18 @@ import { backoff, isRetryable, sleep, Unauthorized } from './client.js';
 import type { Artifact, FinishBody, LaunchPackage, SeatClient, WireEvent } from './client.js';
 import { describe } from './config.js';
 import type { Log } from './config.js';
-import { branchArtifact, platformHosts, prepareWorkspace, removeRun } from './workspace.js';
+import {
+  branchArtifact,
+  foreignHost,
+  gitAtServer,
+  platformHosts,
+  prepareWorkspace,
+  removeRun,
+} from './workspace.js';
 import type { Workspace } from './workspace.js';
 import { unsandboxed } from './platform.js';
+import { remoteSpawn, serverReady } from './remote.js';
+import { readySignIn } from './sign-in.js';
 
 // One run, from the launch package to finish. However it ends, the server hears it twice and the
 // same way — a terminal event in the transcript and the status of finish: `runClaude`
@@ -43,6 +53,15 @@ export interface RunDeps {
   place?: boolean;
   /** `endMs`: how long the end of a run is retried; after that, the server's reaper closes it. */
   timing?: Partial<Timing>;
+  /**
+   * In a person's place, where the run's CLI runs in a container of its own: the
+   * place's home, whose sign-in folders the run's container mounts. Without it, the CLI runs here.
+   */
+  signInHome?: string;
+  /** Set for the run by `executeRun`: how the CLI is started in the run's container. */
+  spawn?: typeof spawn;
+  /** Set for the run by `executeRun`: its CLI container's way out and where its sandbox is. */
+  split?: Split;
 }
 
 type Timing = Record<'flushMs' | 'heartbeatMs' | 'endMs', number> & { backoff: typeof backoff };
@@ -53,7 +72,11 @@ type Outcome = Pick<ClaudeRunOutcome, 'status' | 'resultText'> & { error?: Failu
 
 export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<Outcome['status']> {
   const { client, log } = deps;
-  const { id, token } = launch.run;
+  const { id } = launch.run;
+  // Who reports the run: in a person's place, the place by its seat's token, since the
+  // run's own token is the agent's to hold in its container; elsewhere, the run's token.
+  const inContainer = deps.place === true && deps.signInHome !== undefined;
+  const token = inContainer ? client.seatToken : launch.run.token;
   // The service gives a stop 60 s: the CLI stops in 5, these 30 and one last finish fit after.
   const timing = { flushMs: 1000, heartbeatMs: 30_000, endMs: 30_000, backoff, ...deps.timing };
   // The run's time limit covers the clone and the CLI together.
@@ -176,9 +199,18 @@ export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<
 
   let workspace: Workspace | undefined;
   let outcome: Outcome;
+  /** Whether the run has a container of its own to delete at its end. */
+  let container = false;
   try {
+    // A server seat and a place take the server's word; a computer, only for its own server.
+    const strange =
+      deps.server === true || deps.place === true
+        ? undefined
+        : foreignHost(launch, client.serverUrl);
     if (launch.task === null) {
       outcome = end('no_task', 'This run has no task, and this worker runs only tasks.');
+    } else if (strange !== undefined) {
+      outcome = end('untrusted_launch', strange);
     } else {
       const seat = {
         signal,
@@ -186,7 +218,12 @@ export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<
         server: deps.server === true,
         place: deps.place === true,
       };
-      workspace = await prepareWorkspace(deps.home, launch, seat);
+      const local = deps.server === true || deps.place === true;
+      workspace = await prepareWorkspace(
+        deps.home,
+        local ? gitAtServer(launch, client.serverUrl) : launch,
+        seat,
+      );
       if (workspace.leftover) {
         const message = `What the last run left uncommitted in this folder is saved on ${workspace.leftover}.`;
         sink({
@@ -201,13 +238,59 @@ export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<
       // The agent's engine runs it: Claude Code, or Codex.
       const engine = launch.agent.engine === 'codex' ? codex : claude;
       const waited = () => waitedMs;
-      outcome = await engine(launch, launch.task, workspace, left(), sink, signal, deps, waited);
+      let engineDeps = deps;
+      if (inContainer && deps.signInHome) {
+        // The run's own container: the CLI and what it starts run there, with this run's folders
+        // and the sign-in, and go with it at the end.
+        readySignIn(deps.signInHome, (text) => log('info', `run ${id}: ${text}`));
+        const folder = relative(deps.home, workspace.repo).split(sep).join('/');
+        // What the sandbox mounts of the run's folder, made for a run without a git proxy, or with a
+        // folder of its agent's, too: a mount needs its folder.
+        for (const name of ['git', 'repo'])
+          mkdirSync(join(workspace.dir, name), { recursive: true });
+        const at = await client.startContainer(
+          id,
+          folder.startsWith('folders/') ? folder : undefined,
+          signal,
+        );
+        container = true;
+        await serverReady(at.cli);
+        // The CLI container's bash and git pass every command to the sandbox, with the run's way out.
+        const base = deps.env ?? process.env;
+        const sandbox = {
+          server: at.sandbox,
+          env: sandboxEnvOf(base, launch.run.token, launch.workspace.services, at.docker),
+        };
+        engineDeps = {
+          ...deps,
+          spawn: remoteSpawn(at.cli, sandbox) as unknown as typeof spawn,
+          split: { runId: id, cliToken: at.cliToken },
+        };
+      }
+      outcome = await engine(
+        launch,
+        launch.task,
+        workspace,
+        left(),
+        sink,
+        signal,
+        engineDeps,
+        waited,
+      );
     }
   } catch (error) {
     if (signal.aborted) outcome = end(RUN_CANCELLED_CODE, 'The run was cancelled.');
     else outcome = end(workspace ? 'worker_error' : 'workspace_failed', describe(error));
   }
   clearInterval(ticker);
+  // Whatever the run left running goes with its container, before its commits are read.
+  if (container) {
+    await client
+      .endContainer(id)
+      .catch((error: unknown) =>
+        log('warn', `run ${id}: its container could not be deleted (${describe(error)})`),
+      );
+  }
 
   try {
     // Before the folder goes, and before the transcript is closed: a failed push goes into it.
@@ -259,7 +342,12 @@ async function claude(
   deps: RunDeps,
   waitedMs: () => number,
 ): Promise<ClaudeRunOutcome> {
-  const env = egressOf(deps.env ?? process.env, launch.run.token, launch.workspace.services);
+  const env = egressOf(
+    deps.env ?? process.env,
+    launch.run.token,
+    launch.workspace.services,
+    deps.split,
+  );
   // A computer is its owner's subscription: a key in the environment would bill the
   // person's own account, a personal credential, so the launcher keeps it from the CLI,
   // and a key the server sent is never used there. A server seat uses the key it was sent and
@@ -283,27 +371,69 @@ async function claude(
   };
   const limits = { timeoutMs, maxTurns, maxTokens, waitedMs };
   const run = { ...options, model, allowedTools, permissionMode, limits, billing, env };
-  return runClaude({ ...run, cliPath: deps.cliPath }, sink, signal);
+  return runClaude(
+    { ...run, cliPath: deps.cliPath, ...(deps.spawn && { spawn: deps.spawn }) },
+    sink,
+    signal,
+  );
+}
+
+/** A run in a place in two containers: its CLI container's way out. */
+export type Split = { runId: string; cliToken: string };
+
+/**
+ * In a person's place, the run's calls out go through the egress proxy; the place's token, for
+ * sign-in, stays out of it. In two containers the CLI goes out under its CLI container's token, which
+ * opens the model's vendor, and its commands, in the sandbox, under the run's (sandboxEnvOf), which
+ * opens what its task's project allows. The project's services are reached directly.
+ */
+export function egressOf(
+  env: NodeJS.ProcessEnv,
+  token: string,
+  services: string[] = [],
+  split?: Split,
+) {
+  const proxy = env.AGENTOME_PLACE_EGRESS;
+  if (!proxy) return env;
+  const url = split ? via(proxy, `cli-${split.runId}`, split.cliToken) : via(proxy, 'run', token);
+  return { ...env, ...proxied(url, [env.NO_PROXY, ...services]) };
 }
 
 /**
- * In a person's place, the run's calls out go through the egress proxy under the run's own token,
- * which opens what its task's project allows; the place's token, for sign-in, stays out of it.
- * The project's services beside the agent are reached directly, by their names.
+ * A command's environment in a run's sandbox: the toolchains, the run's way out, and the run's own
+ * Docker when it has one, as `docker`, for the docker CLI and testcontainers (which also reach
+ * a container's ports there).
  */
-export function egressOf(env: NodeJS.ProcessEnv, token: string, services: string[] = []) {
-  const proxy = env.AGENTOME_PLACE_EGRESS;
-  if (!proxy) return env;
-  const url = `http://run:${encodeURIComponent(token)}@${proxy}`;
-  const direct = [env.NO_PROXY, ...services].filter(Boolean).join(',');
+export function sandboxEnvOf(
+  env: NodeJS.ProcessEnv,
+  token: string,
+  services: string[] = [],
+  docker = false,
+) {
+  const proxy = env.AGENTOME_PLACE_EGRESS ?? '';
+  const own = docker ? ['docker'] : [];
   return {
-    ...env,
+    ...(docker && { DOCKER_HOST: 'tcp://docker:2375', TESTCONTAINERS_HOST_OVERRIDE: 'docker' }),
+    PATH: env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+    HOME: '/home/node',
+    ...(env.NODE_USE_ENV_PROXY && { NODE_USE_ENV_PROXY: env.NODE_USE_ENV_PROXY }),
+    ...(env.DOTNET_ROOT && { DOTNET_ROOT: env.DOTNET_ROOT }),
+    ...proxied(via(proxy, 'run', token), [env.NO_PROXY, ...services, ...own]),
+  };
+}
+
+const via = (proxy: string, user: string, secret: string) =>
+  `http://${user}:${encodeURIComponent(secret)}@${proxy}`;
+
+function proxied(url: string, direct: (string | undefined)[]) {
+  const none = direct.filter(Boolean).join(',');
+  return {
     HTTPS_PROXY: url,
     HTTP_PROXY: url,
     https_proxy: url,
     http_proxy: url,
-    NO_PROXY: direct,
-    no_proxy: direct,
+    NO_PROXY: none,
+    no_proxy: none,
   };
 }
 
@@ -317,7 +447,12 @@ async function codex(
   deps: RunDeps,
   waitedMs: () => number,
 ): Promise<ClaudeRunOutcome> {
-  const env = egressOf(deps.env ?? process.env, launch.run.token, launch.workspace.services);
+  const env = egressOf(
+    deps.env ?? process.env,
+    launch.run.token,
+    launch.workspace.services,
+    deps.split,
+  );
   const server = deps.server === true;
   const model = launch.model;
   // A computer is its owner's ChatGPT sign-in; a server seat the connection it was sent.
@@ -358,6 +493,7 @@ async function codex(
       billing,
       cliPath: deps.codexPath,
       env,
+      ...(deps.spawn && { spawn: deps.spawn }),
     },
     sink,
     signal,

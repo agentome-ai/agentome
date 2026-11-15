@@ -785,9 +785,16 @@ export const api: Record<string, unknown> = {
       },
     ],
   },
+  'GET /api/projects/p1/refused-hosts': {
+    hosts: [
+      { host: 'pypi.org', port: 443, count: 6, lastAt: '2026-11-15T09:40:00Z' },
+      { host: 'nexus.northfold.dev', port: 8443, count: 2, lastAt: '2026-11-14T16:05:00Z' },
+    ],
+  },
   'GET /api/projects/p1': {
     id: 'p1',
     name: 'Payments',
+    allowedHosts: ['gitlab.northfold.dev', '*.jira.northfold.dev', 'registry.npmjs.org'],
     agentCount: 3,
     createdBy: 'u1',
     connectionCount: 3,

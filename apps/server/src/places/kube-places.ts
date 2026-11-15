@@ -4,10 +4,18 @@ import type { ServiceSpec } from '../projects/devcontainer.js';
 import {
   type PlaceNetwork,
   type Places,
+  sandboxMounts,
+  newRunKey,
   placeEnv,
   Refusal,
+  RUN_PORTS,
+  runEnv,
+  runMounts,
+  type RunSpec,
+  SERVICE_CAP_DROP,
   type Shape,
-  SHELL,
+  shellFor,
+  SIGN_IN,
 } from './launcher.js';
 
 // Places as pods in the launcher's own namespace: the launcher on Kubernetes. A place is a pod
@@ -21,10 +29,19 @@ export interface KubePlaceSettings extends PlaceNetwork {
   image: string;
   /** How long to wait for a pod to start, end or go. */
   patience?: { tries: number; everyMs: number };
+  /**
+   * The app's and the proxy's addresses by their names: a place asks no DNS, so it is given them
+   * (the launcher looks them up when it starts).
+   */
+  aliases?: { ip: string; hostnames: string[] }[];
+  /** The RuntimeClass of places and runs (AGENTOME_PLACE_RUNTIME), gVisor's; unset, the default. */
+  runtime?: string;
 }
 
 const NAME = 'agentome-place-';
 const LABEL = 'ai.agentome.place';
+const RUN = 'ai.agentome.run';
+const runName = (runId: string) => `agentome-run-${runId}`;
 const names = (id: string) => ({
   pod: `${NAME}${id}`,
   connect: `${NAME}${id}-connect`,
@@ -43,7 +60,8 @@ const shapeOf = (shape: Shape) => `${shape.project}:${shape.hash}`;
 /**
  * A service beside the agent, in the place's pod: its image as the repository names it, no
  * privilege to gain, its volumes on the place's seat volume, memory and CPU capped. It keeps the
- * image's user and capabilities, as databases need them.
+ * image's user and what a database needs to set itself up; it shares the pod's network with the
+ * worker, so raw packets, which would let it listen in, are among what is dropped.
  */
 function serviceContainer(shape: Shape, service: ServiceSpec) {
   return {
@@ -53,7 +71,10 @@ function serviceContainer(shape: Shape, service: ServiceSpec) {
     imagePullPolicy: 'IfNotPresent',
     ...(service.command && { args: service.command }),
     env: Object.entries(service.environment).map(([name, value]) => ({ name, value })),
-    securityContext: { allowPrivilegeEscalation: false },
+    securityContext: {
+      allowPrivilegeEscalation: false,
+      capabilities: { drop: SERVICE_CAP_DROP },
+    },
     resources: {
       requests: { cpu: '100m', memory: '128Mi' },
       limits: { cpu: '1', memory: '2Gi' },
@@ -66,9 +87,131 @@ function serviceContainer(shape: Shape, service: ServiceSpec) {
   };
 }
 
+/**
+ * A run's own pod, on the node of its place, whose volumes it mounts: its run's
+ * folder, its agent's folder for the repository and the CLI read-only, the person's sign-in
+ * folders; the rest of the home is its own. The project's services run beside it, at its own
+ * address, as they did beside the worker: the run's pod is gone with them when the run ends.
+ * Its label is a place's, so the places' network policy holds it.
+ */
+export function runPod(
+  settings: KubePlaceSettings,
+  id: string,
+  runId: string,
+  run: RunSpec,
+  nodeName: string | undefined,
+  keys: { cli: string; sandbox: string },
+) {
+  const n = names(id);
+  const services = run.shape?.services ?? [];
+  const mounts = runMounts(runId, run.folder);
+  const onSeat = (mount: { subPath: string; path: string; readOnly: boolean }) => ({
+    name: 'seat',
+    mountPath: mount.path,
+    subPath: mount.subPath,
+    readOnly: mount.readOnly,
+  });
+  // One pod, so one sandbox under gVisor and one network: the CLI container finds the sandbox on
+  // localhost, and the services are the pod's too. Their files are each their own.
+  const container = (role: 'cli' | 'sandbox', volumeMounts: object[]) => ({
+    name: role,
+    image: settings.image,
+    imagePullPolicy: 'IfNotPresent',
+    args: ['run-server', runId],
+    env: [
+      ...runEnv(settings),
+      ['AGENTOME_RUN_KEY', keys[role]],
+      ['AGENTOME_RUN_PORT', String(RUN_PORTS[role])],
+      ['AGENTOME_RUN_ROLE', role],
+    ].map(([key, value]) => ({ name: key, value })),
+    securityContext: {
+      runAsUser: 1000,
+      runAsGroup: 1000,
+      runAsNonRoot: true,
+      allowPrivilegeEscalation: false,
+      readOnlyRootFilesystem: true,
+      capabilities: { drop: ['ALL'] },
+    },
+    resources: {
+      requests: { cpu: '250m', memory: '512Mi' },
+      limits: { cpu: '2', memory: '8Gi' },
+    },
+    volumeMounts: [
+      { name: `${role}-home`, mountPath: '/home/node' },
+      // Each its own: a command leaves nothing where the CLI reads.
+      { name: `${role}-tmp`, mountPath: '/tmp' },
+      ...volumeMounts,
+    ],
+  });
+  return {
+    apiVersion: 'v1',
+    kind: 'Pod',
+    metadata: {
+      name: runName(runId),
+      labels: { [LABEL]: id, [RUN]: runId, 'app.kubernetes.io/name': 'agentome-place' },
+    },
+    spec: {
+      restartPolicy: 'Never',
+      ...(nodeName && { nodeName }),
+      ...(settings.runtime && { runtimeClassName: settings.runtime }),
+      automountServiceAccountToken: false,
+      enableServiceLinks: false,
+      terminationGracePeriodSeconds: 5,
+      securityContext: { fsGroup: 1000, seccompProfile: { type: 'RuntimeDefault' } },
+      dnsPolicy: 'None',
+      dnsConfig: { nameservers: ['127.0.0.1'] },
+      hostAliases: [
+        ...(settings.aliases ?? []),
+        ...(services.length > 0
+          ? [{ ip: '127.0.0.1', hostnames: services.map((service) => service.name) }]
+          : []),
+      ],
+      containers: [
+        container('cli', [
+          ...mounts.map(onSeat),
+          ...Object.values(SIGN_IN).map((path) => ({
+            name: 'home',
+            mountPath: path,
+            subPath: path.slice('/home/node/'.length),
+          })),
+        ]),
+        // No CLI, no sign-in, the run's folder only to read.
+        container(
+          'sandbox',
+          mounts
+            .filter((mount) => mount.subPath !== 'cli')
+            .flatMap((mount) =>
+              (mount.subPath === `runs/${runId}` ? sandboxMounts(runId) : [mount]).map(onSeat),
+            ),
+        ),
+        ...(run.shape
+          ? services.map((service) => serviceContainer(run.shape as Shape, service))
+          : []),
+      ],
+      volumes: [
+        { name: 'home', persistentVolumeClaim: { claimName: n.home } },
+        { name: 'seat', persistentVolumeClaim: { claimName: n.seat } },
+        { name: 'cli-home', emptyDir: { sizeLimit: '2Gi' } },
+        { name: 'sandbox-home', emptyDir: { sizeLimit: '2Gi' } },
+        { name: 'cli-tmp', emptyDir: { sizeLimit: '2Gi' } },
+        { name: 'sandbox-tmp', emptyDir: { sizeLimit: '2Gi' } },
+      ],
+    },
+  };
+}
+
 type Pod = {
-  metadata?: { deletionTimestamp?: string; annotations?: Record<string, string> };
-  status?: { phase?: string; startTime?: string };
+  metadata?: { name?: string; deletionTimestamp?: string; annotations?: Record<string, string> };
+  spec?: { nodeName?: string };
+  status?: {
+    phase?: string;
+    podIP?: string;
+    startTime?: string;
+    containerStatuses?: {
+      ready?: boolean;
+      state?: { waiting?: { reason?: string; message?: string } };
+    }[];
+  };
 };
 
 /**
@@ -94,15 +237,23 @@ export function placePod(
     },
     spec: {
       restartPolicy: run.restart,
+      ...(settings.runtime && { runtimeClassName: settings.runtime }),
       automountServiceAccountToken: false,
       enableServiceLinks: false,
       terminationGracePeriodSeconds: 30,
       // The place's user is its container's: a service keeps its image's own, as databases need.
       securityContext: { fsGroup: 1000, seccompProfile: { type: 'RuntimeDefault' } },
+      // No DNS: the cluster's resolver forwards names outside, and a name can carry data out.
+      // The place knows the app and the proxy by the aliases below; the proxy resolves the rest.
+      dnsPolicy: 'None',
+      dnsConfig: { nameservers: ['127.0.0.1'] },
       // The project's services share the pod's network: their names are this pod's own address.
-      ...(services.length > 0 && {
-        hostAliases: [{ ip: '127.0.0.1', hostnames: services.map((service) => service.name) }],
-      }),
+      hostAliases: [
+        ...(settings.aliases ?? []),
+        ...(services.length > 0
+          ? [{ ip: '127.0.0.1', hostnames: services.map((service) => service.name) }]
+          : []),
+      ],
       containers: [
         {
           name: 'place',
@@ -202,6 +353,43 @@ export function kubePlaces(settings: KubePlaceSettings): Places {
     !pod.metadata?.deletionTimestamp &&
     (pod.status?.phase === 'Running' || pod.status?.phase === 'Pending');
 
+  /** Waits until each of a pod's containers runs: its images pulled, its services started. */
+  async function ready(name: string, count: number) {
+    for (let tries = 0; tries < patience.tries * 3; tries++) {
+      const pod = await readPod(name);
+      const containers = pod?.status?.containerStatuses ?? [];
+      const stuck = containers.find((container) =>
+        [
+          'ErrImagePull',
+          'ImagePullBackOff',
+          'InvalidImageName',
+          'CreateContainerConfigError',
+        ].includes(container.state?.waiting?.reason ?? ''),
+      );
+      if (stuck) {
+        throw new Error(
+          `Kubernetes could not start the run: ${stuck.state?.waiting?.reason ?? ''} ${stuck.state?.waiting?.message ?? ''}`.trim(),
+        );
+      }
+      if (pod?.status?.phase === 'Failed') throw new Error('Kubernetes could not start the run');
+      if (containers.length === count && containers.every((c) => c.ready)) return;
+      await wait(patience.everyMs);
+    }
+    throw new Error('Kubernetes did not start the run in time');
+  }
+
+  /** A place's run pods: none outlives the place awake. */
+  async function removeRuns(id: string) {
+    const found = await kube(
+      'GET',
+      `/pods?labelSelector=${encodeURIComponent(`${LABEL}=${id},${RUN}`)}`,
+    );
+    if (found.status !== 200) throw kubeError(found, 'list the place’s runs');
+    for (const pod of (found.body as { items?: Pod[] }).items ?? []) {
+      if (pod.metadata?.name) await removePod(pod.metadata.name, 0);
+    }
+  }
+
   async function wake(id: string) {
     const n = names(id);
     const pod = await readPod(n.pod);
@@ -269,11 +457,14 @@ export function kubePlaces(settings: KubePlaceSettings): Places {
       // The worker is told to stop and given time to: a run in progress is finished as cancelled.
       if (!(await hasClaim(id))) throw new Refusal(404, 'This person has no place');
       await removePod(names(id).pod, 30);
+      // After the worker had its time to finish its run: whatever the run left goes.
+      await removeRuns(id);
     },
 
     async remove(id) {
       const n = names(id);
       for (const pod of [n.pod, n.connect, n.fresh]) await removePod(pod, 0);
+      await removeRuns(id);
       for (const claim of [n.home, n.seat]) {
         const gone = await kube('DELETE', `/persistentvolumeclaims/${claim}`);
         if (gone.status !== 200 && gone.status !== 202 && gone.status !== 404) {
@@ -305,49 +496,34 @@ export function kubePlaces(settings: KubePlaceSettings): Places {
       if (!emptied.ok) throw new Error(`The place could not empty the folders: ${emptied.said}`);
     },
 
-    // A pod's containers are set when it is made: the place is made again with the services.
-    // Only between runs, when the worker has no run to lose.
-    async services(id, shape) {
-      const n = names(id);
-      const pod = await readPod(n.pod);
-      if (alive(pod) && pod?.metadata?.annotations?.[SHAPE] === shapeOf(shape)) return;
+    // The services run in each run's pod, beside the agent: nothing to make now.
+    async services(id) {
       if (!(await hasClaim(id))) throw new Refusal(404, 'This person has no place');
-      if (pod) await removePod(n.pod, 30);
+    },
+
+    async startRun(id, runId, run) {
+      const keeper = await readPod(names(id).pod);
+      if (!alive(keeper)) throw new Refusal(409, 'The place is not awake');
+      const name = runName(runId);
+      await removePod(name, 0);
+      const keys = { cli: newRunKey(), sandbox: newRunKey() };
       const made = await kube(
         'POST',
         '/pods',
-        placePod(settings, id, n.pod, { args: ['run'], restart: 'OnFailure' }, shape),
+        runPod(settings, id, runId, run, keeper?.spec?.nodeName, keys),
       );
-      if (made.status !== 201) throw kubeError(made, 'make the place with its services');
-      // Ready once every container runs: the images are pulled and the services started.
-      for (let tries = 0; tries < patience.tries * 3; tries++) {
-        const status = (await kube('GET', `/pods/${n.pod}`)).body as {
-          status?: {
-            containerStatuses?: {
-              ready?: boolean;
-              state?: { waiting?: { reason?: string; message?: string } };
-            }[];
-          };
-        };
-        const containers = status.status?.containerStatuses ?? [];
-        const stuck = containers.find((container) =>
-          [
-            'ErrImagePull',
-            'ImagePullBackOff',
-            'InvalidImageName',
-            'CreateContainerConfigError',
-          ].includes(container.state?.waiting?.reason ?? ''),
-        );
-        if (stuck) {
-          throw new Error(
-            `Kubernetes could not start a service: ${stuck.state?.waiting?.reason ?? ''} ${stuck.state?.waiting?.message ?? ''}`.trim(),
-          );
-        }
-        if (containers.length === shape.services.length + 1 && containers.every((c) => c.ready))
-          return;
-        await wait(patience.everyMs);
-      }
-      throw new Error('Kubernetes did not start the services in time');
+      if (made.status !== 201) throw kubeError(made, 'make the run’s pod');
+      await ready(name, 2 + (run.shape?.services.length ?? 0));
+      const host = (await readPod(name))?.status?.podIP;
+      if (!host) throw new Error('The run’s pod has no address');
+      return {
+        cli: { host, port: RUN_PORTS.cli, key: keys.cli },
+        sandbox: { host: '127.0.0.1', port: RUN_PORTS.sandbox, key: keys.sandbox },
+      };
+    },
+
+    async endRun(_id, runId) {
+      await removePod(runName(runId), 0);
     },
 
     async shell(id) {
@@ -357,7 +533,7 @@ export function kubePlaces(settings: KubePlaceSettings): Places {
         if ((await readPod(n.pod))?.status?.phase === 'Running') break;
         await wait(patience.everyMs);
       }
-      const opened = await settings.exec(n.pod, SHELL, { tty: true });
+      const opened = await settings.exec(n.pod, shellFor(settings, id), { tty: true });
       return {
         stream: opened.stream,
         resize: async (cols, rows) => opened.resize(cols, rows),

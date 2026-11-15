@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { egressOf } from './run.js';
+import { egressOf, sandboxEnvOf } from './run.js';
 
 // In a person's place, a run's CLI calls out under the run's own token, not the place's.
 
@@ -36,5 +36,29 @@ describe("a run's way out", () => {
   it('leaves a computer or a server seat as it is', () => {
     const env = { HTTPS_PROXY: 'http://corp-proxy:8080' };
     expect(egressOf(env, 'run token')).toBe(env);
+  });
+
+  it('sends the CLI out as its CLI container and its commands as the run, in two containers', () => {
+    const place = { AGENTOME_PLACE_EGRESS: 'place-egress:3128', PATH: '/usr/bin', NO_PROXY: 'app' };
+    const cli = egressOf(place, 'run token', ['db'], {
+      runId: 'r1',
+      cliToken: 'cli token',
+    });
+    expect(cli.HTTPS_PROXY).toBe('http://cli-r1:cli%20token@place-egress:3128');
+    const commands = sandboxEnvOf(place, 'run token', ['db']);
+    expect(commands.HTTPS_PROXY).toBe('http://run:run%20token@place-egress:3128');
+    expect(commands.NO_PROXY).toBe('app,db');
+    expect(JSON.stringify(commands)).not.toContain('cli');
+  });
+
+  it("gives the sandbox the run's own Docker when it has one", () => {
+    const place = { AGENTOME_PLACE_EGRESS: 'place-egress:3128', NO_PROXY: 'app' };
+    expect(sandboxEnvOf(place, 't', ['db'])).not.toHaveProperty('DOCKER_HOST');
+    const commands = sandboxEnvOf(place, 't', ['db'], true);
+    expect(commands).toMatchObject({
+      DOCKER_HOST: 'tcp://docker:2375',
+      TESTCONTAINERS_HOST_OVERRIDE: 'docker',
+      NO_PROXY: 'app,db,docker',
+    });
   });
 });

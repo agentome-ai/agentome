@@ -2,48 +2,74 @@ import { timingSafeEqual } from 'node:crypto';
 import { and, type Db, eq, projects, runs, seats, tasks } from '@agentome/db';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { deriveKey } from '../auth.js';
+import { cliEgressToken, dockerEgressToken, placeEgressToken, placesKey } from './keys.js';
 import { isWorking } from '../runs/service.js';
 import { hashSecret } from '../tokens.js';
 
 // What a person's place may reach. Its network is internal: the only way out is the egress proxy
 // (`agentome place-egress`), which asks here, with the token its connection came with, which
-// hosts are allowed. A run's token opens Agentome, the model vendors and what its task's project
-// lists; the place's own token, for its worker and the person's sign-in in its terminal,
+// hosts are allowed. A run's token, which its sandbox's commands use, opens Agentome and what its
+// task's project lists; its CLI container's token, the CLI's alone, Agentome and the model vendors
+//; the place's own token, for its worker and the person's sign-in in its terminal,
 // Agentome, the vendors and npm.
 
-/** Where Claude Code and Codex sign in and talk to their models, under a subscription. */
+/**
+ * Where Claude Code and Codex talk to their models and keep their sign-in fresh, under a
+ * subscription: the exact hosts, not the vendors' domains, whose other names (a CDN's, a
+ * user-content one) would be ways out. The sign-in page itself opens in the person's browser.
+ * When a CLI's release moves to another host, the proxy's log shows it refused.
+ */
 export const VENDOR_HOSTS = [
-  'anthropic.com',
-  '*.anthropic.com',
+  'api.anthropic.com',
+  'platform.claude.com',
   'claude.ai',
-  '*.claude.ai',
-  'claude.com',
-  '*.claude.com',
-  'openai.com',
-  '*.openai.com',
+  'api.openai.com',
+  'auth.openai.com',
   'chatgpt.com',
-  '*.chatgpt.com',
 ];
 
+const NPM_REGISTRY = 'registry.npmjs.org';
 /** The place installs its CLI from npm at its first start. */
-const SIGN_IN_HOSTS = [...VENDOR_HOSTS, 'registry.npmjs.org'];
+const SIGN_IN_HOSTS = [...VENDOR_HOSTS, NPM_REGISTRY];
 
-/** Whether `host` is one of `patterns`: exactly, or under a `*.` one. */
-export function hostAllowed(host: string, patterns: readonly string[]): boolean {
+/** A host the proxy lets out, and on which port: `host[:port]` or `*.domain[:port]`, 443 by default. */
+export type HostMatch = { pattern: string; exact: boolean };
+
+/**
+ * The pattern of `patterns` that lets `host:port` out, if one does: the host exactly, or under a
+ * `*.` one, on the pattern's port, 443 when it names none.
+ */
+export function hostAllowed(
+  host: string,
+  port: number,
+  patterns: readonly string[],
+): HostMatch | undefined {
   const name = host.toLowerCase().replace(/\.$/, '');
-  return patterns.some((pattern) =>
-    pattern.startsWith('*.') ? name.endsWith(pattern.slice(1)) : name === pattern,
-  );
+  for (const pattern of patterns) {
+    const colon = pattern.lastIndexOf(':');
+    const [domain, allowedPort] =
+      colon > 0 ? [pattern.slice(0, colon), Number(pattern.slice(colon + 1))] : [pattern, 443];
+    if (port !== allowedPort) continue;
+    if (domain.startsWith('*.') ? name.endsWith(domain.slice(1)) : name === domain) {
+      return { pattern, exact: !domain.startsWith('*.') };
+    }
+  }
+  return undefined;
 }
 
-/** The token a person's place gives the egress proxy for its sign-in: the person's, derived. */
-export const placeEgressToken = (secretKey: string, personId: string) =>
-  deriveKey(secretKey, `place-egress:${personId}`);
+/** Agentome's own host, on the port of its public address: what its links and git use. */
+export function ownHost(publicUrl: string): string {
+  const url = new URL(publicUrl);
+  return `${url.hostname}:${url.port || (url.protocol === 'https:' ? 443 : 80)}`;
+}
 
 const Ask = z.object({
-  /** `run`: a run's token; `place`: the person's id and their place's token. */
-  kind: z.enum(['run', 'place']),
+  /**
+   * `run`: a run's token; `cli`: the run's id and its CLI container's token; `docker`: the run's id and
+   * its own Docker's token; `place`: the person's id
+   * and their place's token; `seat`: a server seat's.
+   */
+  kind: z.enum(['run', 'cli', 'docker', 'place', 'seat']),
   id: z.string().max(100).optional(),
   token: z.string().min(1).max(200),
 });
@@ -60,7 +86,7 @@ async function whoIs(
 ): Promise<{ who: string; hosts: string[]; runId?: string; seatId?: string } | undefined> {
   const { kind, id, token } = ask;
   if (kind === 'place') {
-    const expected = id ? Buffer.from(placeEgressToken(secretKey, id)) : Buffer.alloc(0);
+    const expected = id ? Buffer.from(placeEgressToken(placesKey(secretKey), id)) : Buffer.alloc(0);
     const given = Buffer.from(token);
     if (!id || given.length !== expected.length || !timingSafeEqual(given, expected)) {
       return undefined;
@@ -75,10 +101,71 @@ async function whoIs(
           eq(seats.status, 'active'),
         ),
       );
+    // A place that is gone, or a person whose place was removed, opens nothing: the token is
+    // derived, so it cannot be revoked any other way.
+    if (!seat) return undefined;
     // Agentome too: the place's worker clones and pushes through its git proxy.
-    return { who: `place ${id}`, hosts: [own, ...SIGN_IN_HOSTS], seatId: seat?.id };
+    return { who: `place ${id}`, hosts: [own, ...SIGN_IN_HOSTS], seatId: seat.id };
   }
-  // A working run's: its task's project's hosts, the server, the vendors.
+  // The server seat installs Claude Code from npm at its start, before it has a run.
+  if (kind === 'seat') {
+    const [seat] = await db
+      .select({ id: seats.id })
+      .from(seats)
+      .where(
+        and(
+          eq(seats.tokenHash, hashSecret(token)),
+          eq(seats.kind, 'api-server'),
+          eq(seats.status, 'active'),
+        ),
+      );
+    if (!seat) return undefined;
+    return { who: `seat ${seat.id}`, hosts: [NPM_REGISTRY], seatId: seat.id };
+  }
+  // A run's CLI container: the CLI, for its model. Derived from the run, so good while the run works.
+  if (kind === 'cli') {
+    const expected = id ? Buffer.from(cliEgressToken(placesKey(secretKey), id)) : Buffer.alloc(0);
+    const given = Buffer.from(token);
+    if (!id || given.length !== expected.length || !timingSafeEqual(given, expected)) {
+      return undefined;
+    }
+    const [run] = await db
+      .select({ id: runs.id, seatId: runs.seatId })
+      .from(runs)
+      .where(and(eq(runs.id, id), isWorking()));
+    if (!run) return undefined;
+    return {
+      who: `run ${run.id}`,
+      hosts: [own, ...VENDOR_HOSTS],
+      runId: run.id,
+      seatId: run.seatId ?? undefined,
+    };
+  }
+  // A run's own Docker, for its pulls: the hosts its project allows, its registries among them.
+  if (kind === 'docker') {
+    const expected = id
+      ? Buffer.from(dockerEgressToken(placesKey(secretKey), id))
+      : Buffer.alloc(0);
+    const given = Buffer.from(token);
+    if (!id || given.length !== expected.length || !timingSafeEqual(given, expected)) {
+      return undefined;
+    }
+    const [run] = await db
+      .select({ id: runs.id, seatId: runs.seatId, hosts: projects.allowedHosts })
+      .from(runs)
+      .leftJoin(tasks, eq(tasks.id, runs.taskId))
+      .leftJoin(projects, eq(projects.id, tasks.projectId))
+      .where(and(eq(runs.id, id), isWorking()));
+    if (!run) return undefined;
+    return {
+      who: `run ${run.id}`,
+      hosts: run.hosts ?? [],
+      runId: run.id,
+      seatId: run.seatId ?? undefined,
+    };
+  }
+  // A working run's, for its sandbox: its task's project's hosts and the server. Not the vendors:
+  // with a key of its own a command would upload there what it read (review N3).
   const [run] = await db
     .select({ id: runs.id, seatId: runs.seatId, hosts: projects.allowedHosts })
     .from(runs)
@@ -88,7 +175,7 @@ async function whoIs(
   if (!run) return undefined;
   return {
     who: `run ${run.id}`,
-    hosts: [own, ...VENDOR_HOSTS, ...(run.hosts ?? [])],
+    hosts: [own, ...(run.hosts ?? [])],
     runId: run.id,
     seatId: run.seatId ?? undefined,
   };
@@ -99,7 +186,12 @@ const Events = z.object({
   events: z
     .array(
       Ask.extend({
-        host: z.string().max(253),
+        // A host name or an IPv4 address, as the proxy saw it in a CONNECT: nothing to read as
+        // more than that in the log.
+        host: z
+          .string()
+          .max(253)
+          .regex(/^[a-z0-9.-]+$/i),
         port: z.int().min(1).max(65_535),
         allowed: z.boolean(),
         count: z.int().min(1),
@@ -108,12 +200,29 @@ const Events = z.object({
     .max(500),
 });
 
+/** Lines of the egress log a run or a place may have in a minute. */
+const LINES_A_MINUTE = 600;
+const budgets = new Map<string, { minute: number; lines: number }>();
+
+/** Whether one more line of this run's or place's fits in its minute. */
+export function withinBudget(who: string, now = Date.now()): boolean {
+  const minute = Math.floor(now / 60_000);
+  const kept = budgets.get(who);
+  if (!kept || kept.minute !== minute) {
+    if (budgets.size > 10_000) budgets.clear();
+    budgets.set(who, { minute, lines: 1 });
+    return true;
+  }
+  kept.lines += 1;
+  return kept.lines <= LINES_A_MINUTE;
+}
+
 export const egressRoutes: FastifyPluginAsyncZod<{
   db: Db;
   secretKey: string;
   publicUrl: string;
 }> = async (app, { db, secretKey, publicUrl }) => {
-  const own = new URL(publicUrl).hostname;
+  const own = ownHost(publicUrl);
   app.post(
     '/api/egress/hosts',
     {
@@ -143,6 +252,9 @@ export const egressRoutes: FastifyPluginAsyncZod<{
         const found = known.get(key);
         // A token that opens nothing now: a run that ended, say. Its lines go unsaid.
         if (!found) continue;
+        // The proxy tells of a host once a minute a token, and of what it refused as it goes: a
+        // run that holds its token and writes more than this is filling the log, not the proxy.
+        if (!withinBudget(found.who)) continue;
         const where = {
           ...(found.runId && { runId: found.runId }),
           ...(found.seatId && { seatId: found.seatId }),

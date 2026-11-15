@@ -7,7 +7,7 @@ import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import { licenseEnterprise, projectOfAgent, setupCodeIn } from './app.js';
+import { licenseEnterprise, projectOfAgent, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // The tasks API against the real server and database: a task is seen
 // and changed only through a grant on its agent, and a run is queued only for an active agent
@@ -58,6 +58,7 @@ beforeAll(async () => {
       admin: { name: 'Ann Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   await licenseEnterprise(db);
   admin = { ...setup.json<Omit<Person, 'cookie'>>(), cookie: cookieOf(setup) };
 }, 120_000);

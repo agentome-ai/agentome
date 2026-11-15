@@ -70,6 +70,7 @@ describe('migrate', () => {
       'team_members',
       'teams',
       'tool_calls',
+      'two_factors',
       'users',
       'verifications',
       'webhook_deliveries',
@@ -104,6 +105,9 @@ describe('migrate', () => {
       await old.execute(sql`create table public.seats (id uuid primary key)`);
       await old.execute(sql`create table public.users (id uuid primary key)`);
       await old.execute(sql`create table public.projects (id uuid primary key)`);
+      await old.execute(sql`create table public.pairing_codes (id uuid primary key)`);
+      await old.execute(sql`create table public.runs (id uuid primary key)`);
+      await old.execute(sql`create table public.installation (id integer primary key)`);
       await old.execute(
         sql`create type public.seat_kind as enum ('subscription-laptop', 'api-server', 'local-model')`,
       );
@@ -116,7 +120,8 @@ describe('migrate', () => {
       const tables = await old.execute(
         sql`select 1 from information_schema.tables where table_schema = 'public'`,
       );
-      expect(tables).toHaveLength(3);
+      // The six above, and two_factors, which a migration after the baseline makes.
+      expect(tables).toHaveLength(7);
     } finally {
       await old.$client.end();
     }

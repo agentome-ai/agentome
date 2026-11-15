@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { deriveKey } from './derive.js';
 import {
   accounts,
   and,
@@ -9,6 +9,7 @@ import {
   isNull,
   or,
   sessions,
+  twoFactors,
   users,
   verifications,
 } from '@agentome/db';
@@ -16,6 +17,7 @@ import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError } from 'better-auth/api';
 import { genericOAuth, keycloak } from 'better-auth/plugins/generic-oauth';
+import { twoFactor } from 'better-auth/plugins/two-factor';
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import type { Config } from './config.js';
@@ -28,10 +30,8 @@ import { afterPasswordReset } from './password-reset.js';
 // header only. The server sets it from request.ip and drops a value the client sent.
 const clientIpHeader = 'x-agentome-client-ip';
 
-/** A key for one purpose, so that no two features sign or encrypt with the same key. */
-export function deriveKey(secretKey: string, purpose: string): string {
-  return createHmac('sha256', secretKey).update(`agentome:${purpose}`).digest('hex');
-}
+// Kept in a module of its own, which the config and the place launcher import without the rest.
+export { deriveKey };
 
 // Every option that better-auth would otherwise read from NODE_ENV is set here, so that
 // tests, development and production behave alike. `onResetToken` is for the `agentome
@@ -54,7 +54,7 @@ export function createAuth(
     trustedOrigins: [origin],
     database: drizzleAdapter(db, {
       provider: 'pg',
-      schema: { users, sessions, accounts, verifications },
+      schema: { users, sessions, accounts, verifications, twoFactors },
     }),
     user: {
       modelName: 'users',
@@ -76,7 +76,8 @@ export function createAuth(
     },
     verification: { modelName: 'verifications' },
     emailAndPassword: {
-      enabled: true,
+      // Off, only Keycloak signs people in, with its second factor.
+      enabled: config.passwordSignIn,
       minPasswordLength: 12,
       maxPasswordLength: 128,
       // A new password ends every session, and with onPasswordReset the person's API tokens:
@@ -129,11 +130,17 @@ export function createAuth(
         ),
     },
     telemetry: { enabled: false },
-    // Anyone the realm lets in joins on the first sign-in as a member: who may come in
-    // is Keycloak's to say, and admins are made here.
-    plugins: config.keycloak
-      ? [genericOAuth({ config: [keycloak({ ...config.keycloak, pkce: true })] })]
-      : [],
+    plugins: [
+      // A password sign-in asks for a code from an authenticator app once the person turned it
+      // on. Turning it on, off, or making new backup codes asks for the password. Ten wrong
+      // codes in a row lock the account for 15 minutes; a sign-in waits 10 minutes for its code.
+      twoFactor({ issuer: 'Agentome', schema: { twoFactor: { modelName: 'twoFactors' } } }),
+      // Anyone the realm lets in joins on the first sign-in as a member: who may come in
+      // is Keycloak's to say, and admins are made here. Keycloak's own second factor applies.
+      ...(config.keycloak
+        ? [genericOAuth({ config: [keycloak({ ...config.keycloak, pkce: true })] })]
+        : []),
+    ],
   });
 }
 
@@ -155,8 +162,13 @@ declare module 'fastify' {
 }
 
 /** Adds requireSession and requireAdmin to the root instance, for every route plugin. */
-export function addSessionHooks(app: FastifyInstance, auth: Auth, db: Db, publicUrl: string) {
-  const own = new URL(publicUrl).origin;
+export function addSessionHooks(
+  app: FastifyInstance,
+  auth: Auth,
+  db: Db,
+  config: Pick<Config, 'publicUrl' | 'passwordSignIn'>,
+) {
+  const own = new URL(config.publicUrl).origin;
   const requireSession = async (request: FastifyRequest, reply?: FastifyReply) => {
     // A personal token signs a person in the way the browser's cookie does, for
     // the management MCP and scripts. It is never refreshed and leaves no cookie behind.
@@ -199,6 +211,17 @@ export function addSessionHooks(app: FastifyInstance, auth: Auth, db: Db, public
       throw new AppError('unauthorized', 'Sign in to continue');
     }
     const { id, name, email, role } = response.user;
+    if (
+      role === 'admin' &&
+      config.passwordSignIn &&
+      !response.user.twoFactorEnabled &&
+      (await hasPassword(db, id))
+    ) {
+      throw new AppError(
+        'two_factor_required',
+        'Admins sign in with a code from an authenticator app too. Set it up to continue.',
+      );
+    }
     request.user = { id, name, email, role: role === 'admin' ? 'admin' : 'member' };
   };
   // A route that reads request.user without either hook fails loudly instead of
@@ -222,6 +245,15 @@ export function addSessionHooks(app: FastifyInstance, auth: Auth, db: Db, public
 }
 
 const READS = new Set(['GET', 'HEAD']);
+
+/** Whether the person can sign in with a password here, not through Keycloak alone. */
+export async function hasPassword(db: Db, userId: string): Promise<boolean> {
+  const [account] = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.userId, userId), eq(accounts.providerId, 'credential')));
+  return account !== undefined;
+}
 const viaToken = new WeakMap<FastifyRequest, ApiTokenScope>();
 /** Whether the person signed in with a personal token rather than the browser's session. */
 export const signedInWithToken = (request: FastifyRequest) => viaToken.has(request);
@@ -307,7 +339,16 @@ export async function signIn(
 // current password, and the Account dialog signs the person's other devices out with it.
 // reset-password takes a one-time token that only `agentome reset-password` issues; the route
 // that would issue one to anyone who asks, request-password-reset, is not here.
+//
+// The second step: turning it on (the answer has the authenticator's address and the backup
+// codes), its first code, the codes at sign-in, turning it off, new backup codes. Codes by
+// email or SMS (send-otp, verify-otp) are not used: the server sends no mail.
 const exposed = new Set([
+  '/api/auth/two-factor/enable',
+  '/api/auth/two-factor/verify-totp',
+  '/api/auth/two-factor/verify-backup-code',
+  '/api/auth/two-factor/disable',
+  '/api/auth/two-factor/generate-backup-codes',
   '/api/auth/sign-in/email',
   '/api/auth/sign-in/social',
   '/api/auth/sign-out',

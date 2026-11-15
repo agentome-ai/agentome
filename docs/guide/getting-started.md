@@ -10,7 +10,7 @@ The words used here, such as run, seat and policy, are explained in [Concepts](c
 
 You need:
 
-- A Linux or macOS machine in your network with Docker Engine 25 or newer and the Docker Compose
+- A Linux or macOS machine in your network with Docker Engine 26 or newer and the Docker Compose
   plugin (`docker compose version` answers). This machine runs the Agentome server.
 - One of these, for the agents to run on:
   - a work machine with Node.js 20 or later and Claude Code installed and signed in with your Claude

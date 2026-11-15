@@ -36,6 +36,11 @@ export function stopTree(
   signal: NodeJS.Signals,
   platform: NodeJS.Platform = process.platform,
 ): void {
+  // A CLI in a run's own container: its group is signalled there.
+  if ('stop' in child && typeof child.stop === 'function') {
+    (child.stop as (signal: NodeJS.Signals) => void)(signal);
+    return;
+  }
   if (child.pid === undefined) return;
   if (platform === 'win32') {
     if (child.exitCode !== null || child.signalCode !== null) return;

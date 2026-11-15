@@ -11,7 +11,7 @@ import { loadConfig } from '../src/config.js';
 import { redactValue } from '../src/logs/redact.js';
 import { pruneLogs } from '../src/logs/service.js';
 import { rowOf } from '../src/logs/sink.js';
-import { setupCodeIn } from './app.js';
+import { secondStepForAdmins, setupCodeIn } from './app.js';
 
 // Admin → Logs: the server's lines and the workers', kept in the database with their
 // trace, without secrets, read by an admin alone.
@@ -50,6 +50,7 @@ beforeAll(async () => {
       admin: { name: 'Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   adminCookie = cookieOf(setup);
   const invitation = await app.inject({
     method: 'POST',

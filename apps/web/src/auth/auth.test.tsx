@@ -52,6 +52,15 @@ describe('the sign-in page', () => {
     vi.unstubAllGlobals();
   });
 
+  it('asks for no password when the company signs everyone in through Keycloak', async () => {
+    mockApi({ 'GET /api/setup': { completed: true, keycloak: true, password: false } });
+    renderAt('/login');
+    expect(await screen.findByRole('button', { name: 'Sign in with Keycloak' })).toBeTruthy();
+    await vi.waitFor(() => expect(screen.queryByLabelText('Password')).toBeNull());
+    expect(screen.queryByText('or with a password')).toBeNull();
+    expect(screen.queryByText(/Forgot your password/)).toBeNull();
+  });
+
   it('has no Keycloak button without Keycloak, and says why a Keycloak sign-in failed', async () => {
     mockApi({ 'GET /api/setup': { completed: true, keycloak: false } });
     renderAt('/login?error=ACCOUNT_DISABLED');
@@ -59,6 +68,50 @@ describe('the sign-in page', () => {
       await screen.findByText('This account is disabled. Ask an admin to enable it.'),
     ).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Sign in with Keycloak' })).toBeNull();
+  });
+
+  it('asks for the code from the app after the password, or a backup code', async () => {
+    const calls = mockApi({
+      'POST /api/auth/sign-in/email': { twoFactorRedirect: true, twoFactorMethods: ['totp'] },
+      'POST /api/auth/two-factor/verify-totp': failure(401, 'invalid_code'),
+      'POST /api/auth/two-factor/verify-backup-code': { token: 't', user: admin },
+    });
+    const user = renderAt('/login?next=%2Fagents');
+    await user.type(screen.getByLabelText('Email'), 'ann@acme.com');
+    await user.type(screen.getByLabelText('Password'), 'correct horse battery');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    await user.type(await screen.findByLabelText('Code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(
+      await screen.findByText(
+        'That code is wrong or has expired. Enter the one your app shows now.',
+      ),
+    ).toBeTruthy();
+    expect(calls.find((call) => call.route.endsWith('verify-totp'))?.body).toEqual({
+      code: '123456',
+    });
+    await user.click(screen.getByRole('button', { name: 'Use a backup code' }));
+    await user.type(screen.getByLabelText('Backup code'), 'abcde-fghij');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await where()).toBe('/agents');
+    expect(calls.find((call) => call.route.endsWith('verify-backup-code'))?.body).toEqual({
+      code: 'abcde-fghij',
+    });
+  });
+
+  it('goes back to the password when the sign-in waited too long for its code', async () => {
+    mockApi({
+      'POST /api/auth/sign-in/email': { twoFactorRedirect: true },
+      'POST /api/auth/two-factor/verify-totp': failure(401, 'invalid_two_factor_cookie'),
+    });
+    const user = renderAt('/login');
+    await user.type(screen.getByLabelText('Email'), 'ann@acme.com');
+    await user.type(screen.getByLabelText('Password'), 'correct horse battery');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    await user.type(await screen.findByLabelText('Code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByText('This sign-in waited too long. Sign in again.')).toBeTruthy();
+    expect(screen.getByLabelText('Password')).toBeTruthy();
   });
 
   it('signs in and goes back to the page that asked for it', async () => {

@@ -20,16 +20,29 @@ const subscriptionJson = {
   keys: { p256dh: 'BPk', auth: 'c2VjcmV0' },
 };
 
-function browser(options: { secure?: boolean; push?: boolean; userAgent?: string } = {}) {
-  const { secure = true, push = true, userAgent } = options;
+function browser(
+  options: { secure?: boolean; push?: boolean; userAgent?: string; subscribedTo?: number[] } = {},
+) {
+  const { secure = true, push = true, userAgent, subscribedTo } = options;
   vi.stubGlobal('isSecureContext', secure);
   if (userAgent) vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent);
   if (!push) return undefined;
   let current: {
     endpoint: string;
+    options?: { applicationServerKey: ArrayBuffer };
     toJSON: () => object;
     unsubscribe: () => Promise<boolean>;
-  } | null = null;
+  } | null = subscribedTo
+    ? {
+        endpoint: subscriptionJson.endpoint,
+        options: { applicationServerKey: new Uint8Array(subscribedTo).buffer },
+        toJSON: () => subscriptionJson,
+        unsubscribe: async () => {
+          current = null;
+          return true;
+        },
+      }
+    : null;
   const pushManager = {
     getSubscription: vi.fn(async () => current),
     subscribe: vi.fn(async () => {
@@ -122,5 +135,22 @@ describe('Settings, Notifications', () => {
     expect(calls.find((call) => call.route.startsWith('DELETE'))?.body).toEqual({
       endpoint: subscriptionJson.endpoint,
     });
+  });
+
+  it('shows notifications off where the browser holds a subscription to an earlier server key', async () => {
+    browser({ subscribedTo: [9, 9, 9] });
+    mockApi({ 'GET /api/me': admin, 'GET /api/me/push': { publicKey: 'BAAB' } });
+    renderPage();
+    const on = await screen.findByRole('switch', { name: 'Push notifications' });
+    await vi.waitFor(() => expect(on).toHaveProperty('disabled', false));
+    expect(on.getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('shows notifications on where the subscription is to the server key now', async () => {
+    browser({ subscribedTo: [4, 0, 1] });
+    mockApi({ 'GET /api/me': admin, 'GET /api/me/push': { publicKey: 'BAAB' } });
+    renderPage();
+    const on = await screen.findByRole('switch', { name: 'Push notifications' });
+    await vi.waitFor(() => expect(on.getAttribute('aria-checked')).toBe('true'));
   });
 });

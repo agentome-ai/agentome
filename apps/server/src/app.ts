@@ -1,14 +1,16 @@
 import { createDb } from '@agentome/db';
 import swagger from '@fastify/swagger';
 import { type KeyObject, randomBytes } from 'node:crypto';
+import rateLimit from '@fastify/rate-limit';
+import { AppError } from './errors.js';
+import { writePlacesKey } from './places/keys.js';
+import { proxyTrust } from './trusted-proxy.js';
 import Fastify, { type FastifyRequest } from 'fastify';
 import {
-  jsonSchemaTransform,
   serializerCompiler,
   validatorCompiler,
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
-import packageJson from '../package.json' with { type: 'json' };
 import { approvalRoutes } from './approvals/routes.js';
 import { addSessionHooks, authRoutes, createAuth } from './auth.js';
 import type { Config } from './config.js';
@@ -19,6 +21,7 @@ import { apiTokenRoutes } from './api-tokens/routes.js';
 import { manageRoutes, routeCatalog } from './mcp/manage.js';
 import type { FetchLike } from './mcp/remote.js';
 import { mcpRoutes } from './mcp/routes.js';
+import { openapiOptions } from './openapi.js';
 import { projectRoutes } from './projects/routes.js';
 import { connectionsKey } from './connections/crypto.js';
 import { addSecurityHeaders } from './headers.js';
@@ -32,6 +35,7 @@ import { versionRoutes } from './routes/version.js';
 import {
   keycloakAllowed,
   readOnlyGate,
+  installationIdOf,
   useInstallation,
   useLicenseKey,
 } from './license/service.js';
@@ -95,15 +99,20 @@ type BuildOptions = {
   mcpFetch?: FetchLike;
   licenseKey?: KeyObject;
   placeLauncher?: Launcher;
+  registryFetch?: FetchLike;
 };
 
 /**
  * `workerBundle` is for the tests, which give the server a bundle of their own or none. `jobs`
  * is the process's pg-boss, which main starts after the migrations; a test starts its own.
  * `mcpFetch` lets a test reach a library MCP server or a model connection on this machine,
- * which the gateway refuses. `placeLauncher` is the place launcher, a test's own or none. `licenseKey` is the public key a test signs its licenses against;
+ * which the gateway refuses. `placeLauncher` is the place launcher, a test's own or none. `registryFetch` stands
+ * in for the image registries a project's services are pinned at. `licenseKey` is the public key a test signs its licenses against;
  * never the environment, which would be a way around the license.
  */
+/** Calls one address may make to the API in a minute. */
+const API_CALLS_A_MINUTE = 1200;
+
 export async function buildApp(
   config: Config,
   {
@@ -111,24 +120,25 @@ export async function buildApp(
     jobs = createJobs(config),
     mcpFetch,
     licenseKey,
+    registryFetch,
     placeLauncher = config.placeLauncherUrl === undefined
       ? undefined
       : placeLauncherClient(config.placeLauncherUrl, config.secretKey),
   }: BuildOptions = {},
 ) {
   if (licenseKey) useLicenseKey(licenseKey);
-  useInstallation(config.secretKey);
+  useInstallation(installationIdOf(config.secretKey));
+  // The place launcher reads its key here: derived, never the installation's own.
+  writePlacesKey(config.dataDir, config.secretKey);
   const sink = new LogSink();
+  const proxy = proxyTrust(config.trustProxy);
   const app = Fastify({
     logger: loggerOptions(config.logLevel, sink),
     // A request's id is its trace's: unique across restarts, unlike Fastify's count.
     genReqId: () => randomBytes(8).toString('hex'),
     // Behind a reverse proxy, request.ip is the client's address from X-Forwarded-For: the
     // sign-in rate limit and the sessions' addresses depend on it.
-    trustProxy:
-      config.trustProxy === false
-        ? false
-        : (_address: string, hop: number) => hop < Number(config.trustProxy),
+    trustProxy: proxy.trust,
     // Requests Fastify rejects before routing (a malformed URL) get the same error format.
     frameworkErrors: errorHandler,
   }).withTypeProvider<ZodTypeProvider>();
@@ -147,10 +157,7 @@ export async function buildApp(
   addSecurityHeaders(app, { publicUrl: config.publicUrl, webDir: config.webDir });
 
   // Awaited before any route is added: the plugin documents routes as they are registered.
-  await app.register(swagger, {
-    openapi: { info: { title: 'Agentome', version: packageJson.version } },
-    transform: jsonSchemaTransform,
-  });
+  await app.register(swagger, openapiOptions(config.build.version ?? 'development'));
   app.get('/openapi.json', { schema: { hide: true } }, () => app.swagger());
 
   const db = createDb(config.databaseUrl, (notice) => app.log.warn({ notice }, 'database notice'));
@@ -158,11 +165,32 @@ export async function buildApp(
   // keep shutdown waiting past the container's stop timeout.
   sink.attach(db);
   app.addHook('onClose', async () => {
+    proxy.stop();
     await sink.close();
     await db.$client.end({ timeout: 5 });
   });
   const auth = createAuth(db, config, app.log);
-  addSessionHooks(app, auth, db, config.publicUrl);
+  // A limit for every caller by address: a token or a session that leaked, or a run that holds
+  // its token, cannot hammer the API. Generous, so that a person's tabs and a worker's events
+  // never meet it; sign-in has its own, stricter one.
+  // Before every other hook, the session's and the setup's among them: a caller past the limit
+  // costs no database query.
+  await app.register(rateLimit, { global: false });
+  app.addHook(
+    'onRequest',
+    app.rateLimit({
+      max: API_CALLS_A_MINUTE,
+      timeWindow: 60_000,
+      keyGenerator: (request) => request.ip,
+      allowList: (request) => request.url === '/health' || request.url === '/ready',
+      errorResponseBuilder: (_request, context) =>
+        new AppError(
+          'rate_limited',
+          `Too many requests from this address: try again in ${Math.ceil(context.ttl / 1000)} seconds`,
+        ),
+    }),
+  );
+  addSessionHooks(app, auth, db, config);
   app.addHook('onRequest', setupGate(db));
   // After the session hooks of each route: a read-only license refuses writes.
   app.addHook('preHandler', readOnlyGate(db));
@@ -192,8 +220,13 @@ export async function buildApp(
     keycloakAllowed: () => keycloakAllowed(db),
   });
   await app.register(setupRoutes, { db, auth, config });
-  await app.register(userRoutes, { db });
-  await app.register(invitationRoutes, { db, auth, publicUrl: config.publicUrl });
+  await app.register(userRoutes, { db, passwordSignIn: config.passwordSignIn });
+  await app.register(invitationRoutes, {
+    db,
+    auth,
+    publicUrl: config.publicUrl,
+    passwordSignIn: config.passwordSignIn,
+  });
   const bundle = loadWorkerBundle(workerBundle);
   const server = config.publicUrl.replace(/\/+$/, '');
   if (bundle) await app.register(connectRoutes, { bundle, server });
@@ -211,14 +244,25 @@ export async function buildApp(
   await app.register(mcpLibraryRoutes, { db, config, fetchImpl: mcpFetch });
   await app.register(taskRoutes, { db, config });
   await app.register(teamRoutes, { db });
-  await app.register(projectRoutes, { db, key: connectionsKey(config.secretKey) });
+  await app.register(projectRoutes, {
+    db,
+    key: connectionsKey(config.secretKey),
+    images: { registries: config.serviceRegistries, fetchImpl: registryFetch },
+  });
   await app.register(knowledgeRoutes, { db, config });
   await app.register(connectionRoutes, { db, config });
   await app.register(modelConnectionRoutes, { db, config, fetchImpl: mcpFetch });
   await app.register(relayRoutes, { db, config, fetchImpl: mcpFetch });
   // WebSockets carry one thing: the terminal of a person's place. Its frames are keystrokes.
   await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
-  await app.register(placeRoutes, { db, launcher: placeLauncher, publicUrl: config.publicUrl });
+  await app.register(placeRoutes, {
+    db,
+    launcher: placeLauncher,
+    publicUrl: config.publicUrl,
+    limits: config.placeLimits,
+    computers: config.computers,
+    secretKey: config.secretKey,
+  });
   await app.register(egressRoutes, {
     db,
     secretKey: config.secretKey,
@@ -227,7 +271,10 @@ export async function buildApp(
   await app.register(scheduleRoutes, { db });
   await app.register(mcpRoutes, { db, config, jobs, fetchImpl: mcpFetch });
   await app.register(apiTokenRoutes, { db });
-  await app.register(manageRoutes, { catalog });
+  await app.register(manageRoutes, {
+    catalog,
+    version: config.build.version ?? 'development',
+  });
   await app.register(gitRoutes, { db, config });
   await app.register(approvalRoutes, { db });
   await app.register(pushRoutes, { db, vapid: vapidKeys(config.secretKey, config.publicUrl) });

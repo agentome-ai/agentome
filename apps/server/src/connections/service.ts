@@ -359,7 +359,13 @@ export async function gitRemoteOf(db: Db, key: Buffer, id: string, path: string)
   const origin = config.baseUrl ?? 'https://github.com';
   const { username, password } = host.gitCredential();
   const basic = Buffer.from(`${username}:${password}`).toString('base64');
-  return { host, path, url: `${origin}/${path}.git`, authorization: `Basic ${basic}` };
+  return {
+    host,
+    path,
+    url: `${origin}/${path}.git`,
+    web: `${origin}/${path}`,
+    authorization: `Basic ${basic}`,
+  };
 }
 
 /** What the administrator pastes into the host's webhook settings. */
@@ -394,8 +400,19 @@ function placeOfUrl(repository: string | null) {
     .split('/')
     .filter((segment) => segment !== '')
     .map((segment) => segment.toLowerCase());
+  // Only the characters GitHub and GitLab allow in a path: an escaped slash or a dot segment
+  // (`acme/..%2fother/repo`) passes a namespace prefix here and is decoded by the host there.
+  if (!segments.every((segment) => /^[a-z0-9_.+-]+$/.test(segment) && !/^\.+$/.test(segment))) {
+    return null;
+  }
   const namespaces = segments.map((_, i) => segments.slice(0, i + 1).join('/'));
   return segments.length < 2 ? null : { host: url.host.toLowerCase(), namespaces };
+}
+
+/** A repository as a project lists it and a task names it alike: `host/path`, lower case. */
+export function repositoryKey(repository: string | null): string | null {
+  const place = placeOfUrl(repository);
+  return place && `${place.host}/${place.namespaces.at(-1)}`;
 }
 
 /**
@@ -403,7 +420,7 @@ function placeOfUrl(repository: string | null) {
  * (its knowledge): the shared token before an agent's own, then the deepest namespace.
  */
 export async function projectConnectionFor(
-  db: Db,
+  db: Db | Parameters<Parameters<Db['transaction']>[0]>[0],
   projectId: string,
   repository: string,
 ): Promise<{ id: string } | null> {
@@ -428,8 +445,9 @@ export async function projectConnectionFor(
 /**
  * The connection a task's repository falls under, among the projects of its agent: the URL's
  * host, and its namespace as the leading path segments (GitHub: the owner; GitLab: any depth
- * of groups, so every prefix short of the repository itself is tried). A path on the computer,
- * a URL nobody connected, or a host of a project the agent is not in: null.
+ * of groups, so every prefix short of the repository itself is tried), of a project that lists
+ * the repository. A path on the computer, a URL nobody connected, a repository no project of the
+ * agent lists, or a host of a project the agent is not in: null.
  */
 export async function connectionFor(
   db: Db,
@@ -439,12 +457,13 @@ export async function connectionFor(
   const place = placeOfUrl(repository);
   if (!place) return null;
   const { host, namespaces } = place;
-  const [found] = await db
+  const rows = await db
     .select({
       id: projectConnections.id,
       kind: projectConnections.kind,
       project: { id: projects.id, name: projects.name },
       namespace: projectConnections.namespace,
+      repositories: projects.repositories,
     })
     .from(projectConnections)
     .innerJoin(projects, eq(projects.id, projectConnections.projectId))
@@ -460,7 +479,12 @@ export async function connectionFor(
     )
     // The agent's own token first, whatever the depth; then the deepest
     // namespace: acme/platform over acme.
-    .orderBy(sql`${projectConnections.agentId} is null`, desc(projectConnections.namespace))
-    .limit(1);
+    .orderBy(sql`${projectConnections.agentId} is null`, desc(projectConnections.namespace));
+  // Only a repository its project lists: a token for a whole group would otherwise clone and
+  // push any repository in it that a task names, the person's own access to it or not.
+  const key = repositoryKey(repository);
+  const found = rows.find((row) =>
+    row.repositories.some((listed) => repositoryKey(listed) === key),
+  );
   return found ? { id: found.id, kind: found.kind, project: found.project } : null;
 }

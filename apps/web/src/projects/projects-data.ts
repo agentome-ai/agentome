@@ -92,6 +92,8 @@ export type ProjectView = ProjectSummary & {
   goals: string;
   /** URLs under the project's connections; the first is the main one. */
   repositories: string[];
+  /** What its runs in places may reach besides Agentome and the vendor: an admin's list. */
+  allowedHosts: string[];
   /** What the main repository's devcontainer asks to run beside an agent in a place. */
   environment: ProjectEnvironment | null;
   agents: ProjectAgent[];

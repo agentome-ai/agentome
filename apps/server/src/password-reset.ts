@@ -6,6 +6,7 @@ import {
   eq,
   isNull,
   like,
+  twoFactors,
   users,
   verifications,
 } from '@agentome/db';
@@ -37,6 +38,8 @@ const linksOf = (userId: string) =>
  * What a new password takes away besides the sessions, which the sign-in library ends: the
  * person's personal API tokens, which are their password in another form, and any other link
  * for a new password. Their computers stay connected: a computer is revoked in Admin, Computers.
+ * The second step goes too: the link is also the way back for someone who lost the phone with
+ * their authenticator app, and an admin is asked to set it up again at the next sign-in.
  */
 export async function afterPasswordReset(db: Db, userId: string): Promise<void> {
   await db
@@ -44,6 +47,8 @@ export async function afterPasswordReset(db: Db, userId: string): Promise<void> 
     .set({ revokedAt: new Date() })
     .where(and(eq(apiTokens.userId, userId), isNull(apiTokens.revokedAt)));
   await db.delete(verifications).where(linksOf(userId));
+  await db.delete(twoFactors).where(eq(twoFactors.userId, userId));
+  await db.update(users).set({ twoFactorEnabled: false }).where(eq(users.id, userId));
 }
 
 /**

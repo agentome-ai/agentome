@@ -2,7 +2,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import packageJson from '../../package.json' with { type: 'json' };
 import { tokenScope } from '../auth.js';
 import { AppError } from '../errors.js';
 import { bearerToken } from '../tokens.js';
@@ -46,10 +45,8 @@ const TOOLS: Record<string, { name: string; readOnly: boolean }> = {
   'GET /api/projects/:id': { name: 'get_project', readOnly: true },
   'PATCH /api/projects/:id': { name: 'update_project', readOnly: false },
   'POST /api/projects/:id/environment': { name: 'read_project_environment', readOnly: false },
-  'POST /api/projects/:id/environment/approve': {
-    name: 'approve_project_environment',
-    readOnly: false,
-  },
+  // Approving a project's services and opening its hosts are an admin's, in the browser: text a
+  // repository writes reaches an assistant through get_project, and could lead it to either.
   'DELETE /api/projects/:id': { name: 'remove_project', readOnly: false },
   'PUT /api/projects/:id/agents/:agentId': { name: 'add_agent_to_project', readOnly: false },
   // Slice 4: memory, the library and knowledge. Adding or changing an MCP server is left to
@@ -155,10 +152,11 @@ export function routeCatalog(app: FastifyInstance): Map<string, Route> {
 
 const title = (name: string) => name.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 
-export const manageRoutes: FastifyPluginAsync<{ catalog: Map<string, Route> }> = async (
-  app,
-  { catalog },
-) => {
+export const manageRoutes: FastifyPluginAsync<{
+  catalog: Map<string, Route>;
+  /** The release, which a client sees as the server's version. */
+  version: string;
+}> = async (app, { catalog, version }) => {
   /** One tool: its route called as the person, with the token that opened the MCP. */
   function handler(route: Route, authorization: string) {
     return async (args: Record<string, unknown>) => {
@@ -202,7 +200,7 @@ export const manageRoutes: FastifyPluginAsync<{ catalog: Map<string, Route> }> =
     }
     await app.requireSession(request);
     const authorization = request.headers.authorization ?? '';
-    const server = new McpServer({ name: 'agentome-manage', version: packageJson.version });
+    const server = new McpServer({ name: 'agentome-manage', version });
     // A read-only token is refused every write anyway; it is not shown the tools that write.
     const readOnly = tokenScope(request) === 'read';
     for (const [key, tool] of Object.entries(TOOLS)) {

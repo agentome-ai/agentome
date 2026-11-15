@@ -1,6 +1,8 @@
 import { span, spanUrl } from '../logs/span.js';
+import { lookup as lookupEach } from 'node:dns';
 import { lookup } from 'node:dns/promises';
-import { BlockList, isIP } from 'node:net';
+import { BlockList, isIP, type LookupFunction } from 'node:net';
+import { Agent } from 'undici';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import {
   StreamableHTTPClientTransport,
@@ -58,10 +60,36 @@ FORBIDDEN.addSubnet('ff00::', 8, 'ipv6');
 const forbidden = (address: string) =>
   FORBIDDEN.check(address, isIP(address) === 4 ? 'ipv4' : 'ipv6');
 
+/**
+ * The connection's own lookup: the address it connects to is the one checked. A name that
+ * answered a company address to the check before and this machine's to the connection (DNS
+ * rebinding) is refused here, where it counts.
+ */
+export const checkedLookup: LookupFunction = (hostname, options, callback) => {
+  lookupEach(hostname, { ...options, all: true }, (error, found) => {
+    if (error) return callback(error, '', 0);
+    const addresses = found as unknown as { address: string; family: number }[];
+    if (addresses.length === 0 || addresses.some((entry) => forbidden(entry.address))) {
+      const refused = new RemoteError(`${hostname} is this machine or a link-local address`);
+      return callback(refused as NodeJS.ErrnoException, '', 0);
+    }
+    if (options.all) {
+      (callback as unknown as (error: null, all: typeof addresses) => void)(null, addresses);
+      return;
+    }
+    const [first] = addresses;
+    callback(null, first?.address ?? '', first?.family ?? 4);
+  });
+};
+
+/** The library servers' connections: Node's own fetch, through this lookup. */
+const dispatcher = new Agent({ connect: { lookup: checkedLookup } });
+
 /** fetch for a library server: no address of this machine or link-local, no redirect. */
 export const guardedFetch: FetchLike = async (url, init) => {
   const target = new URL(url);
   const host = target.hostname.replace(/^\[|\]$/g, '');
+  // Checked first too, for a refusal in plain words before any connection.
   const addresses = isIP(host)
     ? [host]
     : (await lookup(host, { all: true })).map((found) => found.address);
@@ -70,7 +98,14 @@ export const guardedFetch: FetchLike = async (url, init) => {
   }
   const response = await span(
     `mcp ${init?.method ?? 'GET'} ${spanUrl(url)}`,
-    () => fetch(url, { ...init, redirect: 'manual' }),
+    () =>
+      fetch(url, { ...init, redirect: 'manual', dispatcher } as RequestInit).catch(
+        (error: unknown) => {
+          // The connection's lookup refused the address: said as the check above says it.
+          if (error instanceof Error && error.cause instanceof RemoteError) throw error.cause;
+          throw error;
+        },
+      ),
     (answer) => ({ status: answer.status }),
   );
   if (response.status >= 300 && response.status < 400) {

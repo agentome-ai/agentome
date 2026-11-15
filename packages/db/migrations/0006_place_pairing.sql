@@ -1,0 +1,1 @@
+ALTER TABLE "pairing_codes" ADD COLUMN "for_place" boolean DEFAULT false NOT NULL;

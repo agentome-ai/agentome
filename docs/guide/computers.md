@@ -43,9 +43,16 @@ its dependencies and builds stay; whatever a run left uncommitted is saved to a 
 `agent/leftover-…` before the next one starts. **Working folders → Start fresh** empties an agent's.
 **Delete place** removes it, with its sign-in and folders.
 
+Each run in your place gets two containers of its own, deleted when it ends: the **CLI
+container**, with Claude Code or Codex and your sign-in, and the **sandbox**, where every command
+the agent runs goes, without your sign-in. So whatever a command does, it cannot read your
+subscription. A project's database or other services run beside the sandbox, and a run may have a
+Docker of its own for tests that start containers, when the admin turned it on.
+
 Your place reaches Agentome and the model vendors, and nothing else unless an admin opens it: the
 hosts a project allows, such as the company's GitLab or Jira, open to the runs of that project's
-tasks only. A run that needs another host fails to reach it; ask an admin to add it to the project.
+tasks only, and to the sandbox, not the CLI. A run that needs another host fails to reach it; ask
+an admin to add it to the project. More on how runs are kept apart in [Security](security.md).
 
 ## What a computer needs
 

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -87,10 +87,53 @@ function call(
   });
 }
 
+// The authenticator app's secret of each person who turned the second step on, by email.
+const secrets = new Map<string, string>();
+
+/** The six digits an authenticator app shows now for this base32 secret (RFC 6238). */
+function totp(secret: string, at = Date.now()) {
+  let bits = '';
+  for (const char of secret.replace(/=+$/, '').toUpperCase()) {
+    bits += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'.indexOf(char).toString(2).padStart(5, '0');
+  }
+  const key = Buffer.from(bits.match(/.{8}/g)?.map((byte) => parseInt(byte, 2)) ?? []);
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(at / 30_000)));
+  const mac = createHmac('sha1', key).update(counter).digest();
+  const offset = (mac.at(-1) ?? 0) & 0xf;
+  return String((mac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(6, '0');
+}
+
+/** Turns the second step on as the Account page does; the answer's cookie replaces the old. */
+async function turnOnSecondStep(cookie: string, email: string, password: string) {
+  const enable = await call('POST', '/api/auth/two-factor/enable', { cookie, body: { password } });
+  expect(enable.statusCode).toBe(200);
+  const { totpURI, backupCodes } = enable.json<{ totpURI: string; backupCodes: string[] }>();
+  const secret = new URL(totpURI).searchParams.get('secret') ?? '';
+  const verify = await call('POST', '/api/auth/two-factor/verify-totp', {
+    cookie,
+    body: { code: totp(secret) },
+  });
+  expect(verify.statusCode).toBe(200);
+  secrets.set(email.toLowerCase(), secret);
+  return { cookie: cookieOf(verify), backupCodes };
+}
+
+/** A password sign-in, with the code from the person's app when they turned the second step on. */
 async function signIn(email: string, password: string) {
   const response = await call('POST', '/api/auth/sign-in/email', { body: { email, password } });
   expect(response.statusCode).toBe(200);
-  return cookieOf(response);
+  if (!response.json<{ twoFactorRedirect?: boolean }>().twoFactorRedirect) {
+    return cookieOf(response);
+  }
+  const secret = secrets.get(email.toLowerCase());
+  if (!secret) throw new Error(`${email} has no authenticator secret in this suite`);
+  const verify = await call('POST', '/api/auth/two-factor/verify-totp', {
+    cookie: cookieOf(response),
+    body: { code: totp(secret) },
+  });
+  expect(verify.statusCode).toBe(200);
+  return cookieOf(verify);
 }
 
 async function invite(cookie: string, body: object = {}) {
@@ -109,7 +152,11 @@ describe('before the setup', () => {
       expect(response.json()).toMatchObject({ error: { code: 'setup_required' } });
     }
     expect((await call('POST', '/api/auth/sign-in/email', { body: admin })).statusCode).toBe(409);
-    expect((await call('GET', '/api/setup')).json()).toEqual({ completed: false, keycloak: false });
+    expect((await call('GET', '/api/setup')).json()).toEqual({
+      completed: false,
+      keycloak: false,
+      password: true,
+    });
     for (const url of ['/health', '/ready', '/openapi.json']) {
       expect((await call('GET', url)).statusCode).toBe(200);
     }
@@ -160,6 +207,12 @@ describe('the setup', () => {
     expect(setCookie).not.toMatch(/Secure/i);
     cookie = cookieOf(response);
 
+    // An admin who signs in with a password sets up the second step before anything else.
+    const before = await call('GET', '/api/me', { cookie });
+    expect(before.statusCode).toBe(403);
+    expect(before.json()).toMatchObject({ error: { code: 'two_factor_required' } });
+    cookie = (await turnOnSecondStep(cookie, admin.email, admin.password)).cookie;
+
     const me = await call('GET', '/api/me', { cookie });
     expect(me.statusCode).toBe(200);
     expect(me.json()).toEqual({
@@ -174,7 +227,11 @@ describe('the setup', () => {
   });
 
   it('answers 403 setup_completed once it is done', async () => {
-    expect((await call('GET', '/api/setup')).json()).toEqual({ completed: true, keycloak: false });
+    expect((await call('GET', '/api/setup')).json()).toEqual({
+      completed: true,
+      keycloak: false,
+      password: true,
+    });
     const again = await call('POST', '/api/setup', {
       body: { code, orgName: 'Evil', admin: member },
     });
@@ -234,6 +291,29 @@ describe('signing in', () => {
     expect((await call('GET', '/api/me', { cookie })).statusCode).toBe(200);
   });
 
+  // The admin's sign-in, password and code, from this address and saying it forwards
+  // 203.0.113.7: the session is made with the code.
+  async function signInThrough(server: typeof app, from: string) {
+    const headers = { origin: publicUrl, 'x-forwarded-for': '203.0.113.7' };
+    const password = await server.inject({
+      method: 'POST',
+      url: '/api/auth/sign-in/email',
+      payload: { email: admin.email, password: admin.password },
+      remoteAddress: from,
+      headers,
+    });
+    expect(password.statusCode).toBe(200);
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/auth/two-factor/verify-totp',
+      payload: { code: totp(secrets.get(admin.email.toLowerCase()) ?? '') },
+      remoteAddress: from,
+      headers: { ...headers, cookie: cookieOf(password) },
+    });
+    expect(response.statusCode).toBe(200);
+    return response;
+  }
+
   it('records the client behind a proxy only with AGENTOME_TRUST_PROXY', async () => {
     const proxied = await buildApp(
       loadConfig(env(container.getConnectionUri(), { AGENTOME_TRUST_PROXY: 'true' })),
@@ -243,14 +323,29 @@ describe('signing in', () => {
         [proxied, '203.0.113.7'],
         [app, '10.9.9.9'],
       ] as const) {
-        const response = await server.inject({
-          method: 'POST',
-          url: '/api/auth/sign-in/email',
-          payload: { email: admin.email, password: admin.password },
-          remoteAddress: '10.9.9.9',
-          headers: { origin: publicUrl, 'x-forwarded-for': '203.0.113.7' },
-        });
-        expect(response.statusCode).toBe(200);
+        const response = await signInThrough(server, '10.9.9.9');
+        const [session] = await db
+          .select({ ipAddress: sessions.ipAddress })
+          .from(sessions)
+          .where(eq(sessions.token, response.json<{ token: string }>().token));
+        expect(session?.ipAddress).toBe(address);
+      }
+    } finally {
+      await proxied.close();
+    }
+  });
+
+  it('takes X-Forwarded-For from the named proxy only, not from a place that reaches the app', async () => {
+    const proxied = await buildApp(
+      loadConfig(env(container.getConnectionUri(), { AGENTOME_TRUST_PROXY: '10.9.9.0/24' })),
+    );
+    try {
+      for (const [from, address] of [
+        ['10.9.9.9', '203.0.113.7'],
+        // A place on the places' network, claiming to be someone else.
+        ['172.28.0.5', '172.28.0.5'],
+      ] as const) {
+        const response = await signInThrough(proxied, from);
         const [session] = await db
           .select({ ipAddress: sessions.ipAddress })
           .from(sessions)
@@ -516,6 +611,127 @@ describe('the account', () => {
     });
     expect(old.statusCode).toBe(401);
     await signIn('carol.diaz@example.com', 'a new long password');
+  });
+});
+
+describe('the second step', () => {
+  const eve = { name: 'Eve', email: 'eve@example.com', password: 'eve long password' };
+  let cookie: string;
+  let backupCodes: string[];
+  const twoFactor = async (session: string) =>
+    (await call('GET', '/api/me/two-factor', { cookie: session })).json();
+
+  beforeAll(async () => {
+    const { token } = await invite(await signIn(admin.email, admin.password));
+    const accepted = await call('POST', `/api/invitations/${token}/accept`, { body: eve });
+    expect(accepted.statusCode).toBe(201);
+    cookie = await signIn(eve.email, eve.password);
+  });
+
+  it('is up to a member, and turning it on asks the password and a first good code', async () => {
+    expect(await twoFactor(cookie)).toEqual({ available: true, enabled: false });
+    const wrong = await call('POST', '/api/auth/two-factor/enable', {
+      cookie,
+      body: { password: 'not the password' },
+    });
+    expect(wrong.statusCode).toBe(400);
+    // Turned on but not yet confirmed by a code, it asks nothing at sign-in.
+    const half = await call('POST', '/api/auth/two-factor/enable', {
+      cookie,
+      body: { password: eve.password },
+    });
+    expect(half.statusCode).toBe(200);
+    expect(await twoFactor(cookie)).toEqual({ available: true, enabled: false });
+    const turnedOn = await turnOnSecondStep(cookie, eve.email, eve.password);
+    cookie = turnedOn.cookie;
+    backupCodes = turnedOn.backupCodes;
+    expect(backupCodes).toHaveLength(10);
+    expect(await twoFactor(cookie)).toEqual({ available: true, enabled: true });
+  });
+
+  it('asks for the code at sign-in, and the password alone opens nothing', async () => {
+    const password = await call('POST', '/api/auth/sign-in/email', {
+      body: { email: eve.email, password: eve.password },
+    });
+    expect(password.json()).toMatchObject({ twoFactorRedirect: true });
+    const pending = cookieOf(password);
+    expect(pending).not.toMatch(/agentome\.session_token=[^;]/);
+    expect((await call('GET', '/api/me', { cookie: pending })).statusCode).toBe(401);
+    const wrong = await call('POST', '/api/auth/two-factor/verify-totp', {
+      cookie: pending,
+      body: { code: '000000' === totp(secrets.get(eve.email) ?? '') ? '111111' : '000000' },
+    });
+    expect(wrong.statusCode).toBe(401);
+    expect(wrong.json()).toMatchObject({ error: { code: 'invalid_code' } });
+    const right = await call('POST', '/api/auth/two-factor/verify-totp', {
+      cookie: pending,
+      body: { code: totp(secrets.get(eve.email) ?? '') },
+    });
+    expect(right.statusCode).toBe(200);
+    expect((await call('GET', '/api/me', { cookie: cookieOf(right) })).statusCode).toBe(200);
+  });
+
+  it('takes a backup code once, instead of the app', async () => {
+    const code = backupCodes[0] ?? '';
+    for (const expected of [200, 401]) {
+      const password = await call('POST', '/api/auth/sign-in/email', {
+        body: { email: eve.email, password: eve.password },
+      });
+      const backup = await call('POST', '/api/auth/two-factor/verify-backup-code', {
+        cookie: cookieOf(password),
+        body: { code },
+      });
+      expect(backup.statusCode).toBe(expected);
+    }
+  });
+
+  it('is turned off with the password only', async () => {
+    const wrong = await call('POST', '/api/auth/two-factor/disable', {
+      cookie,
+      body: { password: 'not the password' },
+    });
+    expect(wrong.statusCode).toBe(400);
+    const off = await call('POST', '/api/auth/two-factor/disable', {
+      cookie,
+      body: { password: eve.password },
+    });
+    expect(off.statusCode).toBe(200);
+    secrets.delete(eve.email);
+    expect(await twoFactor(cookieOf(off))).toEqual({ available: true, enabled: false });
+    await signIn(eve.email, eve.password);
+  });
+
+  it('goes with a new password from the link, for a lost phone', async () => {
+    cookie = (
+      await turnOnSecondStep(await signIn(eve.email, eve.password), eve.email, eve.password)
+    ).cookie;
+    const { url } = await passwordResetLink(
+      db,
+      loadConfig(env(container.getConnectionUri())),
+      eve.email,
+    );
+    const set = await call('POST', '/api/auth/reset-password', {
+      body: { token: url.split('/reset-password#')[1], newPassword: 'eve after the lost phone' },
+    });
+    expect(set.statusCode).toBe(200);
+    secrets.delete(eve.email);
+    cookie = await signIn(eve.email, 'eve after the lost phone');
+    expect(await twoFactor(cookie)).toEqual({ available: true, enabled: false });
+  });
+
+  it('is neither offered nor required where Keycloak alone signs the person in', async () => {
+    const [row] = await db.select({ id: users.id }).from(users).where(eq(users.email, eve.email));
+    await db.delete(accounts).where(eq(accounts.userId, row?.id ?? ''));
+    await db
+      .update(users)
+      .set({ role: 'admin' })
+      .where(eq(users.id, row?.id ?? ''));
+    expect(await twoFactor(cookie)).toEqual({ available: false, enabled: false });
+    expect((await call('GET', '/api/me', { cookie })).json()).toMatchObject({ role: 'admin' });
+    await db
+      .update(users)
+      .set({ role: 'member' })
+      .where(eq(users.id, row?.id ?? ''));
   });
 });
 

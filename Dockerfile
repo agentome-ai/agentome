@@ -40,7 +40,8 @@ RUN pnpm --filter @agentome/server deploy --prod --prefer-offline --ignore-scrip
 FROM node:22-bookworm-slim AS seat
 ARG TARGETARCH
 # The common toolchains, so that an agent builds most projects without installing anything:
-# Python, Java 21 with Maven, Go, .NET 8 and a C compiler. From Debian and Adoptium's signed
+# Python, Java 21 with Maven, Go, .NET 8 and a C compiler; and the docker CLI with compose, for a
+# run's own Docker where the installation gives runs one. From Debian and Adoptium's signed
 # repositories, and Go's and .NET's archives by their checksums; versions are pinned here.
 ARG GO_VERSION=1.27.4
 ARG GO_SHA256_AMD64=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
@@ -55,8 +56,12 @@ RUN apt-get update \
       | gpg --dearmor -o /usr/share/keyrings/adoptium.gpg \
  && echo 'deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb bookworm main' \
       > /etc/apt/sources.list.d/adoptium.list \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg \
+      | gpg --dearmor -o /usr/share/keyrings/docker.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
+      > /etc/apt/sources.list.d/docker.list \
  && apt-get update \
- && apt-get install -y --no-install-recommends temurin-21-jdk \
+ && apt-get install -y --no-install-recommends temurin-21-jdk docker-ce-cli docker-compose-plugin \
  && rm -rf /var/lib/apt/lists/* \
  && case "$TARGETARCH" in \
       amd64) go=$GO_SHA256_AMD64; net=$DOTNET_SHA512_AMD64; rid=x64 ;; \
@@ -87,6 +92,10 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} \
  && npm cache clean --force
 COPY --from=build /repo/apps/worker/dist/agentome-worker.mjs /usr/local/lib/agentome/
 COPY deploy/seat-start.sh /usr/local/bin/agentome-seat
+# bash and git pass the commands of a run's CLI container to its sandbox; /bin is /usr/bin on bookworm.
+COPY deploy/sandbox-shim.sh /usr/local/lib/agentome/sandbox-shim
+RUN for p in bash git; do cp "/usr/bin/$p" "/usr/local/lib/agentome/$p.real" \
+      && install -m 755 /usr/local/lib/agentome/sandbox-shim "/usr/bin/$p"; done
 # The connection and npm's cache are kept in /seat (a volume); the runs, Claude Code and the
 # CLI's home are in memory, so a restart leaves nothing of the last run (compose.yaml).
 ENV AGENTOME_WORKER_SERVER=1 \

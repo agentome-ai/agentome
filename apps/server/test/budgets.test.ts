@@ -21,7 +21,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { notifyBudget } from '../src/budgets/service.js';
-import { licenseEnterprise, projectOfAgent, setupCodeIn } from './app.js';
+import { licenseEnterprise, projectOfAgent, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // Budgets in money: a month spent refuses new runs, the owner may let the agent go on,
 // and the owners hear of it at 80%.
@@ -53,6 +53,7 @@ beforeAll(async () => {
       admin: { name: 'Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   await licenseEnterprise(db);
   const setCookie = setup.headers['set-cookie'] ?? [];
   cookie = (Array.isArray(setCookie) ? setCookie : [setCookie])

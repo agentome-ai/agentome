@@ -11,14 +11,20 @@ import { PlaceTerminal } from './place-terminal';
 
 type PlaceView = {
   available: boolean;
+  /** Whether people's own computers may run agents here; off, agents run only on the server. */
+  computers?: boolean;
   place: null | {
     seatId: string | null;
     state: 'none' | 'asleep' | 'awake' | 'unknown';
     signedOut: string[];
     lastSeenAt: string | null;
     agents: { id: string; name: string }[];
+    /** On Docker, what its volumes hold and may hold; null where the launcher does not count. */
+    disk?: { usedBytes: number; limitBytes: number } | null;
   };
 };
+
+const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 
 const STATE: Record<NonNullable<PlaceView['place']>['state'], string> = {
   awake: 'Awake',
@@ -27,7 +33,8 @@ const STATE: Record<NonNullable<PlaceView['place']>['state'], string> = {
   unknown: 'Agentome cannot reach the place launcher right now',
 };
 
-export function PlaceSection() {
+export function PlaceSection(props: { onComputers?: (on: boolean) => void }) {
+  const { onComputers } = props;
   const [view, setView] = useState<PlaceView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,12 +44,14 @@ export function PlaceSection() {
 
   const load = useCallback(async () => {
     try {
-      setView(await api<PlaceView>('/api/me/place'));
+      const loaded = await api<PlaceView>('/api/me/place');
+      setView(loaded);
+      onComputers?.(loaded.computers ?? true);
     } catch {
       // A place is an extra: the computers below still load without it.
       setView({ available: false, place: null });
     }
-  }, []);
+  }, [onComputers]);
   useEffect(() => void load(), [load]);
 
   const act = async (path: string, method: 'POST' | 'DELETE' = 'POST') => {
@@ -88,6 +97,12 @@ export function PlaceSection() {
           <p className="mt-2 text-read text-ink-2" aria-live="polite">
             <Presence online={place.state === 'awake'}>{STATE[place.state]}</Presence>
           </p>
+          {place.disk && place.disk.usedBytes > place.disk.limitBytes && (
+            <p role="alert" className="mt-3 max-w-[72ch] text-read text-failed">
+              Your place holds {gb(place.disk.usedBytes)} of its {gb(place.disk.limitBytes)}, so it
+              sleeps and takes no runs. Start an agent’s folders fresh below, then wake it.
+            </p>
+          )}
           {claudeOut && (
             <p className="mt-3 max-w-[72ch] text-read text-ink-2">
               Claude Code is not signed in there yet, so the place takes no runs of Claude Code

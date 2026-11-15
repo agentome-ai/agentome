@@ -62,6 +62,11 @@ export interface CodexSandbox {
 }
 
 export interface CodexRunOptions {
+  /**
+   * How the CLI is started: here by default, or in the run's own container of a person's
+   * place, where the same paths hold the run's files.
+   */
+  readonly spawn?: typeof spawn;
   readonly cwd: string;
   readonly prompt: string;
   /** The profile's text: the agent's instructions, as the developer message of the run. */
@@ -588,7 +593,7 @@ export async function runCodex(
   let child: ChildProcess;
   try {
     const [file, ...first] = cliCommand(cliPath, options.env ?? process.env);
-    child = spawn(file, [...first, ...codexArgs(options)], {
+    child = (options.spawn ?? spawn)(file, [...first, ...codexArgs(options)], {
       cwd: options.cwd,
       env: codexEnvironment(options),
       stdio: 'pipe',

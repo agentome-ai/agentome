@@ -1,3 +1,4 @@
+import { placesKey, writePlacesKey } from './places/keys.js';
 import {
   mkdirSync,
   mkdtempSync,
@@ -10,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ConfigError, loadConfig, loadStorageConfig } from './config.js';
+import { ConfigError, loadConfig, loadLauncherConfig, loadStorageConfig } from './config.js';
 
 const key = 'k'.repeat(32);
 let dataDir: string;
@@ -41,7 +42,11 @@ describe('loadConfig', () => {
       logRetentionDays: 30,
       setupAdmin: undefined,
       trustProxy: false,
+      passwordSignIn: true,
+      serviceRegistries: ['docker.io', 'ghcr.io', 'mcr.microsoft.com', 'quay.io', 'public.ecr.aws'],
+      placeLimits: { diskBytes: 20 * 1024 ** 3, places: 50 },
       updateCheck: true,
+      computers: true,
       build: { version: null, commit: null },
     });
     // A key is given so that the test does not create .data in the working directory.
@@ -68,6 +73,8 @@ describe('loadConfig', () => {
       AGENTOME_LOG_RETENTION_DAYS: '7',
       AGENTOME_TRUST_PROXY: 'true',
       AGENTOME_UPDATE_CHECK: 'false',
+      AGENTOME_COMPUTERS: 'false',
+      AGENTOME_SERVICE_REGISTRIES: 'docker.io,registry.acme.internal:5000',
       AGENTOME_BUILD_VERSION: '0.2.0',
       AGENTOME_BUILD_COMMIT: '572776f',
     });
@@ -88,7 +95,11 @@ describe('loadConfig', () => {
       setupAdmin: undefined,
       // The one proxy in front.
       trustProxy: 1,
+      passwordSignIn: true,
+      serviceRegistries: ['docker.io', 'registry.acme.internal:5000'],
+      placeLimits: { diskBytes: 20 * 1024 ** 3, places: 50 },
       updateCheck: false,
+      computers: false,
       build: { version: '0.2.0', commit: '572776f' },
     });
   });
@@ -97,7 +108,48 @@ describe('loadConfig', () => {
     const base = { AGENTOME_DATABASE_URL: 'postgres://u@h/d', AGENTOME_SECRET_KEY: 'k'.repeat(64) };
     expect(loadConfig({ ...base, AGENTOME_TRUST_PROXY: '2' }).trustProxy).toBe(2);
     expect(loadConfig({ ...base, AGENTOME_TRUST_PROXY: 'false' }).trustProxy).toBe(false);
-    expect(() => loadConfig({ ...base, AGENTOME_TRUST_PROXY: 'everyone' })).toThrow();
+    // The proxy by its names or addresses: its header only is taken.
+    expect(loadConfig({ ...base, AGENTOME_TRUST_PROXY: 'proxy,10.0.9.0/24' }).trustProxy).toEqual([
+      'proxy',
+      '10.0.9.0/24',
+    ]);
+    expect(() => loadConfig({ ...base, AGENTOME_TRUST_PROXY: 'every one' })).toThrow();
+  });
+
+  it("gives the place launcher the places' key, never the installation's", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agentome-launcher-'));
+    try {
+      const secret = 's'.repeat(64);
+      expect(() => loadLauncherConfig({ AGENTOME_DATA_DIR: dir })).toThrow(/start the app first/);
+      writePlacesKey(dir, secret);
+      const read = loadLauncherConfig({ AGENTOME_DATA_DIR: dir });
+      expect(read.placesKey).toBe(placesKey(secret));
+      expect(read.placesKey).not.toBe(secret);
+      expect(read).not.toHaveProperty('secretKey');
+      // Given the installation's key, as a cluster's Secret does, it derives the same.
+      expect(
+        loadLauncherConfig({ AGENTOME_DATA_DIR: dir, AGENTOME_SECRET_KEY: secret }).placesKey,
+      ).toBe(placesKey(secret));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('turns password sign-in off only with Keycloak to sign people in', () => {
+    const base = { AGENTOME_DATABASE_URL: 'postgres://u@h/d', AGENTOME_SECRET_KEY: 'k'.repeat(64) };
+    expect(loadConfig(base).passwordSignIn).toBe(true);
+    expect(() => loadConfig({ ...base, AGENTOME_PASSWORD_SIGN_IN: 'false' })).toThrow(
+      /needs Keycloak/,
+    );
+    expect(
+      loadConfig({
+        ...base,
+        AGENTOME_PASSWORD_SIGN_IN: 'false',
+        AGENTOME_KEYCLOAK_ISSUER: 'https://sso.acme.com/realms/acme',
+        AGENTOME_KEYCLOAK_CLIENT_ID: 'agentome',
+        AGENTOME_KEYCLOAK_CLIENT_SECRET: 'secret',
+      }).passwordSignIn,
+    ).toBe(false);
   });
 
   it('treats an empty variable as unset', () => {

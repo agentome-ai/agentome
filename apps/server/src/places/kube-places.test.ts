@@ -2,8 +2,8 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import type { Kube, KubeExec } from './kube.js';
 import { kubePlaces, type KubePlaceSettings } from './kube-places.js';
-import { handleOrder, type LauncherSettings, SHELL } from './launcher.js';
-import { signOrder } from './protocol.js';
+import { handleOrder, type LauncherSettings, shellFor } from './launcher.js';
+import { newNonce, signOrder } from './protocol.js';
 
 // The launcher on Kubernetes, against an API that writes down what it is asked and answers as
 // the cluster does: a pod made runs at once, a pairing pod succeeds unless told otherwise.
@@ -40,7 +40,8 @@ function fakeCluster(options: { pairing?: 'Succeeded' | 'Failed' } = {}) {
     if (method === 'POST' && path === '/pods') {
       const made = body as PodBody;
       if (pods.has(made.metadata.name)) return { status: 409, body: { message: 'exists' } };
-      const once = made.spec.restartPolicy === 'Never';
+      const once =
+        made.spec.restartPolicy === 'Never' && !made.metadata.name.startsWith('agentome-run-');
       pods.set(made.metadata.name, {
         body: made,
         phase: once
@@ -57,6 +58,20 @@ function fakeCluster(options: { pairing?: 'Succeeded' | 'Failed' } = {}) {
       claims.add(name);
       return { status: 201, body };
     }
+    if (method === 'GET' && path.startsWith('/pods?labelSelector=')) {
+      const wanted = decodeURIComponent(path.slice('/pods?labelSelector='.length)).split(',');
+      const items = [...pods.values()]
+        .filter(({ body: made }) =>
+          wanted.every((term) => {
+            const [key = '', value] = term.split('=');
+            return value === undefined
+              ? key in made.metadata.labels
+              : made.metadata.labels[key] === value;
+          }),
+        )
+        .map(({ body: made }) => ({ metadata: made.metadata }));
+      return { status: 200, body: { items } };
+    }
     if (pod && method === 'GET' && path.endsWith('/log?tailLines=5')) {
       return { status: 200, body: 'agentome connect\nThis code is not valid.\n' };
     }
@@ -67,8 +82,10 @@ function fakeCluster(options: { pairing?: 'Succeeded' | 'Failed' } = {}) {
             status: 200,
             body: {
               metadata: found.body.metadata,
+              spec: { nodeName: 'node-1' },
               status: {
                 phase: found.phase,
+                podIP: '10.244.1.9',
                 startTime: '2026-11-12T10:00:00Z',
                 containerStatuses: found.body.spec.containers.map(() => ({ ready: true })),
               },
@@ -101,6 +118,12 @@ function fakeCluster(options: { pairing?: 'Succeeded' | 'Failed' } = {}) {
   return { kube, exec, asked, pods, claims, ran, resized };
 }
 
+/** What a place's environment is made of, as `settingsOf` gives it. */
+const settingsShape = {
+  serverUrl: 'http://agentome:3000',
+  egress: { proxy: 'place-egress:3128', tokenOf: (id: string) => `token-of-${id}` },
+};
+
 function settingsOf(cluster: ReturnType<typeof fakeCluster>): LauncherSettings {
   const places: KubePlaceSettings = {
     kube: cluster.kube,
@@ -109,6 +132,10 @@ function settingsOf(cluster: ReturnType<typeof fakeCluster>): LauncherSettings {
     serverUrl: 'http://agentome:3000',
     egress: { proxy: 'place-egress:3128', tokenOf: (id) => `token-of-${id}` },
     patience: { tries: 3, everyMs: 1 },
+    aliases: [
+      { ip: '10.96.0.20', hostnames: ['agentome'] },
+      { ip: '10.96.0.21', hostnames: ['place-egress'] },
+    ],
   };
   return { key: 'the shared key', places: kubePlaces(places) };
 }
@@ -116,11 +143,13 @@ function settingsOf(cluster: ReturnType<typeof fakeCluster>): LauncherSettings {
 function order(settings: LauncherSettings, method: string, path: string, body?: unknown) {
   const text = body === undefined ? '' : JSON.stringify(body);
   const time = String(Date.now());
+  const nonce = newNonce();
   return handleOrder(settings, {
     method,
     path,
     time,
-    signature: signOrder(settings.key, method, path, time, text),
+    nonce,
+    signature: signOrder(settings.key, method, path, time, nonce, text),
     body: text,
   });
 }
@@ -254,7 +283,9 @@ describe('the place launcher on Kubernetes', () => {
     await order(settings, 'POST', `/places/${ID}/sleep`);
     const { openTerminal } = await import('./launcher.js');
     const { done } = await openTerminal(settings, ID);
-    expect(cluster.ran).toEqual([{ pod: `agentome-place-${ID}`, command: SHELL, tty: true }]);
+    expect(cluster.ran).toEqual([
+      { pod: `agentome-place-${ID}`, command: shellFor(settingsShape, ID), tty: true },
+    ]);
     expect((await order(settings, 'GET', `/places/${ID}`)).body).toMatchObject({
       state: 'awake',
       terminals: 1,
@@ -265,10 +296,12 @@ describe('the place launcher on Kubernetes', () => {
     expect((await order(settings, 'GET', `/places/${ID}`)).body).toMatchObject({ terminals: 0 });
   });
 
-  it("makes the place again with its project's services beside the agent, reached by their names", async () => {
+  it("runs a run in a pod of its own on the place's node, with only its folders and its services", async () => {
     const cluster = fakeCluster();
     const settings = settingsOf(cluster);
     await order(settings, 'POST', `/places/${ID}`, { code: 'K7QX-M2PH' });
+    const RUN = '9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4';
+    const folder = `folders/${AGENT}/0123456789abcdef`;
     const shape = {
       project: AGENT,
       hash: 'b'.repeat(64),
@@ -288,22 +321,89 @@ describe('the place launcher on Kubernetes', () => {
         },
       ],
     };
+
+    // The services start with each run: the place itself is not made again for them.
+    const before = cluster.asked.length;
     expect((await order(settings, 'PUT', `/places/${ID}/services`, shape)).status).toBe(204);
-    const pod = cluster.pods.get(`agentome-place-${ID}`)?.body as PodBody & {
-      metadata: { annotations?: Record<string, string> };
-      spec: { hostAliases?: unknown };
+    expect(cluster.asked.slice(before).some((call) => call.method === 'POST')).toBe(false);
+
+    const started = await order(settings, 'PUT', `/places/${ID}/runs/${RUN}`, { folder, shape });
+    expect(started.status).toBe(200);
+    // The worker reaches the CLI container at the pod; the CLI container its sandbox beside it.
+    const at = started.body as Record<'cli' | 'sandbox', { host: string; port: number }>;
+    expect([at.cli.host, at.cli.port, at.sandbox.host, at.sandbox.port]).toEqual([
+      '10.244.1.9',
+      7419,
+      '127.0.0.1',
+      7420,
+    ]);
+    const pod = cluster.pods.get(`agentome-run-${RUN}`)?.body as PodBody & {
+      spec: { nodeName?: string; hostAliases?: unknown; dnsPolicy?: string };
     };
-    expect(pod.metadata.annotations).toEqual({ 'ai.agentome.shape': `${AGENT}:${'b'.repeat(64)}` });
-    expect(pod.spec.hostAliases).toEqual([{ ip: '127.0.0.1', hostnames: ['db', 'my_cache'] }]);
-    const [place, db, cache] = pod.spec.containers as (PodBody['spec']['containers'][number] & {
+    // On the place's node, where its volumes are; a place's label, so the places' policy holds.
+    expect(pod.spec.nodeName).toBe('node-1');
+    expect(pod.metadata.labels).toMatchObject({
+      'ai.agentome.place': ID,
+      'ai.agentome.run': RUN,
+      'app.kubernetes.io/name': 'agentome-place',
+    });
+    expect(pod.spec.dnsPolicy).toBe('None');
+    expect(pod.spec.hostAliases).toEqual([
+      { ip: '10.96.0.20', hostnames: ['agentome'] },
+      { ip: '10.96.0.21', hostnames: ['place-egress'] },
+      { ip: '127.0.0.1', hostnames: ['db', 'my_cache'] },
+    ]);
+    const [cli, sandbox, db, cache] = pod.spec
+      .containers as (PodBody['spec']['containers'][number] & {
       name: string;
     })[];
-    expect(place?.name).toBe('place');
+    expect([cli?.name, sandbox?.name]).toEqual(['cli', 'sandbox']);
+    for (const run of [cli, sandbox]) {
+      expect(run?.args).toEqual(['run-server', RUN]);
+      expect(run?.securityContext).toMatchObject({
+        runAsNonRoot: true,
+        allowPrivilegeEscalation: false,
+        readOnlyRootFilesystem: true,
+        capabilities: { drop: ['ALL'] },
+      });
+      // No egress token of the place: the worker gives the CLI its CLI container's, the commands the run's.
+      expect(run?.env.map((pair) => pair.name)).not.toContain('HTTPS_PROXY');
+    }
+    // The CLI container: its run's folder, its agent's folder, the CLI read-only and the sign-in; not the
+    // seat's connection, nor another agent's folders, nor the rest of the home.
+    expect(cli?.volumeMounts).toEqual([
+      { name: 'cli-home', mountPath: '/home/node' },
+      { name: 'cli-tmp', mountPath: '/tmp' },
+      { name: 'seat', mountPath: `/seat/runs/${RUN}`, subPath: `runs/${RUN}`, readOnly: false },
+      { name: 'seat', mountPath: `/seat/${folder}`, subPath: folder, readOnly: false },
+      { name: 'seat', mountPath: '/seat/cli', subPath: 'cli', readOnly: true },
+      { name: 'home', mountPath: '/home/node/.claude', subPath: '.claude' },
+      { name: 'home', mountPath: '/home/node/.codex', subPath: '.codex' },
+    ]);
+    // The sandbox: no CLI, no sign-in; of the run's folder what a command reads and works in,
+    // not the gateway's config.
+    const ofRun = (name: string, readOnly: boolean) => ({
+      name: 'seat',
+      mountPath: `/seat/runs/${RUN}/${name}`,
+      subPath: `runs/${RUN}/${name}`,
+      readOnly,
+    });
+    expect(sandbox?.volumeMounts).toEqual([
+      { name: 'sandbox-home', mountPath: '/home/node' },
+      { name: 'sandbox-tmp', mountPath: '/tmp' },
+      ofRun('git', true),
+      ofRun('profile', true),
+      ofRun('repo', false),
+      { name: 'seat', mountPath: `/seat/${folder}`, subPath: folder, readOnly: false },
+    ]);
+    expect(cli?.env).toContainEqual({ name: 'CLAUDE_CONFIG_DIR', value: '/home/node/.claude' });
     expect(db).toMatchObject({
       name: 'service-db',
       image: 'postgres:16',
-      env: [{ name: 'POSTGRES_PASSWORD', value: 'dev' }],
-      securityContext: { allowPrivilegeEscalation: false },
+      securityContext: {
+        allowPrivilegeEscalation: false,
+        capabilities: { drop: ['NET_RAW', 'MKNOD', 'SETFCAP', 'AUDIT_WRITE', 'SYS_CHROOT'] },
+      },
       volumeMounts: [
         {
           name: 'seat',
@@ -313,25 +413,18 @@ describe('the place launcher on Kubernetes', () => {
       ],
     });
     expect(cache).toMatchObject({ name: 'service-my-cache', args: ['redis-server'] });
-    // Made for the same list, the place is left as it is.
-    const made = cluster.asked.filter(
-      (call) => call.method === 'POST' && call.path === '/pods',
-    ).length;
-    await order(settings, 'PUT', `/places/${ID}/services`, shape);
-    expect(
-      cluster.asked.filter((call) => call.method === 'POST' && call.path === '/pods'),
-    ).toHaveLength(made);
-    // What a service may not have is not passed on; anything but a list of services is refused.
-    const odd = await order(settings, 'PUT', `/places/${ID}/services`, {
-      ...shape,
-      services: [{ name: 'x', image: 'alpine', environment: {}, volumes: [], privileged: true }],
-    });
-    expect(odd.status).toBe(204);
-    const bad = await order(settings, 'PUT', `/places/${ID}/services`, {
-      project: 'x',
-      hash: 'y',
-      services: [],
-    });
-    expect(bad.status).toBe(400);
+
+    // Another agent's folder, a path out of shape: refused.
+    for (const odd of [`folders/${AGENT}/../..`, '../config.json', 'cli']) {
+      expect(
+        (await order(settings, 'PUT', `/places/${ID}/runs/${RUN}`, { folder: odd })).status,
+      ).toBe(400);
+    }
+    // Ended, it is gone with whatever ran in it; sleeping, the place leaves none behind.
+    expect((await order(settings, 'DELETE', `/places/${ID}/runs/${RUN}`)).status).toBe(204);
+    expect(cluster.pods.has(`agentome-run-${RUN}`)).toBe(false);
+    await order(settings, 'PUT', `/places/${ID}/runs/${RUN}`, { folder });
+    await order(settings, 'POST', `/places/${ID}/sleep`);
+    expect([...cluster.pods.keys()].filter((name) => name.startsWith('agentome-run-'))).toEqual([]);
   });
 });

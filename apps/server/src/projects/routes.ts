@@ -1,11 +1,21 @@
-import { agentStatusEnum, type Db, projectIntakeEnum } from '@agentome/db';
+import {
+  agentStatusEnum,
+  type Db,
+  logEntries,
+  projectIntakeEnum,
+  runs,
+  sql,
+  tasks,
+} from '@agentome/db';
 import { ConnectionKind, RunStatus } from '@agentome/shared';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { IdParams } from '../protocol.js';
 import { repositoryProblem } from '../routes/tasks.js';
 import { HostPattern, Name, Text } from '../routes/validators.js';
+import { browserOnly } from '../auth.js';
 import { AppError } from '../errors.js';
+import { hostAllowed } from '../places/egress.js';
 import { agentFor } from '../agents/service.js';
 import {
   assignAgent,
@@ -20,7 +30,7 @@ import {
 } from './service.js';
 import { requireEnterprise } from '../license/service.js';
 import { ServiceSpec } from './devcontainer.js';
-import { approveEnvironment, readProjectEnvironment } from './environment.js';
+import { approveEnvironment, readProjectEnvironment, type Registries } from './environment.js';
 
 const Iso = z.iso.datetime();
 const Markdown = Text(100_000);
@@ -122,10 +132,11 @@ const ProjectView = ProjectSummary.extend({
 });
 const Membership = z.object({ id: z.uuid(), agentId: z.uuid() });
 
-export const projectRoutes: FastifyPluginAsyncZod<{ db: Db; key: Buffer }> = async (
-  app,
-  { db, key },
-) => {
+export const projectRoutes: FastifyPluginAsyncZod<{
+  db: Db;
+  key: Buffer;
+  images: Registries;
+}> = async (app, { db, key, images }) => {
   app.get(
     '/api/projects',
     {
@@ -205,6 +216,9 @@ export const projectRoutes: FastifyPluginAsyncZod<{ db: Db; key: Buffer }> = asy
       if (request.body.allowedHosts && request.user.role !== 'admin') {
         throw new AppError('forbidden', 'Only an admin changes the hosts a project may reach');
       }
+      // In the browser only: a token, an assistant's say, could be led by text a repository
+      // wrote to open the company's network.
+      if (request.body.allowedHosts) browserOnly(request);
       if (request.body.usdPerMonth != null) await requireEnterprise(db, 'budgets');
       if (request.body.teamId) await requireOwnTeam(db, request.body.teamId, request.user);
       // A person names only their own agent as the reviewer, as they put only their own on it.
@@ -214,8 +228,65 @@ export const projectRoutes: FastifyPluginAsyncZod<{ db: Db; key: Buffer }> = asy
       const changed = await updateProject(db, request.params.id, request.body);
       // Another main repository may ask for other services.
       if (request.body.repositories === undefined) return changed;
-      await readProjectEnvironment(db, key, request.params.id);
+      await readProjectEnvironment(db, key, request.params.id, images);
       return projectView(db, request.params.id);
+    },
+  );
+
+  // What the project's runs in places asked for and the egress proxy refused, lately: for an
+  // admin to allow at once, rather than read it out of the log. Hosts it allows now are left out.
+  app.get(
+    '/api/projects/:id/refused-hosts',
+    {
+      onRequest: app.requireSession,
+      schema: {
+        summary:
+          "The hosts the project's runs in places asked for in the last 7 days and were refused, newest first; an admin's",
+        params: IdParams,
+        response: {
+          200: z.object({
+            hosts: z.array(
+              z.object({
+                host: z.string(),
+                port: z.number(),
+                count: z.number(),
+                lastAt: z.iso.datetime(),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    async (request) => {
+      if (request.user.role !== 'admin') {
+        throw new AppError('forbidden', 'Only an admin sees the hosts a project was refused');
+      }
+      const project = await projectView(db, request.params.id);
+      const found = await db.execute<{ host: string; port: number; count: number; last_at: string }>(
+        sql`select l.context->>'host' as host, coalesce((l.context->>'port')::int, 443) as port,
+                   sum(coalesce((l.context->>'count')::int, 1))::int as count,
+                   max(l.at) as last_at
+              from ${logEntries} l
+              join ${runs} r on r.id = l.run_id
+              join ${tasks} t on t.id = r.task_id
+             where t.project_id = ${request.params.id}
+               and l.message like 'a place was refused %'
+               and l.at > now() - interval '7 days'
+               and l.context->>'host' is not null
+             group by 1, 2
+             order by max(l.at) desc
+             limit 50`,
+      );
+      return {
+        hosts: found
+          .filter((row) => !hostAllowed(row.host, row.port, project.allowedHosts))
+          .map((row) => ({
+            host: row.host,
+            port: row.port,
+            count: row.count,
+            lastAt: new Date(row.last_at).toISOString(),
+          })),
+      };
     },
   );
 
@@ -232,7 +303,7 @@ export const projectRoutes: FastifyPluginAsyncZod<{ db: Db; key: Buffer }> = asy
     },
     async (request) => {
       await requireProjectEditor(db, request.params.id, request.user);
-      await readProjectEnvironment(db, key, request.params.id);
+      await readProjectEnvironment(db, key, request.params.id, images);
       return projectView(db, request.params.id);
     },
   );
@@ -250,6 +321,9 @@ export const projectRoutes: FastifyPluginAsyncZod<{ db: Db; key: Buffer }> = asy
       },
     },
     async (request) => {
+      // In the browser only: the images run on the company's server, and the list is the
+      // repository's words, which could lead an assistant holding a token to approve it.
+      browserOnly(request);
       await approveEnvironment(db, request.params.id, request.body.hash);
       return projectView(db, request.params.id);
     },

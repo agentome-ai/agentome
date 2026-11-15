@@ -1,5 +1,5 @@
 import { tagLog } from '../logs/context.js';
-import type { Db } from '@agentome/db';
+import { and, type Db, eq, seats } from '@agentome/db';
 import { RunStatus } from '@agentome/shared';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -31,7 +31,7 @@ import {
   sseWriter,
   streamRun,
 } from './read.js';
-import { cancelRun, finishRun, heartbeat, recordEvents } from './service.js';
+import { cancelRun, finishRun, heartbeat, recordEvents, type RunReporter } from './service.js';
 import type { Jobs } from '../jobs.js';
 import { tellJira } from '../jira/push.js';
 import { notifyBudget } from '../budgets/service.js';
@@ -61,8 +61,8 @@ export const runRoutes: FastifyPluginAsyncZod<{
       },
     },
     async (request) => {
-      const token = requireRun(request);
-      const result = await recordEvents(db, request.params.id, token, request.body);
+      const by = await requireRun(db, request);
+      const result = await recordEvents(db, request.params.id, by, request.body);
       if (!result) throw ended();
       // Only once the run's token opened it: a wrong token files nothing under the run.
       tagLog({ runId: request.params.id });
@@ -80,7 +80,7 @@ export const runRoutes: FastifyPluginAsyncZod<{
       },
     },
     async (request) => {
-      const result = await heartbeat(db, request.params.id, requireRun(request));
+      const result = await heartbeat(db, request.params.id, await requireRun(db, request));
       if (!result) throw ended();
       tagLog({ runId: request.params.id });
       return result;
@@ -98,8 +98,8 @@ export const runRoutes: FastifyPluginAsyncZod<{
       },
     },
     async (request) => {
-      const token = requireRun(request);
-      const run = await finishRun(db, request.params.id, token, request.body);
+      const by = await requireRun(db, request);
+      const run = await finishRun(db, request.params.id, by, request.body);
       if (!run) throw ended();
       tagLog({ runId: request.params.id });
       await notifyRunEnded(db, request.params.id)
@@ -226,8 +226,23 @@ export const runRoutes: FastifyPluginAsyncZod<{
  * The hash of the request's run token. Whether it opens the run is checked by the statement
  * that acts on the run (service.ts, `live`), so the check and the change cannot drift apart.
  */
-function requireRun(request: FastifyRequest): string {
+/**
+ * Who reports the run: a person's place by its seat's token, anything else by the
+ * run's own token.
+ */
+async function requireRun(db: Db, request: FastifyRequest): Promise<RunReporter> {
   const token = bearerToken(request);
   if (!token) throw ended();
-  return hashSecret(token);
+  const tokenHash = hashSecret(token);
+  const [place] = await db
+    .select({ id: seats.id })
+    .from(seats)
+    .where(
+      and(
+        eq(seats.tokenHash, tokenHash),
+        eq(seats.kind, 'subscription-server'),
+        eq(seats.status, 'active'),
+      ),
+    );
+  return place ? { seatId: place.id } : { tokenHash };
 }

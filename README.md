@@ -190,10 +190,17 @@ Codex reads the token from `AGENTOME_TOKEN` in the environment it starts in.
 
 ## Quick start
 
-On a Linux or macOS machine with Docker Engine 25 or newer and the Compose plugin:
+On a Linux or macOS machine with Docker Engine 26 or newer and the Compose plugin:
 
 ```sh
 curl -fsSL https://agentome.ai/install.sh | sh
+```
+
+Or with the `agentome` program, which asks for the folder, the address and places on the way, and
+runs the server afterwards (`agentome status`, `update`, `backup`, `logs`):
+
+```sh
+npx agentome install
 ```
 
 The script puts `compose.yaml` into `./agentome`, pulls the images from Docker Hub

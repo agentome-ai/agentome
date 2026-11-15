@@ -16,6 +16,10 @@ export interface PushHead {
   readonly commands: PushCommand[];
   /** The capabilities the push asks for, by name: `object-format=sha256` is `object-format`. */
   readonly capabilities: string[];
+  /** The capabilities as the push wrote them after the NUL: what the proxy passes on. */
+  readonly capabilityText: string;
+  /** The `shallow` lines before the commands, by commit: a shallow clone's push names them. */
+  readonly shallow: string[];
   /** Where the commands end, flush included: what follows is the pack, passed on as it is. */
   readonly end: number;
 }
@@ -29,7 +33,9 @@ const COMMAND = /^([0-9a-f]{40}|[0-9a-f]{64}) ([0-9a-f]{40}|[0-9a-f]{64}) (refs\
  */
 export function parsePushHead(head: Buffer): PushHead | 'incomplete' | string {
   const commands: PushCommand[] = [];
+  const shallow: string[] = [];
   let capabilities: string[] = [];
+  let capabilityText = '';
   for (let at = 0; ;) {
     if (head.length < at + 4) return 'incomplete';
     const size = Number.parseInt(head.toString('latin1', at, at + 4), 16);
@@ -37,7 +43,9 @@ export function parsePushHead(head: Buffer): PushHead | 'incomplete' | string {
       return 'This is not a git push';
     }
     if (size === 0) {
-      return commands.length ? { commands, capabilities, end: at + 4 } : 'This push names no ref';
+      return commands.length
+        ? { commands, capabilities, capabilityText, shallow, end: at + 4 }
+        : 'This push names no ref';
     }
     if (head.length < at + size) return 'incomplete';
     let line = head.toString('utf8', at + 4, at + size).replace(/\n$/, '');
@@ -45,17 +53,23 @@ export function parsePushHead(head: Buffer): PushHead | 'incomplete' | string {
     if (commands.length === 0) {
       const nul = line.indexOf('\0');
       if (nul >= 0) {
+        capabilityText = line.slice(nul + 1);
         // As git reads them: a capability ends at any whitespace or at `=`, so `push-options=1`
         // and a tab before the word ask the host for the same as ` push-options`.
-        capabilities = line
-          .slice(nul + 1)
+        capabilities = capabilityText
           .split(/\s+/)
           .filter(Boolean)
           .map((capability) => capability.split('=', 1)[0] ?? '');
         line = line.slice(0, nul);
       }
     }
-    if (line.startsWith('shallow ')) continue;
+    if (line.startsWith('shallow ')) {
+      if (commands.length > 0 || !/^shallow [0-9a-f]{40}([0-9a-f]{24})?$/.test(line)) {
+        return 'This is not a git push';
+      }
+      shallow.push(line.slice('shallow '.length));
+      continue;
+    }
     if (line.startsWith('push-cert')) return 'Agentome does not pass signed pushes on';
     const match = COMMAND.exec(line);
     if (!match) return 'This is not a git push';
@@ -94,25 +108,30 @@ export function reportStatus(results: { ref: string; refusal?: string }[], capab
 }
 
 /**
- * The refs a host's report-status answer says it did not update (`ng <ref> <why>`), read from
- * band 1 when the client asked for side-band; undefined when the answer is not one the proxy
- * can read. An answer with no report in it refuses none: a push need not ask for a report, and
- * the host updates its refs all the same.
+ * The lines of a host's report-status answer, read from band 1 when the client asked for
+ * side-band; undefined when the answer is not one the proxy can read.
  */
-export function refusedRefs(answer: Buffer, capabilities: string[]): Set<string> | undefined {
+export function reportLines(answer: Buffer, capabilities: string[]): string[] | undefined {
   const sideband = capabilities.includes('side-band-64k') || capabilities.includes('side-band');
   const outer = payloads(answer);
   const report =
     sideband && outer
       ? payloads(Buffer.concat(outer.filter((p) => p[0] === 1).map((p) => p.subarray(1))))
       : outer;
-  if (!report) return undefined;
-  const refs = new Set<string>();
-  for (const line of report) {
-    const text = line.toString('utf8').replace(/\n$/, '');
-    if (text.startsWith('ng ')) refs.add(text.slice(3).split(' ', 1)[0] ?? '');
-  }
-  return refs;
+  return report?.map((line) => line.toString('utf8').replace(/\n$/, ''));
+}
+
+/**
+ * The refs a host's report-status answer says it did not update (`ng <ref> <why>`); undefined
+ * when the answer is not one the proxy can read. An answer with no report in it refuses none: a
+ * push need not ask for a report, and the host updates its refs all the same.
+ */
+export function refusedRefs(answer: Buffer, capabilities: string[]): Set<string> | undefined {
+  const lines = reportLines(answer, capabilities);
+  if (!lines) return undefined;
+  return new Set(
+    lines.filter((l) => l.startsWith('ng ')).map((l) => l.slice(3).split(' ', 1)[0] ?? ''),
+  );
 }
 
 /** What a run of pkt-lines carries, flush and delimiters left out; undefined if it is not one. */

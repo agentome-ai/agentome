@@ -1,4 +1,5 @@
 import type { ShippedLine } from './shipping.js';
+import type { RunServer } from './remote.js';
 import type { UsageRow } from '@agentome/costs';
 import type { ArtifactKind } from '@agentome/shared';
 
@@ -131,7 +132,7 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
 
 type Call = { token?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal };
 
-async function call(url: string, method: 'GET' | 'POST', options: Call) {
+async function call(url: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', options: Call) {
   const { token, body, timeoutMs = TIMEOUT_MS, signal } = options;
   const headers: Record<string, string> = { accept: 'application/json' };
   if (token !== undefined) headers.authorization = `Bearer ${token}`;
@@ -260,6 +261,35 @@ export function seatClient({ serverUrl, token }: Pick<Connection, 'serverUrl' | 
     async finish(id: string, runToken: string, body: FinishBody, signal?: AbortSignal) {
       await run(id, 'finish', { token: runToken, body, signal });
     },
+    /**
+     * A person's place reports its run by its own seat's token: the run's token is in
+     * the run's container, with the agent.
+     */
+    seatToken: token,
+    /** The server this computer was connected to: a run may reach it and nothing else. */
+    serverUrl,
+    /**
+     * Has the server make the run its own container in the place, with the agent's
+     * folder for the repository: `folders/<agent>/<repository>` of the seat volume. The services
+     * on Kubernetes start with it, so it may take minutes.
+     */
+    async startContainer(id: string, folder: string | undefined, signal?: AbortSignal) {
+      const answer = await call(
+        `${serverUrl}/api/runs/${encodeURIComponent(id)}/container`,
+        'PUT',
+        {
+          token,
+          body: folder === undefined ? {} : { folder },
+          timeoutMs: 16 * 60_000,
+          signal,
+        },
+      );
+      return runContainersOf(answer.body);
+    },
+    /** Deletes the run's container, with whatever still runs in it. */
+    async endContainer(id: string) {
+      await call(`${serverUrl}/api/runs/${encodeURIComponent(id)}/container`, 'DELETE', { token });
+    },
     /** The worker's own log lines, for Admin → Logs. */
     async logs(lines: ShippedLine[]) {
       await call(`${serverUrl}/api/seats/logs`, 'POST', { token, body: { lines } });
@@ -268,3 +298,47 @@ export function seatClient({ serverUrl, token }: Pick<Connection, 'serverUrl' | 
 }
 
 export type SeatClient = ReturnType<typeof seatClient>;
+
+/** Where a run's CLI container and sandbox serve, as the server says, and the CLI container's token. */
+export function runContainersOf(body: unknown): {
+  cli: RunServer;
+  sandbox: RunServer;
+  cliToken: string;
+  docker: boolean;
+} {
+  const said = body as
+    | {
+        cli?: Partial<RunServer>;
+        sandbox?: Partial<RunServer>;
+        cliToken?: unknown;
+        docker?: unknown;
+      }
+    | undefined;
+  const server = (given: Partial<RunServer> | undefined): RunServer => {
+    if (
+      typeof given?.host !== 'string' ||
+      typeof given.port !== 'number' ||
+      typeof given.key !== 'string'
+    ) {
+      throw new ServerError(
+        200,
+        undefined,
+        "The server did not say where the run's containers are.",
+      );
+    }
+    return { host: given.host, port: given.port, key: given.key };
+  };
+  if (typeof said?.cliToken !== 'string') {
+    throw new ServerError(
+      200,
+      undefined,
+      "The server did not give the run's CLI container its token.",
+    );
+  }
+  return {
+    cli: server(said.cli),
+    sandbox: server(said.sandbox),
+    cliToken: said.cliToken,
+    docker: said.docker === true,
+  };
+}

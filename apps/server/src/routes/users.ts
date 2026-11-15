@@ -16,7 +16,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { verifyPassword } from 'better-auth/crypto';
 import { z } from 'zod';
 import { transferAgentsOf } from '../agents/ownership.js';
-import { browserOnly } from '../auth.js';
+import { browserOnly, hasPassword } from '../auth.js';
 import { AppError, postgresCode } from '../errors.js';
 import { requestStop } from '../runs/service.js';
 import { Name } from './validators.js';
@@ -80,7 +80,10 @@ export async function insertUser(
   return created;
 }
 
-export const userRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }) => {
+export const userRoutes: FastifyPluginAsyncZod<{ db: Db; passwordSignIn: boolean }> = async (
+  app,
+  { db, passwordSignIn },
+) => {
   app.get(
     '/api/me',
     {
@@ -88,6 +91,29 @@ export const userRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db })
       schema: { summary: 'The signed-in person', response: { 200: User } },
     },
     async (request) => request.user,
+  );
+
+  // What the Account page shows of the second step: someone who signs in through Keycloak
+  // alone has Keycloak's, and nothing here to turn on.
+  app.get(
+    '/api/me/two-factor',
+    {
+      onRequest: app.requireSession,
+      schema: {
+        summary: "Whether the signed-in person's password sign-in asks for a code",
+        response: { 200: z.object({ available: z.boolean(), enabled: z.boolean() }) },
+      },
+    },
+    async (request) => {
+      const [me] = await db
+        .select({ enabled: users.twoFactorEnabled })
+        .from(users)
+        .where(eq(users.id, request.user.id));
+      return {
+        available: passwordSignIn && (await hasPassword(db, request.user.id)),
+        enabled: me?.enabled ?? false,
+      };
+    },
   );
 
   // The web app says the person is at work: a visible tab that has had input lately. Their place

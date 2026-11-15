@@ -22,7 +22,14 @@ see [deploy/OPERATIONS.md](deploy/OPERATIONS.md).
 - Everything runs on your servers; nothing reports home, and the license is checked offline.
 - An agent reaches your tools only through the server's MCP gateway, with a token that lives as
   long as its run. Tokens of GitLab, GitHub and Jira stay on the server: a computer never gets them.
-- `git push` goes through the server's git proxy, only to the agent's own branches.
+- On the company's server, an agent's commands run in a sandbox apart from the CLI and the
+  person's sign-in, under gVisor, with no way out but a proxy that lets each run reach only the
+  hosts its project allows.
+- `git push` goes through the server's git proxy, only to the agent's own branches; a push that
+  rewrites history or changes the CI configuration never reaches the branch.
 - Tool calls follow per-agent policies (allow, ask a person, deny); a call that asks waits for
   an approval.
 - Secrets are encrypted at rest with a key the server keeps in its data directory.
+
+The whole picture, with what Agentome does not protect, is in
+[docs/guide/security.md](docs/guide/security.md).

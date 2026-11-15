@@ -1,0 +1,64 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.agentome-ai/agentome",
+  "title": "Agentome",
+  "description": "Manage AI agents, teams, projects and tasks on your own self-hosted Agentome server.",
+  "version": "0.3.0",
+  "websiteUrl": "https://agentome.ai/docs/administration/#api-tokens-and-managing-agentome-from-claude-code-or-codex",
+  "repository": {
+    "url": "https://github.com/agentome-ai/agentome",
+    "source": "github",
+    "subfolder": "apps/cli"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://{host}/mcp/manage",
+      "variables": {
+        "host": {
+          "description": "Your Agentome server's address, such as agentome.example.com",
+          "isRequired": true
+        }
+      },
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "A personal token from API tokens in Agentome, which acts as you",
+          "value": "Bearer {token}",
+          "isRequired": true,
+          "isSecret": true,
+          "variables": {
+            "token": {
+              "description": "A personal token from API tokens in Agentome",
+              "isRequired": true,
+              "isSecret": true
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "agentome",
+      "version": "0.3.0",
+      "transport": { "type": "stdio" },
+      "packageArguments": [{ "type": "positional", "value": "mcp" }],
+      "environmentVariables": [
+        {
+          "name": "AGENTOME_URL",
+          "description": "Your Agentome server's address, such as https://agentome.example.com",
+          "isRequired": true
+        },
+        {
+          "name": "AGENTOME_TOKEN",
+          "description": "A personal token from API tokens in Agentome, which acts as you",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 import { tagLog } from '../logs/context.js';
 import { span, spanUrl } from '../logs/span.js';
+import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { and, type Db, eq, runs, tasks } from '@agentome/db';
@@ -18,16 +19,15 @@ import {
   parsePushHead,
   pkt,
   type PushCommand,
-  type PushHead,
-  refusedRefs,
+  reportLines,
   reportStatus,
 } from './pktline.js';
 import { taskRepository } from '../tasks/repository.js';
 
 // The git proxy: smart HTTP for the run's own repository, with the run's git password
 // in front and the connection's token behind. Fetches pass through as bytes; a push is read up
-// to its commands, held to agent/* without deletes, and checked for rewritten history once the
-// host has its commits.
+// to its commands, held to agent/* without deletes, landed on refs of the proxy's own, and
+// moved onto its branch only when it keeps the branch's history and the CI configuration.
 
 const SERVICES = new Set(['git-upload-pack', 'git-receive-pack']);
 const PATH = /^(.+)\.git\/(info\/refs|git-upload-pack|git-receive-pack)$/;
@@ -173,9 +173,27 @@ export const gitRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async (
         return report(reply, reportStatus(results, capabilities));
       }
 
+      // The push lands on refs of the proxy's own first, which no pipeline runs on; the branch
+      // moves to it only once its history and its CI configuration are checked. A branch never
+      // holds a commit that failed, so no pipeline starts on one.
+      const id = randomUUID();
+      const zero = '0'.repeat(push.commands[0]?.old.length ?? 40);
+      const held = push.commands.map((_command, i) => `refs/agentome/${id}/${String(i)}`);
+      // A report is what tells which of the held refs the host took.
+      const asked = push.capabilityText.trim();
+      const passed = push.capabilities.includes('report-status')
+        ? asked
+        : `${asked} report-status`.trim();
+      const lines = [
+        ...push.shallow.map((sha) => pkt(`shallow ${sha}\n`)),
+        ...push.commands.map((command, i) =>
+          pkt(`${zero} ${command.new} ${held[i] ?? ''}${i === 0 ? `\0${passed}` : ''}\n`),
+        ),
+        FLUSH,
+      ];
       const rest = Readable.from(
         (async function* () {
-          yield head;
+          yield Buffer.concat([...lines, head.subarray(push.end)]);
           for (let next = await chunks.next(); !next.done; next = await chunks.next())
             yield next.value;
         })(),
@@ -188,50 +206,109 @@ export const gitRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async (
         signal,
       });
       const answer = await readAll(response);
-      const rewritten = await rewrites(remote, push, answer, request);
-      if (rewritten.length === 0) return report(reply, answer);
-
-      const restored = await rollback(remote, rewritten).catch((error: unknown) => {
-        request.log.error({ err: error }, 'the git proxy could not put a rewritten branch back');
-        return rewritten.map(() => false);
-      });
-      const results = push.commands.map((command) => {
-        const i = rewritten.indexOf(command);
-        if (i < 0) return { ref: command.ref };
-        return {
-          ref: command.ref,
-          refusal: restored[i]
-            ? 'rewrites history: Agentome put the branch back; fetch, rebase onto it and push again'
-            : "rewrites history, and Agentome could not put the branch back; tell the agent's owner",
-        };
-      });
-      return report(reply, reportStatus(results, capabilities));
+      const took = tookRefs(answer, held, [...push.capabilities, 'report-status']);
+      const each = await Promise.all(
+        push.commands.map((command, i) =>
+          took[i]
+            ? checkPush(remote, command, request)
+            : Promise.resolve(took.refusal ?? 'not pushed: the code host refused it'),
+        ),
+      );
+      // An atomic push moves all its branches or none.
+      const checked =
+        push.capabilities.includes('atomic') && each.some(Boolean)
+          ? each.map((why) => why ?? 'not pushed: another ref in this atomic push was refused')
+          : each;
+      const moved = await move(remote, push.commands, held, took, checked).catch(
+        (error: unknown) => {
+          request.log.error({ err: error }, 'the git proxy could not move a checked branch');
+          return push.commands.map(() => false);
+        },
+      );
+      const results = push.commands.map((command, i) => ({
+        ref: command.ref,
+        refusal:
+          checked[i] ??
+          (moved[i] ? undefined : 'not pushed: the branch moved meanwhile; fetch and push again'),
+      }));
+      return report(reply, reportStatus(results, push.capabilities));
     },
   );
 
-  /** The updates the host took that do not keep the branch's history: those to put back. */
-  async function rewrites(remote: Remote, push: PushHead, answer: Buffer, request: FastifyRequest) {
-    // Only the host's own refusal clears a ref. One it says nothing of may have been updated:
-    // a push that asks for no report gets none, and its refs move all the same.
-    const refused = refusedRefs(answer, push.capabilities);
-    const found: PushCommand[] = [];
-    for (const command of push.commands.filter((c) => !isZero(c.old) && !refused?.has(c.ref))) {
-      const kept = await remote.host
-        .isAncestor(remote.path, command.old, command.new)
-        .catch((error: unknown) => {
-          // Unchecked is not kept: the branch goes back, and the agent pushes again. Unrelated
-          // histories land here too: the hosts answer 404 for two commits with no merge base.
-          request.log.warn(
-            { err: error },
-            'the git proxy could not check a push for rewritten history',
-          );
-          return false;
-        });
-      if (!kept) found.push(command);
+  /** Why a command the host holds may not move its branch, or nothing. */
+  async function checkPush(remote: Remote, command: PushCommand, request: FastifyRequest) {
+    try {
+      if (!isZero(command.old)) {
+        // Unrelated histories land in the refusal too: the hosts answer 404 for two commits with
+        // no merge base.
+        const kept = await remote.host
+          .isAncestor(remote.path, command.old, command.new)
+          .catch(() => false);
+        if (!kept) return 'rewrites history: fetch, rebase onto the branch and push again';
+      }
+      // As the default branch has it now: the configuration a person keeps, not an older one
+      // the agent's branch may have started from.
+      const main = (await remote.host.repository(remote.web)).defaultBranch;
+      if (await remote.host.pipelineDiffers(remote.path, main, command.new)) {
+        return `leaves the CI configuration other than ${main} has it, which an agent's push may not: rebase onto ${main} if it changed there, or say in the change request what a person should change`;
+      }
+      return undefined;
+    } catch (error) {
+      request.log.warn({ err: error }, 'the git proxy could not check a push');
+      return 'Agentome could not check this push with the code host; push again';
     }
-    return found;
   }
 };
+
+/** Which of the held refs the host's report says it took; none when it sent no report. */
+function tookRefs(answer: Buffer, held: string[], capabilities: string[]) {
+  const lines = reportLines(answer, capabilities) ?? [];
+  const took = held.map((ref) => lines.includes(`ok ${ref}`));
+  // The host's own words for a refused ref, such as GitHub's for a workflow pushed without the
+  // permission: git prints them to the agent.
+  const said = lines
+    .find((line) => line.startsWith('ng refs/agentome/'))
+    ?.split(' ')
+    .slice(2)
+    .join(' ')
+    .replace(/[^\x20-\x7e]/g, '?')
+    .slice(0, 200);
+  return Object.assign(took, { refusal: said ? `not pushed: ${said}` : undefined });
+}
+
+/**
+ * Moves each checked branch to the commit its held ref holds, and deletes every held ref the
+ * host took: an empty pack, since the host has the commits. Whether each branch moved.
+ */
+async function move(
+  remote: Remote,
+  commands: PushCommand[],
+  held: string[],
+  took: boolean[],
+  checked: (string | undefined)[],
+) {
+  const sha256 = (commands[0]?.old.length ?? 40) === 64;
+  const zero = '0'.repeat(sha256 ? 64 : 40);
+  const updates = [
+    ...commands.flatMap((c, i) => (took[i] && !checked[i] ? [`${c.old} ${c.new} ${c.ref}`] : [])),
+    ...commands.flatMap((c, i) => (took[i] ? [`${c.new} ${zero} ${held[i] ?? ''}`] : [])),
+  ];
+  if (updates.length === 0) return commands.map(() => false);
+  const capabilities = ['report-status', ...(sha256 ? ['object-format=sha256'] : [])].join(' ');
+  const lines = updates.map((line, i) => pkt(`${line}${i === 0 ? `\0${capabilities}` : ''}\n`));
+  const response = await upstream(remote, 'git-receive-pack', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-git-receive-pack-request',
+      accept: 'application/x-git-receive-pack-result',
+      // Our own name: the client's could carry a character that stops the request being sent.
+      'user-agent': 'git/agentome',
+    },
+    body: Buffer.concat([...lines, FLUSH, emptyPack(sha256)]),
+  });
+  const said = (await readAll(response)).toString('utf8');
+  return commands.map((c, i) => took[i] === true && !checked[i] && said.includes(`ok ${c.ref}\n`));
+}
 
 /** What git's own client asks of a host with a push, push options aside (send-pack.c). */
 const PASSED_ON = new Set([
@@ -277,27 +354,6 @@ function drain(chunks: AsyncIterator<Buffer>, request: FastifyRequest) {
   void (async () => {
     for (let next = await chunks.next(); !next.done; next = await chunks.next());
   })().catch((error: unknown) => request.log.debug({ err: error }, 'a refused push hung up'));
-}
-
-/** Puts rewritten branches back where they were: an empty pack, since the host has the commits. */
-async function rollback(remote: Remote, commands: PushCommand[]) {
-  const sha256 = (commands[0]?.old.length ?? 40) === 64;
-  const capabilities = ['report-status', ...(sha256 ? ['object-format=sha256'] : [])].join(' ');
-  const lines = commands.map((c, i) =>
-    pkt(`${c.new} ${c.old} ${c.ref}${i === 0 ? `\0${capabilities}` : ''}\n`),
-  );
-  const response = await upstream(remote, 'git-receive-pack', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/x-git-receive-pack-request',
-      accept: 'application/x-git-receive-pack-result',
-      // Our own name: the client's could carry a character that stops the request being sent.
-      'user-agent': 'git/agentome',
-    },
-    body: Buffer.concat([...lines, FLUSH, emptyPack(sha256)]),
-  });
-  const said = (await readAll(response)).toString('utf8');
-  return commands.map((c) => said.includes(`ok ${c.ref}\n`));
 }
 
 /** One request to the host with the connection's token; its refusals in words git prints. */

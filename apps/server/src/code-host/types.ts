@@ -106,6 +106,13 @@ export interface CodeHost {
   /** Whether `older` is an ancestor of `newer`: the git proxy refuses a push that is not. */
   isAncestor(repository: string, older: string, newer: string): Promise<boolean>;
   /**
+   * Whether the pipeline of commit `head` would run another configuration than branch `base`
+   * keeps: on GitLab its CI file and every file of this repository it includes, child pipelines'
+   * too; on GitHub the `.github` folder and the local actions its workflows use. True also when
+   * the host lists more than can be read. The git proxy refuses an agent's push it is true for.
+   */
+  pipelineDiffers(repository: string, base: string, head: string): Promise<boolean>;
+  /**
    * A webhook body the route has verified, by the event its header named: null for an event
    * this platform does nothing with, or a body without what it needs.
    */

@@ -21,7 +21,13 @@ import { loadConfig } from '../src/config.js';
 import { connectionsKey, decryptSecret } from '../src/connections/crypto.js';
 import { jqlDate, pollConnection, pollDue } from '../src/jira/poll.js';
 import { pushToJira, tellJira } from '../src/jira/push.js';
-import { licenseEnterprise, projectOfAgent, setupCodeIn } from './app.js';
+import {
+  fakeRegistry,
+  licenseEnterprise,
+  projectOfAgent,
+  secondStepForAdmins,
+  setupCodeIn,
+} from './app.js';
 
 // Projects and connections against the real server and database: the
 // token is encrypted at rest and never answered, connections are the administrator's, and a
@@ -58,6 +64,8 @@ type Connection = {
   lastTestedAt: string | null;
 };
 
+// Tags pushed again, by their manifest's path: a test moves one.
+const moved: Record<string, string> = {};
 const TOKEN = 'github_pat_11AAAAAAA0secretsecretsecretsecret';
 
 beforeAll(async () => {
@@ -70,7 +78,7 @@ beforeAll(async () => {
     AGENTOME_LOG_LEVEL: 'silent',
     AGENTOME_PUBLIC_URL: 'https://agentome.example.com',
   });
-  app = await buildApp(config);
+  app = await buildApp(config, { registryFetch: fakeRegistry(moved) });
   db = createDb(container.getConnectionUri(), () => {});
   const setup = await app.inject({
     method: 'POST',
@@ -81,6 +89,7 @@ beforeAll(async () => {
       admin: { name: 'Ann Admin', email: 'admin@example.com', password: 'the admin password' },
     },
   });
+  await secondStepForAdmins(container.getConnectionUri());
   await licenseEnterprise(db);
   admin = { ...setup.json<Omit<Person, 'cookie'>>(), cookie: cookieOf(setup) };
   maria = await person('maria');
@@ -138,6 +147,12 @@ async function connect(projectId: string, config: object, token = TOKEN): Promis
   expect(response.statusCode).toBe(201);
   expect(response.body).not.toContain(token);
   return response.json<Connection>();
+}
+
+/** The project's repositories, which its connections give credentials for. */
+async function list(projectId: string, ...repositories: string[]) {
+  const response = await call(admin, 'PATCH', `/api/projects/${projectId}`, { repositories });
+  expect(response.statusCode).toBe(200);
 }
 
 /** A host that answers `GET /user` as GitHub does, or as told. */
@@ -432,9 +447,10 @@ describe('projects', () => {
       approved: boolean;
     };
     const read = set.json<{ environment: Environment }>().environment;
+    // Pinned to the digest its tag pointed at when it was read: what the admin approves.
     expect(read).toMatchObject({
       devcontainer: '.devcontainer/devcontainer.json',
-      services: [{ name: 'db', image: 'postgres:16' }],
+      services: [{ name: 'db', image: expect.stringMatching(/^postgres:16@sha256:[a-f0-9]{64}$/) }],
       problems: [],
       approved: false,
     });
@@ -453,11 +469,25 @@ describe('projects', () => {
       hash: read.hash,
     });
     expect(approved.json<{ environment: Environment }>().environment.approved).toBe(true);
-    // Another image in the repository needs approval again; the same list keeps it.
-    files.compose = 'services:\n  db:\n    image: postgres:17\n';
+    const same = await call(admin, 'POST', `/api/projects/${id}/environment`);
+    expect(same.json<{ environment: Environment }>().environment.approved).toBe(true);
+    // The tag pushed again: the same words, other bytes, approved again.
+    moved['/v2/library/postgres/manifests/16'] = `sha256:${'a'.repeat(64)}`;
+    const pushed = await call(admin, 'POST', `/api/projects/${id}/environment`);
+    expect(pushed.json<{ environment: Environment }>().environment).toMatchObject({
+      services: [{ name: 'db', image: `postgres:16@sha256:${'a'.repeat(64)}` }],
+      approved: false,
+    });
+    // Another image in the repository needs approval again; one from a registry the
+    // installation does not pull from is left out.
+    files.compose =
+      'services:\n  db:\n    image: postgres:17\n  cache:\n    image: registry.acme.internal/redis:7\n';
     const changed = await call(admin, 'POST', `/api/projects/${id}/environment`);
     expect(changed.json<{ environment: Environment }>().environment).toMatchObject({
-      services: [{ name: 'db', image: 'postgres:17' }],
+      services: [{ name: 'db', image: expect.stringMatching(/^postgres:17@sha256:/) }],
+      problems: [
+        expect.stringMatching(/^cache: left out, its image is from registry\.acme\.internal/),
+      ],
       approved: false,
     });
     expect(asked).toContain('/repos/acme/shop/git/trees/main');
@@ -769,6 +799,7 @@ describe("an agent's own token", () => {
       name: 'Payments bot',
     });
     expect(shared).toMatchObject({ agent: null });
+    await list(projectId, 'https://github.com/acme/api');
 
     const resolved = async (agentId: string) => {
       const response = await call(maria, 'POST', '/api/tasks', {
@@ -805,6 +836,7 @@ describe("an agent's own token", () => {
       config: { kind: 'gitlab', baseUrl: base, group: 'acme' },
       token: TOKEN,
     });
+    await list(projectId, `${base}/acme/platform/api`);
     const task = await call(maria, 'POST', '/api/tasks', {
       agentId: agent,
       projectId: await projectOfAgent(db, agent),
@@ -881,6 +913,12 @@ describe("a task's connection", () => {
       group: 'acme/platform',
     });
 
+    await list(
+      projectId,
+      'https://github.com/acme/api',
+      'https://gitlab.example.com/acme/platform/billing/api',
+    );
+
     // Not on the project yet: the URL matches a connection the agent cannot reach.
     expect(await taskWith(agent, 'https://github.com/acme/api')).toBeNull();
     await call(admin, 'PUT', `/api/projects/${projectId}/agents/${agent}`);
@@ -894,12 +932,44 @@ describe("a task's connection", () => {
       expected(gitlab.id, 'gitlab'),
     );
     expect(await taskWith(agent, 'https://gitlab.example.com/acme/other/api')).toBeNull();
+    // Under the connection but not in the project's list: no credentials for it.
+    expect(await taskWith(agent, 'https://github.com/acme/payroll')).toBeNull();
+    // An escaped slash or a dot segment the host would decode into another repository.
+    expect(await taskWith(agent, 'https://github.com/acme/..%2fother/api')).toBeNull();
+    expect(
+      await taskWith(agent, 'https://gitlab.example.com/acme/platform/billing/api%2f..'),
+    ).toBeNull();
     // The owner's repositories are not the organization's.
     expect(await taskWith(agent, 'https://github.com/octocat/api')).toBeNull();
     // A path on the computer, no repository, or a URL with no namespace in it.
     expect(await taskWith(agent, '~/code/test-repo')).toBeNull();
     expect(await taskWith(agent, null)).toBeNull();
     expect(await taskWith(agent, 'https://github.com/api')).toBeNull();
+  });
+
+  it("is refused for a repository of the project's connection that its list leaves out", async () => {
+    const agent = await agentOf(maria, 'Unlisted');
+    const { id: projectId } = await project('Listed');
+    await connect(projectId, { kind: 'github', owner: 'acme' });
+    await list(projectId, 'https://github.com/acme/api');
+    await call(admin, 'PUT', `/api/projects/${projectId}/agents/${agent}`);
+    const task = (repository: string) =>
+      call(maria, 'POST', '/api/tasks', {
+        agentId: agent,
+        projectId,
+        title: 'Add',
+        repository,
+        run: false,
+      });
+
+    const refused = await task('https://github.com/acme/payroll');
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({
+      error: { message: /is not one of this project's repositories/ },
+    });
+    expect((await task('https://github.com/acme/api.git')).statusCode).toBe(201);
+    // Not under a connection of the project: cloned as it is, without credentials.
+    expect((await task('https://github.com/octocat/hello')).statusCode).toBe(201);
   });
 });
 
