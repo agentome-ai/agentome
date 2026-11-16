@@ -1,5 +1,5 @@
 import { Ellipsis } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { LiHTMLAttributes, ReactNode } from 'react';
 import { Button } from './button';
 import { cn } from './cn';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from './dropdown-menu';
@@ -18,9 +18,17 @@ export function Row(props: {
   action?: ReactNode;
   /** What the "…" acts on, for its name: "Actions for Developer". */
   what: string;
+  /** The row's own handlers and look, where it may be dragged to another place in its list. */
+  item?: LiHTMLAttributes<HTMLLIElement>;
 }) {
   return (
-    <li className="group -mx-2 grid min-h-11 grid-cols-[20px_minmax(0,14rem)_minmax(0,1fr)_auto_28px] items-center gap-x-2.5 border-b border-line px-2 py-1.5 hover:bg-hover max-md:grid-cols-[20px_minmax(0,1fr)_auto_28px] max-md:gap-y-0.5">
+    <li
+      {...props.item}
+      className={cn(
+        'group -mx-2 grid min-h-11 grid-cols-[20px_minmax(0,14rem)_minmax(0,1fr)_auto_28px] items-center gap-x-2.5 border-b border-line px-2 py-1.5 hover:bg-hover max-md:grid-cols-[20px_minmax(0,1fr)_auto_28px] max-md:gap-y-0.5',
+        props.item?.className,
+      )}
+    >
       {props.lead}
       {/* Without a detail the name takes its column too: a repository's URL is long. */}
       <span className={cn('flex min-w-0', props.detail === undefined && 'md:col-span-2')}>

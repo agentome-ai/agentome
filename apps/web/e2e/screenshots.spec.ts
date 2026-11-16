@@ -525,6 +525,11 @@ for (const theme of ['light', 'dark'] as const) {
       await page.goto('/teams?view=list');
       await page.getByRole('link', { name: 'Refunds delivery' }).waitFor();
       await shoot(page, `teams-${theme}-${size.width}`);
+      await page.getByRole('button', { name: 'New team' }).click();
+      await page.getByRole('radio', { name: 'Development team' }).click();
+      await settle(page);
+      await shoot(page, `team-new-${theme}-${size.width}`);
+      await page.keyboard.press('Escape');
       await page.goto('/teams/t1');
       await page.getByRole('group', { name: 'Agents of step 2' }).waitFor();
       await shoot(page, `team-${theme}-${size.width}`);
@@ -922,7 +927,10 @@ for (const theme of ['light', 'dark'] as const) {
     await page.waitForTimeout(300);
     await shoot(page, `project-network-${theme}-1280`);
     await page.getByRole('button', { name: 'Add host' }).click();
-    await page.getByRole('dialog', { name: 'Add a host' }).getByLabel('Host', { exact: true }).fill('nexus.northfold.dev:8443');
+    await page
+      .getByRole('dialog', { name: 'Add a host' })
+      .getByLabel('Host', { exact: true })
+      .fill('nexus.northfold.dev:8443');
     await settle(page);
     await shoot(page, `project-network-add-${theme}-1280`);
   });

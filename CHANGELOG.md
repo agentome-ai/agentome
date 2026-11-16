@@ -6,6 +6,15 @@ What changed in each release of Agentome. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The site, the README and the guide link the npm package, the MCP Registry record and the n8n node, and show `npx agentome install` as a second way to install.
+- New team can start from the Development team template: it creates a Development lead, a new role template, with Backend developer, Frontend developer, Code reviewer and QA engineer, in three steps: build, review and test. The five agents fit Free.
+
+### Changed
+
+- A team's members can be put in another order on its page, from a member's menu or by dragging; the chart and the lists show that order. The project and team pages are as wide as the rest of the app.
+
 ## [0.3.0] - 2026-11-16
 
 A run on your server now keeps the person's subscription apart from the agent's commands. Each run

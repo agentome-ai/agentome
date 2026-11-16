@@ -280,6 +280,8 @@ describe('the management MCP', () => {
         'list_teams',
         'get_team',
         'create_team',
+        'list_team_templates',
+        'create_team_from_template',
         'update_team',
         'duplicate_team',
         'remove_team',

@@ -72,6 +72,8 @@ const TOOLS: Record<string, { name: string; readOnly: boolean }> = {
   'GET /api/teams': { name: 'list_teams', readOnly: true },
   'GET /api/teams/:id': { name: 'get_team', readOnly: true },
   'POST /api/teams': { name: 'create_team', readOnly: false },
+  'GET /api/teams/templates': { name: 'list_team_templates', readOnly: true },
+  'POST /api/teams/from-template': { name: 'create_team_from_template', readOnly: false },
   'PATCH /api/teams/:id': { name: 'update_team', readOnly: false },
   'POST /api/teams/:id/duplicate': { name: 'duplicate_team', readOnly: false },
   'DELETE /api/teams/:id': { name: 'remove_team', readOnly: false },

@@ -11,6 +11,7 @@ how to connect each one, and what agents can and cannot do through it.
 - [MCP servers in the Library](#mcp-servers-in-the-library)
 - [Model connections](#model-connections)
 - [Sign-in with Keycloak](#sign-in-with-keycloak)
+- [n8n](#n8n)
 
 ## How agents reach your systems
 
@@ -326,3 +327,17 @@ Once it is on:
 - Sign-in with a password stays, so an admin can still get in when Keycloak is down.
 
 Without a license key, people sign in with their passwords.
+
+## n8n
+
+The community node [n8n-nodes-agentome](https://github.com/agentome-ai/n8n-nodes-agentome) lets an
+n8n workflow give an agent a task when something happens elsewhere, wait for its result, decide what
+the agent asks to approve, and start when a run ends or an approval waits.
+
+1. In n8n, open **Settings → Community nodes → Install**, enter `n8n-nodes-agentome` and confirm.
+2. In Agentome, make a personal API token: open the menu under your name and choose **API tokens**.
+   The nodes act as you; a **Read only** token can only read.
+3. In n8n, add an **Agentome API** credential with your server's address and the token.
+
+The node's [README](https://github.com/agentome-ai/n8n-nodes-agentome#readme) lists its
+operations.

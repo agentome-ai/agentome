@@ -17,6 +17,8 @@
 <p align="center">
   <a href="https://github.com/agentome-ai/agentome/releases"><img src="https://img.shields.io/github/v/release/agentome-ai/agentome?label=release&color=111827" alt="Latest release"></a>
   <a href="https://hub.docker.com/r/agentome/agentome"><img src="https://img.shields.io/docker/pulls/agentome/agentome?color=111827" alt="Docker pulls"></a>
+  <a href="https://www.npmjs.com/package/agentome"><img src="https://img.shields.io/npm/v/agentome?label=npm&color=111827" alt="npm package"></a>
+  <a href="https://registry.modelcontextprotocol.io/v0/servers/io.github.agentome-ai%2Fagentome/versions/latest"><img src="https://img.shields.io/badge/MCP%20Registry-io.github.agentome--ai%2Fagentome-111827" alt="In the MCP Registry"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Elastic%202.0-111827" alt="License: Elastic License 2.0"></a>
 </p>
 
@@ -184,6 +186,21 @@ codex mcp add agentome --url https://<your server>/mcp/manage --bearer-token-env
 
 Codex reads the token from `AGENTOME_TOKEN` in the environment it starts in.
 
+A client that starts a program, such as Claude Desktop, runs the
+[`agentome`](https://www.npmjs.com/package/agentome) package from npm, which is also in the
+[MCP Registry](https://registry.modelcontextprotocol.io/v0/servers/io.github.agentome-ai%2Fagentome/versions/latest)
+as `io.github.agentome-ai/agentome`:
+
+```sh
+AGENTOME_URL=https://<your server> AGENTOME_TOKEN=<token> npx -y agentome mcp
+```
+
+### Drive it from n8n
+
+The community node [n8n-nodes-agentome](https://github.com/agentome-ai/n8n-nodes-agentome) gives an
+agent a task from a workflow, waits for its result, decides its approvals, and starts a workflow
+when a run ends or an approval waits. Install it in n8n under Settings → Community nodes.
+
 <p align="center">
   <img src="docs/img/dashboard-dark.jpg" alt="The dashboard: agents at work, steps that wait for a person, projects with their week of runs and cost, work ready for review and runs that failed." width="900">
 </p>
@@ -196,8 +213,9 @@ On a Linux or macOS machine with Docker Engine 26 or newer and the Compose plugi
 curl -fsSL https://agentome.ai/install.sh | sh
 ```
 
-Or with the `agentome` program, which asks for the folder, the address and places on the way, and
-runs the server afterwards (`agentome status`, `update`, `backup`, `logs`):
+Or with the `agentome` program on npm, which asks for the folder, the address and places on the way,
+and runs the server afterwards (`agentome status`, `update`, `backup`, `logs`). It does not turn
+gVisor on for places: for a server with places, use the script.
 
 ```sh
 npx agentome install

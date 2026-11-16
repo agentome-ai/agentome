@@ -332,8 +332,10 @@ the server to `claude_desktop_config.json`:
 ```
 
 Restart Claude Desktop. The token is kept in that file, so revoke it if the file leaks. Agentome is
-also listed in the MCP Registry as `io.github.agentome-ai/agentome`, for clients that install
-servers from there.
+also listed in the
+[MCP Registry](https://registry.modelcontextprotocol.io/v0/servers/io.github.agentome-ai%2Fagentome/versions/latest)
+as `io.github.agentome-ai/agentome`, for clients that install servers from there. To drive Agentome
+from n8n workflows, see [n8n](integrations.md#n8n).
 
 ### What it can do
 

@@ -1,18 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { type ApiError, api, asApiError, fieldErrors } from '../api';
 import { useAgents } from '../agents/agents-data';
 import { ApiErrorState, useMe } from '../session';
 import { frame, PageHeader } from '../shell/page-header';
-import { EmptyState, LoadingState } from '../shell/states';
+import { EmptyState, ErrorState, LoadingState } from '../shell/states';
 import { Button } from '../ui/button';
 import { cn } from '../ui/cn';
 import { Combobox } from '../ui/combobox';
 import * as D from '../ui/dialog';
 import { Field, FormError } from '../ui/field';
 import { Input } from '../ui/input';
+import { RadioGroup, RadioGroupItem } from '../ui/radio-group';
 import { Table, TableCell, TableHead, TableRow } from '../ui/table';
-import { agentLabel, modeLabel, type TeamSummary } from './teams-data';
+import { agentLabel, modeLabel, type TeamSummary, type TeamTemplate } from './teams-data';
 import { Tint } from '../ui/tint';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { OrgChart } from './org-chart';
@@ -142,13 +143,25 @@ export function TeamsPage() {
   );
 }
 
-/** New team: a name and its lead now; members on the page it opens. */
+/** The choice that starts a team from the person's own agents rather than a template. */
+const OWN = '';
+
+/**
+ * New team: from a team template, which creates its agents too, or from the person's own
+ * agents: a name and its lead now, members on the page it opens. From an agent's page, the
+ * agent is the lead and no template is offered.
+ */
 export function NewTeamDialog(props: { leadId?: string; trigger?: React.ReactNode }) {
   const me = useMe();
   const navigate = useNavigate();
-  const { agents } = useAgents();
+  const ids = useId();
+  const { agents, reload } = useAgents();
   const [open, setOpen] = useState(false);
+  const [templates, setTemplates] = useState<TeamTemplate[] | ApiError>();
+  const [attempt, setAttempt] = useState(0);
+  const [choice, setChoice] = useState(OWN);
   const [name, setName] = useState('');
+  const [typed, setTyped] = useState(false);
   const [leadId, setLeadId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApiError>();
@@ -158,17 +171,50 @@ export function NewTeamDialog(props: { leadId?: string; trigger?: React.ReactNod
       value: agent.id,
       label: agentLabel(agent),
     }));
+  const offerTemplates = !props.leadId;
+  const template = Array.isArray(templates)
+    ? templates.find((item) => item.name === choice)
+    : undefined;
+
+  useEffect(() => {
+    if (!open || !offerTemplates) return;
+    let current = true;
+    setTemplates(undefined);
+    api<{ templates: TeamTemplate[] }>('/api/teams/templates').then(
+      (data) => {
+        if (!current) return;
+        setTemplates(data.templates);
+        // Someone without agents yet starts from the template; someone with them, from theirs.
+        const first = data.templates[0];
+        if (first && leads.length === 0) choose(first.name);
+      },
+      (caught: unknown) => current && setTemplates(asApiError(caught)),
+    );
+    return () => {
+      current = false;
+    };
+    // Loaded once per opening: a change in the agents list does not reload it.
+  }, [open, attempt, offerTemplates]);
+
+  function choose(next: string) {
+    setChoice(next);
+    setError(undefined);
+    if (!typed) setName(next === OWN ? '' : next);
+  }
 
   async function create(event: React.FormEvent) {
     event.preventDefault();
-    if (!leadId) return;
+    if (!template && !leadId) return;
     setPending(true);
     setError(undefined);
     try {
-      const team = await api<TeamSummary>('/api/teams', {
-        method: 'POST',
-        body: { name, leadId },
-      });
+      const team = template
+        ? await api<TeamSummary>('/api/teams/from-template', {
+            method: 'POST',
+            body: { template: template.name, name },
+          })
+        : await api<TeamSummary>('/api/teams', { method: 'POST', body: { name, leadId } });
+      if (template) void reload();
       setOpen(false);
       await navigate(`/teams/${team.id}`);
     } catch (caught) {
@@ -178,6 +224,24 @@ export function NewTeamDialog(props: { leadId?: string; trigger?: React.ReactNod
     }
   }
 
+  const options = [
+    ...(Array.isArray(templates) ? templates : []).map((item) => {
+      const roles = [item.lead, ...item.members];
+      return {
+        name: item.name,
+        title: item.name,
+        text: item.description,
+        detail: `Creates ${roles.length} agents: ${roles.join(', ')}.`,
+      };
+    }),
+    {
+      name: OWN,
+      title: 'Your agents',
+      text: "Pick one of your agents to lead, then add members on the team's page.",
+      detail: '',
+    },
+  ];
+
   return (
     <D.Dialog
       open={open}
@@ -186,6 +250,8 @@ export function NewTeamDialog(props: { leadId?: string; trigger?: React.ReactNod
         if (next) {
           const lead = agents.find((agent) => agent.id === props.leadId);
           setName(lead ? `${lead.name} team` : '');
+          setTyped(false);
+          setChoice(OWN);
           setLeadId(props.leadId ?? null);
           setError(undefined);
         }
@@ -202,30 +268,78 @@ export function NewTeamDialog(props: { leadId?: string; trigger?: React.ReactNod
             team at most.
           </D.DialogDescription>
           <div className="grid gap-4 py-4">
+            {offerTemplates &&
+              (templates === undefined ? (
+                <p role="status" className="py-2 text-ink-2">
+                  Loading templates…
+                </p>
+              ) : !Array.isArray(templates) ? (
+                <ErrorState
+                  title="Couldn't load team templates"
+                  onRetry={() => setAttempt((n) => n + 1)}
+                >
+                  {templates.message}
+                </ErrorState>
+              ) : (
+                <RadioGroup
+                  value={choice}
+                  onValueChange={choose}
+                  aria-label="Start from"
+                  className="-mx-2.5 grid gap-px"
+                >
+                  {options.map((option, index) => (
+                    <label
+                      key={option.name}
+                      className="flex cursor-pointer items-start gap-3 rounded-md px-2.5 py-2 hover:bg-hover has-data-[state=checked]:bg-selected"
+                    >
+                      <RadioGroupItem
+                        value={option.name}
+                        className="mt-0.5"
+                        aria-labelledby={`${ids}-${index}`}
+                        aria-describedby={`${ids}-${index}-text`}
+                      />
+                      <span>
+                        <span id={`${ids}-${index}`} className="block font-medium">
+                          {option.title}
+                        </span>
+                        <span id={`${ids}-${index}-text`} className="text-ink-2">
+                          {option.text}
+                          {option.detail && <span className="mt-1 block">{option.detail}</span>}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </RadioGroup>
+              ))}
             <Field label="Name" error={error && fieldErrors(error).name}>
               {(control) => (
                 <Input
                   {...control}
-                  autoFocus
+                  autoFocus={!offerTemplates}
                   value={name}
                   maxLength={100}
-                  onChange={(event) => setName(event.target.value)}
+                  onChange={(event) => {
+                    setName(event.target.value);
+                    setTyped(true);
+                  }}
                 />
               )}
             </Field>
-            <Field label="Lead" hint="One of your agents. Its runs are where the team works.">
-              {(control) => (
-                <Combobox
-                  id={control.id}
-                  value={leadId}
-                  options={leads}
-                  placeholder="Pick an agent"
-                  searchPlaceholder="Search agents"
-                  emptyText="You have no active agent yet"
-                  onValueChange={setLeadId}
-                />
-              )}
-            </Field>
+            {!template && (
+              <Field label="Lead" hint="One of your agents. Its runs are where the team works.">
+                {(control) => (
+                  <Combobox
+                    id={control.id}
+                    value={leadId}
+                    options={leads}
+                    placeholder="Pick an agent"
+                    searchPlaceholder="Search agents"
+                    emptyText="You have no active agent yet"
+                    onValueChange={setLeadId}
+                  />
+                )}
+              </Field>
+            )}
             {error && !fieldErrors(error).name && <FormError>{error.message}</FormError>}
           </div>
           <D.DialogFooter>
@@ -234,7 +348,10 @@ export function NewTeamDialog(props: { leadId?: string; trigger?: React.ReactNod
                 Cancel
               </Button>
             </D.DialogClose>
-            <Button type="submit" disabled={pending || name.trim() === '' || !leadId}>
+            <Button
+              type="submit"
+              disabled={pending || name.trim() === '' || (!template && !leadId)}
+            >
               Create team
             </Button>
           </D.DialogFooter>

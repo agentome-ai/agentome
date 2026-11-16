@@ -95,6 +95,14 @@ describe('Free without a key', () => {
     expect(refusal(await call('POST', `/api/agents/${first}/unarchive`))).toEqual(REQUIRED);
     await call('POST', `/api/agents/${sixth}/archive`);
     expect((await call('POST', `/api/agents/${first}/unarchive`)).statusCode).toBe(200);
+    // A team template's five agents are refused together, before the first is made.
+    const count = async () =>
+      (await call('GET', '/api/agents')).json<{ agents: unknown[] }>().agents.length;
+    const before = await count();
+    expect(
+      refusal(await call('POST', '/api/teams/from-template', { template: 'Development team' })),
+    ).toEqual(REQUIRED);
+    expect(await count()).toBe(before);
   });
 
   it('takes one team and refuses a second', async () => {

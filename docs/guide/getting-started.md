@@ -22,7 +22,7 @@ Everything in this guide works on Free, without a license key, unless a step say
 
 ## 1. Install the server
 
-Pick one of the two ways.
+Pick one of the ways.
 
 **With the install script.** On the server machine, run:
 
@@ -53,6 +53,17 @@ curl -fsSL https://agentome.ai/install.sh | sh -s -- --help
 ```
 
 Keep the setup code for step 2.
+
+**With Node.js.** On a machine with Node.js 20 or later, the `agentome` package on npm asks the
+same questions and installs the same release:
+
+```sh
+npx agentome install
+```
+
+It does not turn gVisor on for places or put the `agentome` command on the machine: use the script
+for a server with places, or install the package with `npm install -g agentome` to have the
+command.
 
 **From a checkout.** If the machine cannot reach Docker Hub, or you want to build from source:
 

@@ -42,7 +42,8 @@ installation can have up to five active agents; more need a license key.
 
 1. Open **Agents** and click **New agent**.
 2. In the list, pick a role template, such as **Backend developer**, **Frontend developer**, **QA
-   engineer**, **Code reviewer**, **Technical writer**, **Release manager** or **Product owner**.
+   engineer**, **Code reviewer**, **Technical writer**, **Release manager**, **Product owner** or
+   **Development lead**, which leads a team.
    Pick **Blank agent** to start empty and write the instructions yourself.
 3. Check **Name** and **Role title**. A template fills both in; whatever you type stays when you
    pick another template.

@@ -7,6 +7,7 @@ import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
+import { prepareInstallation } from '../src/setup.js';
 import { licenseEnterpriseAt, secondStepForAdmins, setupCodeIn } from './app.js';
 
 // Teams as their own thing, against the real server and database.
@@ -23,13 +24,14 @@ beforeAll(async () => {
   container = await new PostgreSqlContainer('postgres:16').start();
   dataDir = mkdtempSync(join(tmpdir(), 'agentome-teams-'));
   await migrate(container.getConnectionUri());
-  app = await buildApp(
-    loadConfig({
-      AGENTOME_DATABASE_URL: container.getConnectionUri(),
-      AGENTOME_DATA_DIR: dataDir,
-      AGENTOME_LOG_LEVEL: 'silent',
-    }),
-  );
+  const config = loadConfig({
+    AGENTOME_DATABASE_URL: container.getConnectionUri(),
+    AGENTOME_DATA_DIR: dataDir,
+    AGENTOME_LOG_LEVEL: 'silent',
+  });
+  app = await buildApp(config);
+  // Seeds the role templates, as a server's start does.
+  await prepareInstallation(config, app.log);
   const setup = await app.inject({
     method: 'POST',
     url: '/api/setup',
@@ -132,5 +134,49 @@ describe('a team', () => {
     expect((await call('DELETE', `/api/teams/${team.id}`)).statusCode).toBe(204);
     expect((await call('GET', `/api/teams/${team.id}`)).statusCode).toBe(404);
     expect((await call('GET', `/api/agents/${lead}`)).statusCode).toBe(200);
+  });
+
+  it('is made from a template: its agents from role templates, in manual with its steps', async () => {
+    const listed = await call('GET', '/api/teams/templates');
+    expect(listed.statusCode, listed.body).toBe(200);
+    const [template] = listed.json<{ templates: { name: string; members: string[] }[] }>()
+      .templates;
+    expect(template).toMatchObject({ name: 'Development team', lead: 'Development lead' });
+
+    const created = await call('POST', '/api/teams/from-template', {
+      template: 'Development team',
+      name: 'Checkout',
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const team = created.json<
+      Omit<Team, 'steps'> & { steps: { agents: string[]; note: string }[] }
+    >();
+    expect(team).toMatchObject({
+      name: 'Checkout',
+      mode: 'manual',
+      lead: { name: 'Development lead' },
+    });
+    expect(team.members.map((member) => member.name)).toEqual(template!.members);
+    const nameOf = (id: string) => team.members.find((member) => member.id === id)?.name;
+    expect(team.steps.map((step) => step.agents.map(nameOf))).toEqual([
+      ['Backend developer', 'Frontend developer'],
+      ['Code reviewer'],
+      ['QA engineer'],
+    ]);
+    // Each agent is its role template's prefill, owned by the person.
+    const lead = (await call('GET', `/api/agents/${team.lead.id}`)).json<{
+      roleTitle: string;
+      instructions: string;
+      template: { name: string } | null;
+    }>();
+    expect(lead).toMatchObject({
+      roleTitle: 'Development lead',
+      template: { name: 'Development lead' },
+    });
+    expect(lead.instructions).toContain('change request');
+
+    expect((await call('POST', '/api/teams/from-template', { template: 'Nope' })).statusCode).toBe(
+      404,
+    );
   });
 });

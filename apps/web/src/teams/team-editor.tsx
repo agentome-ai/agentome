@@ -13,6 +13,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { FormError } from '../ui/field';
@@ -75,6 +76,19 @@ export function TeamEditor(props: {
   };
   const change = (next: Partial<Body>) =>
     void save(withSteps({ mode: team.mode, members, steps: team.steps, ...next }));
+
+  // The order is the team's: the chart and the lists show it, and manual steps are made in it.
+  const [dragged, setDragged] = useState<string>();
+  const [over, setOver] = useState<string>();
+  const moveTo = (id: string, to: number) => {
+    const next = members.filter((other) => other !== id);
+    next.splice(to, 0, id);
+    if (next.some((other, at) => other !== members[at])) change({ members: next });
+  };
+  const dragEnd = () => {
+    setDragged(undefined);
+    setOver(undefined);
+  };
 
   const options = agents
     .filter(
@@ -172,27 +186,79 @@ export function TeamEditor(props: {
         isEmpty={members.length === 0}
       >
         <ul aria-label="Members" className="-mt-2 grid grid-cols-[minmax(0,1fr)]">
-          {team.members.map((member) => (
-            <Row
-              key={member.id}
-              lead={<AgentTile id={member.id} name={member.name} />}
-              name={
-                <Link to={`/agents/${member.id}`} className="truncate font-medium">
-                  {member.name}
-                </Link>
-              }
-              detail={member.roleTitle}
-              what={member.name}
-              menu={
-                <DropdownMenuItem
-                  disabled={pending}
-                  onSelect={() => change({ members: members.filter((id) => id !== member.id) })}
-                >
-                  Remove from team
-                </DropdownMenuItem>
-              }
-            />
-          ))}
+          {team.members.map((member, index) => {
+            const from = dragged ? members.indexOf(dragged) : -1;
+            const movable = members.length > 1 && !pending;
+            return (
+              <Row
+                key={member.id}
+                lead={<AgentTile id={member.id} name={member.name} />}
+                name={
+                  <Link
+                    to={`/agents/${member.id}`}
+                    draggable={false}
+                    className="truncate font-medium"
+                  >
+                    {member.name}
+                  </Link>
+                }
+                detail={member.roleTitle}
+                what={member.name}
+                item={{
+                  draggable: movable,
+                  onDragStart: (event) => {
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('text/plain', member.name);
+                    setDragged(member.id);
+                  },
+                  onDragOver: (event) => {
+                    if (!dragged || dragged === member.id) return;
+                    event.preventDefault();
+                    setOver(member.id);
+                  },
+                  onDragLeave: () => setOver((was) => (was === member.id ? undefined : was)),
+                  onDrop: (event) => {
+                    event.preventDefault();
+                    if (dragged) moveTo(dragged, index);
+                    dragEnd();
+                  },
+                  onDragEnd: dragEnd,
+                  className: cn(
+                    movable && 'cursor-grab active:cursor-grabbing',
+                    dragged === member.id && 'opacity-50',
+                    // The line shows where it lands: below a row it moves down past, above one it moves up past.
+                    over === member.id &&
+                      (from < index
+                        ? 'shadow-[inset_0_-2px_0_var(--color-accent)]'
+                        : 'shadow-[inset_0_2px_0_var(--color-accent)]'),
+                  ),
+                }}
+                menu={
+                  <>
+                    <DropdownMenuItem
+                      disabled={pending || index === 0}
+                      onSelect={() => moveTo(member.id, index - 1)}
+                    >
+                      Move up
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={pending || index === members.length - 1}
+                      onSelect={() => moveTo(member.id, index + 1)}
+                    >
+                      Move down
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      disabled={pending}
+                      onSelect={() => change({ members: members.filter((id) => id !== member.id) })}
+                    >
+                      Remove from team
+                    </DropdownMenuItem>
+                  </>
+                }
+              />
+            );
+          })}
         </ul>
       </Section>
 

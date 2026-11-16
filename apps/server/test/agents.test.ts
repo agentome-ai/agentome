@@ -155,11 +155,12 @@ const list = async (who: Person, query = '') =>
   (await call(who, 'GET', `/api/agents${query}`)).json<{ agents: Agent[] }>().agents;
 
 describe('role templates', () => {
-  it('lists the seven platform templates by name, with a line about each', async () => {
+  it('lists the eight platform templates by name, with a line about each', async () => {
     const all = await templates();
     expect(all.map((template) => template.name)).toEqual([
       'Backend developer',
       'Code reviewer',
+      'Development lead',
       'Frontend developer',
       'Product owner',
       'QA engineer',
@@ -178,7 +179,7 @@ describe('role templates', () => {
         .select()
         .from(catalogItems)
         .where(and(eq(catalogItems.kind, 'template'), isNull(catalogItems.ownerUserId)));
-    expect(await rows()).toHaveLength(7);
+    expect(await rows()).toHaveLength(8);
 
     // A text that differs from the one the server ships, as after an upgrade.
     const { id } = await backend();
@@ -193,7 +194,7 @@ describe('role templates', () => {
     expect(updated?.spec).toMatchObject({
       instructions: expect.stringContaining('## What you own'),
     });
-    expect(await rows()).toHaveLength(7);
+    expect(await rows()).toHaveLength(8);
   });
 });
 

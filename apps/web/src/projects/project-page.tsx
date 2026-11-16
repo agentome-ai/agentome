@@ -71,8 +71,8 @@ export function ProjectPage() {
   if (error || !project) {
     return (
       <>
-        <PageHeader title="Project" crumbs={crumbs} width="read" />
-        <div className={cn(frame.read, 'pt-6')}>
+        <PageHeader title="Project" crumbs={crumbs} />
+        <div className={cn(frame.wide, 'pt-6')}>
           {error ? (
             <ApiErrorState title="Couldn't load this project" error={error} onRetry={load} />
           ) : (
@@ -142,7 +142,6 @@ export function ProjectPage() {
       <PageHeader
         title={project.name}
         crumbs={crumbs}
-        width="read"
         ownHeading={heading}
         actions={
           <>
@@ -151,7 +150,7 @@ export function ProjectPage() {
           </>
         }
       />
-      <div className={cn(frame.read, 'grid gap-9 pt-1.5 pb-24')}>
+      <div className={cn(frame.wide, 'grid gap-9 pt-1.5 pb-24')}>
         <div className="grid grid-cols-[minmax(0,1fr)] gap-4.5">
           <div className="grid max-w-170 gap-1">
             <Text

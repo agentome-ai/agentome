@@ -99,8 +99,9 @@ jobs:
       - name: Publish it
         working-directory: apps/cli
         env:
-          # An npm automation token of the account that owns the package, kept in this
-          # repository's secrets.
+          # A granular read-write token of the account that owns the package, which may skip
+          # 2FA, kept in this repository's secrets. npm stages the version: it goes out once
+          # the owner approves it on npmjs.com (Staged Packages), with their 2FA.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
 
@@ -112,7 +113,8 @@ jobs:
     name: mcp-registry
     needs: npm
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Most of it is the wait for the npm approval below.
+    timeout-minutes: 190
     permissions:
       contents: read
       id-token: write
@@ -135,6 +137,22 @@ jobs:
             --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/$MCP_PUBLISHER_VERSION" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com "$archive"
           tar xzf "$archive" mcp-publisher
+      # The registry refuses a version npm does not serve yet, and npm serves it only after
+      # the owner approves the staged version: wait for that, up to three hours.
+      - name: Wait for npm to serve the version
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          for _ in $(seq 180); do
+            if curl -fsS -o /dev/null "https://registry.npmjs.org/agentome/$version"; then
+              echo "npm serves agentome@$version"
+              exit 0
+            fi
+            echo "Waiting for agentome@$version on npm: approve it on npmjs.com, Staged Packages"
+            sleep 60
+          done
+          echo "::error::npm did not serve agentome@$version in three hours. Approve it, then re-run this job."
+          exit 1
       - name: Publish the record
         working-directory: apps/cli
         run: |

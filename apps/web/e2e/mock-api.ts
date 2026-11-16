@@ -521,6 +521,18 @@ export const deliveryTeam = {
 export const api: Record<string, unknown> = {
   'GET /api/teams': { teams: [deliveryTeam] },
   'GET /api/teams/t1': deliveryTeam,
+  'GET /api/teams/templates': {
+    templates: [
+      {
+        name: 'Development team',
+        description:
+          'A lead and four engineers take a task through building, review and testing to one change request.',
+        lead: 'Development lead',
+        members: ['Backend developer', 'Frontend developer', 'Code reviewer', 'QA engineer'],
+        steps: [],
+      },
+    ],
+  },
   'GET /api/approvals': { approvals },
   'GET /api/me': { id: 'u1', name: 'Ann Admin', email: 'ann@acme.com', role: 'admin' },
   'POST /api/me/presence': null,

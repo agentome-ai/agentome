@@ -14,6 +14,7 @@ import {
   updateTeam,
 } from './service.js';
 import { requireRoomFor } from '../license/service.js';
+import { createTeamFromTemplate, FromTemplate, TeamTemplate, teamTemplates } from './templates.js';
 
 /** /api/teams: teams of agents, put together, changed and copied whole. */
 export const teamRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }) => {
@@ -44,6 +45,32 @@ export const teamRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db })
       await requireRoomFor(db, 'teams');
       return reply.code(201).send(await createTeam(db, request.user.id, request.body));
     },
+  );
+
+  app.get(
+    '/api/teams/templates',
+    {
+      schema: {
+        summary:
+          "The platform's team templates: a lead and members named by role template, and their steps",
+        response: { 200: z.object({ templates: z.array(TeamTemplate) }) },
+      },
+    },
+    () => ({ templates: teamTemplates }),
+  );
+
+  app.post(
+    '/api/teams/from-template',
+    {
+      schema: {
+        summary:
+          "Creates a team template's agents from their role templates, owned by the person, and their team in manual mode; named as the template unless a name is given",
+        body: FromTemplate,
+        response: { 201: TeamSummary },
+      },
+    },
+    async (request, reply) =>
+      reply.code(201).send(await createTeamFromTemplate(db, request.user.id, request.body)),
   );
 
   app.get(

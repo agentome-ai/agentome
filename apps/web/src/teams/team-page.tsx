@@ -81,7 +81,6 @@ export function TeamPage() {
   const header = (title: string, actions?: React.ReactNode, heading?: React.ReactNode) => (
     <PageHeader
       title={title}
-      width="read"
       crumbs={[{ label: 'Teams', to: '/teams' }]}
       actions={actions}
       ownHeading={heading}
@@ -91,7 +90,7 @@ export function TeamPage() {
     return (
       <>
         {header('Team')}
-        <div className={cn(frame.read, 'pt-8')}>
+        <div className={cn(frame.wide, 'pt-8')}>
           <ApiErrorState title="Couldn't load the team" error={error} onRetry={load} />
         </div>
       </>
@@ -176,7 +175,7 @@ export function TeamPage() {
         </>,
         heading,
       )}
-      <div className={cn(frame.read, 'grid grid-cols-[minmax(0,1fr)] gap-4.5 pt-1.5 pb-24')}>
+      <div className={cn(frame.wide, 'grid grid-cols-[minmax(0,1fr)] gap-4.5 pt-1.5 pb-24')}>
         <p className="max-w-170 text-read text-ink-2">
           A task given to{' '}
           <Link to={`/agents/${team.lead.id}`} className="text-ink">

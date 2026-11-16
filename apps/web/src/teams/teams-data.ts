@@ -19,6 +19,15 @@ export type TeamSummary = {
   steps: TeamStep[];
 };
 
+/** A platform team template: its lead and members are role template names. */
+export type TeamTemplate = {
+  name: string;
+  description: string;
+  lead: string;
+  members: string[];
+  steps: { members: string[]; note: string }[];
+};
+
 export type TeamChanges = Partial<{
   name: string;
   leadId: string;

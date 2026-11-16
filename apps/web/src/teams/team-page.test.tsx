@@ -34,6 +34,13 @@ const empty: TeamSummary = {
   members: [],
   steps: [],
 };
+const devTeam = {
+  name: 'Development team',
+  description: 'A lead and four engineers take a task to one change request.',
+  lead: 'Development lead',
+  members: ['Backend developer', 'Frontend developer', 'Code reviewer', 'QA engineer'],
+  steps: [],
+};
 // The lead as its editor has it: the owner and the team_step policy matter here.
 const leadAgent = { ...lead, tools: [], skills: [], mcpServers: [], projects: [] };
 
@@ -42,6 +49,7 @@ function renderAt(path: string, routes: Parameters<typeof mockApi>[0]) {
     'GET /api/me': admin,
     'GET /api/agents': { agents: [lead, qa, front, stranger] },
     [`GET /api/agents/${lead.id}`]: leadAgent,
+    'GET /api/teams/templates': { templates: [devTeam] },
     ...routes,
   });
   const router = createMemoryRouter([{ path: '*', element: <App /> }], { initialEntries: [path] });
@@ -121,6 +129,38 @@ describe('a team', () => {
     });
   });
 
+  it('puts its members in another order, from a menu or by dragging', async () => {
+    const { calls, user } = renderAt('/teams/t1', {
+      'GET /api/teams/t1': { ...empty, members: [ref(qa), ref(front)] },
+      'PATCH /api/teams/t1': saved,
+    });
+    const section = await screen.findByRole('region', { name: 'Members' });
+    const body = () => calls.findLast((call) => call.route === 'PATCH /api/teams/t1')?.body;
+    await user.click(within(section).getByRole('button', { name: 'Actions for QA' }));
+    // The first can't go up.
+    expect(screen.getByRole('menuitem', { name: 'Move up' }).getAttribute('aria-disabled')).toBe(
+      'true',
+    );
+    await user.click(screen.getByRole('menuitem', { name: 'Move down' }));
+    expect(body()).toEqual({ mode: 'auto', members: [front.id, qa.id], steps: [] });
+    await waitFor(() =>
+      expect(
+        within(section)
+          .getAllByRole('link')
+          .map((link) => link.textContent),
+      ).toEqual(['Frontend', 'QA']),
+    );
+
+    const row = (name: string) =>
+      within(section).getByRole('link', { name }).closest('li') as HTMLElement;
+    fireEvent.dragStart(row('QA'), { dataTransfer: { setData: () => {}, effectAllowed: '' } });
+    fireEvent.dragOver(row('Frontend'));
+    fireEvent.drop(row('Frontend'));
+    await waitFor(() =>
+      expect(body()).toEqual({ mode: 'auto', members: [qa.id, front.id], steps: [] }),
+    );
+  });
+
   it('says why a change could not be saved', async () => {
     const { user } = renderAt('/teams/t1', {
       'GET /api/teams/t1': empty,
@@ -166,6 +206,51 @@ describe('Teams', () => {
     });
     expect(await screen.findByRole('heading', { level: 1, name: 'Checkout' })).toBeTruthy();
     expect(router.state.location.pathname).toBe('/teams/t3');
+  });
+
+  it('makes a team from a template, its agents with it', async () => {
+    const { calls, router, user } = renderAt('/teams?view=list', {
+      'GET /api/teams': { teams: [] },
+      'POST /api/teams/from-template': { ...empty, id: 't4', name: 'Development team' },
+      'GET /api/teams/t4': { ...empty, id: 't4', name: 'Development team' },
+    });
+    await user.click(await screen.findByRole('button', { name: 'New team' }));
+    const dialog = screen.getByRole('dialog', { name: 'New team' });
+    // The person has agents, so their own come first; the template says what it creates.
+    const own = await within(dialog).findByRole('radio', { name: 'Your agents' });
+    expect(own.getAttribute('aria-checked')).toBe('true');
+    const template = within(dialog).getByRole('radio', { name: 'Development team' });
+    expect(template.getAttribute('aria-describedby')).toBeTruthy();
+    expect(dialog.textContent).toContain(
+      'Creates 5 agents: Development lead, Backend developer, Frontend developer, Code reviewer, QA engineer.',
+    );
+
+    await user.click(template);
+    expect(within(dialog).queryByRole('combobox', { name: 'Lead' })).toBeNull();
+    const name = within(dialog).getByRole('textbox', { name: 'Name' });
+    expect((name as HTMLInputElement).value).toBe('Development team');
+    await user.click(within(dialog).getByRole('button', { name: 'Create team' }));
+    expect(calls.find((call) => call.route === 'POST /api/teams/from-template')?.body).toEqual({
+      template: 'Development team',
+      name: 'Development team',
+    });
+    expect(router.state.location.pathname).toBe('/teams/t4');
+  });
+
+  it('says why a template could not be made: Free holds five agents', async () => {
+    const { user } = renderAt('/teams?view=list', {
+      'GET /api/teams': { teams: [] },
+      'POST /api/teams/from-template': failure(
+        402,
+        'license_required',
+        'Free holds five active agents. Archive one or add a license key.',
+      ),
+    });
+    await user.click(await screen.findByRole('button', { name: 'New team' }));
+    const dialog = screen.getByRole('dialog', { name: 'New team' });
+    await user.click(await within(dialog).findByRole('radio', { name: 'Development team' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Create team' }));
+    expect(await within(dialog).findByText(/Free holds five active agents/)).toBeTruthy();
   });
 
   it('reads as the chart: a team whose lead is in another team sits under it', async () => {

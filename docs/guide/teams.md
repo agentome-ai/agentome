@@ -39,10 +39,29 @@ when members share the branch.
 ## Create a team
 
 1. Open **Teams** in the sidebar and click **New team**.
-2. Enter a **Name**.
-3. Under **Lead**, pick one of your active agents. Its runs are where the team works.
-4. Click **Create team**. The team's page opens.
-5. Next to **Members**, click **Add an agent** and pick the agents for the lead to lead.
+2. Pick **Your agents**.
+3. Enter a **Name**.
+4. Under **Lead**, pick one of your active agents. Its runs are where the team works.
+5. Click **Create team**. The team's page opens.
+6. Next to **Members**, click **Add an agent** and pick the agents for the lead to lead.
+
+### From the Development team template
+
+The template creates five agents from role templates, and their team:
+
+- **Development lead** leads. It writes what done means, splits the work, checks every report and
+  opens one change request at the end.
+- **Backend developer** and **Frontend developer** build, then **Code reviewer** reviews, then
+  **QA engineer** checks every acceptance criterion. These are the team's three steps, in manual
+  mode.
+
+1. Open **Teams** and click **New team**.
+2. Pick **Development team**, and change the **Name** if you like.
+3. Click **Create team**. The team's page opens, with its agents and steps.
+
+The agents are yours, like any agent made from a role template: change their instructions, steps
+or members as you would any other. Five agents are what Free holds, so on Free the template works
+only while you have no other active agents.
 
 You can also start from an agent's page: in its **Team** section, click **Create a team it leads**.
 That section also lists the team the agent leads and the teams it is in.
