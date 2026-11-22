@@ -157,6 +157,8 @@ export async function decideToolCall(
     reason?: string;
     /** An answer to ask_owner: only a question takes one, and a question needs one. */
     answer?: boolean;
+    /** Whether the owner decides with a personal token, not the browser's session. */
+    viaToken?: boolean;
   },
 ) {
   // The same owner check as Cancel (runs/service.ts): a grant of level owner on the agent.
@@ -180,6 +182,11 @@ export async function decideToolCall(
   }
   if (question && input.decision === 'approved' && !input.answer) {
     throw new AppError('validation_failed', 'Answer the question, or skip it');
+  }
+  // New instructions outlast the run: the owner reads them on the page, not through a client
+  // that an agent's own words, quoted in its reasons, could steer.
+  if (owned.tool === PROPOSE_INSTRUCTIONS && input.decision === 'approved' && input.viaToken) {
+    throw new AppError('forbidden', 'Approve new instructions in the browser');
   }
   const [waiting] = await db
     .select({ id: runs.id })
@@ -213,7 +220,10 @@ export async function setPolicy(db: Db, agentId: string, name: string, policy: P
  * Approve, and stop asking: the call runs, and from now on the agent uses that tool
  * without its owner's say. A question is asked each time, whatever its policy.
  */
-export async function approveForGood(db: Db, input: { id: string; userId: string }) {
+export async function approveForGood(
+  db: Db,
+  input: { id: string; userId: string; viaToken?: boolean },
+) {
   const [call] = await db
     .select({ agentId: toolCalls.agentId, tool: toolCalls.tool })
     .from(toolCalls)

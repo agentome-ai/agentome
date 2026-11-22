@@ -53,10 +53,13 @@ its own list only:
 
 The proxy takes only HTTPS through `CONNECT`, to the name that was asked for, on port 443 unless
 the list names another. It checks the address a name resolves to, never connects to the
-server's own machine or to link-local addresses, and reaches the company's private networks
-only for a host listed by its full name. It reads the server name of each connection and
-nothing inside it. Every host it lets through or refuses is in the run's log, and a refused one
-shows in the project's **Network** section with **Allow** beside it.
+server's own machine, to link-local addresses or to a cloud's metadata service, and reaches
+the company's private networks only for a host an admin listed by its full name. It reads the server name of each connection and
+nothing inside it. Every connection it lets through is in the run's log as it ends, with the
+entry of the list that let it out, the bytes each way and how long it lasted; every host it
+refuses is there with why. A refused host shows in the project's **Network** section with
+**Allow** beside it; a host allowed that way reaches public addresses only, since a run chose its
+name.
 
 ## Where the secrets are
 
@@ -101,6 +104,14 @@ A change request is opened by a tool, under the agent's policies, and merged by 
   only that project's connections and hosts.
 - An admin may disable a person, which puts their place to sleep, and delete a place with its
   sign-in.
+
+## What you install
+
+Each release's images are signed and carry their build provenance and a software bill of
+materials; the `agentome` package on npm names the workflow run that published it; `install.sh`
+and `compose.yaml` come with signed checksums. A release goes out only when its tree holds no
+secret and neither image has a critical vulnerability that already has a fix. How to check each
+of these is in [Checking an image](../../deploy/OPERATIONS.md#checking-an-image).
 
 ## What Agentome does not protect
 

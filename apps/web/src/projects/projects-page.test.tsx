@@ -310,7 +310,7 @@ describe('a project', () => {
     const { user, calls } = open('/projects/p1', {
       'GET /api/projects/p1': view,
       'GET /api/projects/p1/refused-hosts': refused,
-      'PATCH /api/projects/p1': { ...view, allowedHosts: ['gitlab.acme.com', 'pypi.org'] },
+      'PATCH /api/projects/p1': { ...view, allowedHosts: ['gitlab.acme.com', 'public:pypi.org'] },
     });
     const allowed = await screen.findByRole('list', { name: 'Allowed hosts' });
     expect(within(allowed).getByText('gitlab.acme.com')).toBeTruthy();
@@ -323,9 +323,13 @@ describe('a project', () => {
     expect(calls.some((call) => call.route === 'PATCH /api/projects/p1')).toBe(false);
     const sure = await screen.findByRole('dialog', { name: 'Allow this host?' });
     await user.click(within(sure).getByRole('button', { name: 'Allow host' }));
+    // A run chose the name, so it reaches public addresses only.
     expect(calls.find((call) => call.route === 'PATCH /api/projects/p1')?.body).toEqual({
-      allowedHosts: ['gitlab.acme.com', 'pypi.org'],
+      allowedHosts: ['gitlab.acme.com', 'public:pypi.org'],
     });
+    const now = await screen.findByRole('list', { name: 'Allowed hosts' });
+    expect(await within(now).findByText('Public addresses only')).toBeTruthy();
+    expect(within(now).getByText('pypi.org')).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: 'Add host' }));
     const dialog = await screen.findByRole('dialog', { name: 'Add a host' });

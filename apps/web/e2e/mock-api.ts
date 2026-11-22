@@ -821,7 +821,12 @@ export const api: Record<string, unknown> = {
   'GET /api/projects/p1': {
     id: 'p1',
     name: 'Payments',
-    allowedHosts: ['gitlab.northfold.dev', '*.jira.northfold.dev', 'registry.npmjs.org'],
+    allowedHosts: [
+      'gitlab.northfold.dev',
+      '*.jira.northfold.dev',
+      'registry.npmjs.org',
+      'public:cdn.jsdelivr.net',
+    ],
     agentCount: 3,
     createdBy: 'u1',
     connectionCount: 3,

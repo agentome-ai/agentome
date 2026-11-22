@@ -1,0 +1,17 @@
+# What the release's secret scan reads: gitleaks' own rules, without the tests, which carry
+# made-up tokens on purpose, to show that one never reaches a log, a reply or a file.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Made-up tokens in tests"
+paths = [
+  '''(^|/)test/''',
+  '''\.test\.tsx?$''',
+  '''(^|/)e2e/''',
+  '''(^|/)fixtures/''',
+]
+
+[[allowlists]]
+description = "The site's IndexNow key, public by design: the site serves it as a file"
+regexes = ['''99b6d51a9fb6d70d4a1b1260ac9a3e00''']

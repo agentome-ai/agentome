@@ -14,18 +14,18 @@ const column = 'grid-cols-[minmax(0,1fr)]';
 
 /**
  * The column a page lives in, centered once the screen is wider than it, with its header's
- * title and actions on the same edges as its content: tables, a task, a project, a team and the
- * editor get 1440 px, a page read as a document (account, notifications) 992 px. Below that the column
- * is the screen, as before; on a 2560 px screen nothing is pinned left with half of it empty.
+ * title and actions on the same edges as its content. Every page stands in the same column, so
+ * that its title and its first line start where the last page's did: a page read as a document
+ * (account, notifications) keeps a 992 px measure from that edge rather than a column of its own
+ * in the middle, which put its forms 340 px off its title on a 1920 px screen. Below 1440 px the
+ * column is the screen; on a 2560 px screen nothing is pinned left with half of it empty.
  */
+const page = 'mx-auto w-full max-w-360 3xl:max-w-420';
 export const frame = {
   // 1440, and 1680 from a 1680 px screen: past ~1930 px the narrower column left a third of the
-  // screen empty beside the tables. Documents keep their measure.
-  wide: cn('mx-auto w-full max-w-360 3xl:max-w-420', column, gutter),
-  read: cn('mx-auto w-full max-w-248', column, gutter),
-  // A run: its 820 px of reading, 340 of results and the gap between, so that on a wide screen
-  // the two stand in the middle under their header rather than against the left of 1680 px.
-  pair: cn('mx-auto w-full max-w-318', column, gutter),
+  // screen empty beside the tables.
+  wide: cn(page, column, gutter),
+  read: cn(page, 'grid-cols-[minmax(0,62rem)]', gutter),
 } as const;
 export type PageWidth = keyof typeof frame;
 

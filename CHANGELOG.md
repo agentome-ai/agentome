@@ -6,6 +6,28 @@ What changed in each release of Agentome. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-23
+
+A security release: the fourth review's fixes that need no change in how you run Agentome. Every
+connection a place makes through the egress proxy is now in the log, releases are signed and
+scanned before they go out, and the docker guard, the egress proxy, the profile an agent reads and
+the approval of new instructions hold harder. **On Kubernetes, apply `deploy/kubernetes/places`
+with this release**: the launcher's new rights come with it.
+
+### Security
+
+- The egress proxy logs every connection it lets out, as it ends, with the entry of the project's list that let it out, the bytes each way and how long it lasted, and for plain HTTP the method, the path and the status; every refusal says why. Before, a host it let out was logged once a minute. HTTPS stays a host: the proxy does not decrypt TLS.
+- Each release's images carry their build provenance and a software bill of materials, the npm package names the workflow run that published it, and the GitHub Release has `install.sh` and `compose.yaml` with signed `SHA256SUMS`. A release goes out only when gitleaks finds no secret in the tree and trivy finds no critical vulnerability with a fix in either image. How to check each is in OPERATIONS, Checking an image.
+- The docker guard passes an image pull only by the image's name and tag, never an import from an address that could take the name of Agentome's own image. A container must name the places' runtime unless the installation chose `runc`, may carry only the security options a launcher sets, and runs as the place's user or its image's own.
+- Approving an agent's proposal to rewrite its own instructions takes the browser: a personal token, such as the management MCP's, may deny one but not approve it. The self-review task marks what others wrote in it (task titles, run reasons, past reports, comments) as data, as the gateway does.
+- No `@` in the profile's CLAUDE.md outside code can be read by Claude Code as an import, wherever it comes from (a task's thread, a past report, a skill's description) and whatever markdown is around it: one that is not part of an address becomes a full-width `＠`.
+- A Codex agent in a place gives its commands the sandbox's environment only, never its own container's way out and its token.
+- A host allowed from the refusals in a project's Network section reaches public addresses only (the list shows it as public only): a run chose its name, and its owner may point it at the company's network. A host an admin adds by its name keeps reaching the company's network. The egress proxy never reaches Google Cloud's metadata over IPv6 or AWS's pod identity agent, whatever name leads there.
+- One event of the egress proxy the app cannot read (a host name with `_`) no longer drops the whole report with other runs' lines; the proxy also refuses such a name before it counts it.
+- undici, through which the server reaches MCP servers, is 6.29.1, with the fixes for a server that crashes the process with a certificate it changes mid-connection. A run's own Docker is Docker 29.9.3.
+- The git proxy's CI check follows an action in `.github` to one it uses outside it, and refuses a GitLab child pipeline made from a job's artifact or an include of the same project by its address. A `*.` host may no longer cover atlassian.net, ngrok.app, cloudfunctions.net, nip.io and similar shared domains. The MCP library reaches no cloud's metadata service, as the egress proxy does not. Proposed instructions with invisible characters or ones that turn text around are refused. The worker keeps no unread output of a Codex executor and closes a run server's connection on a line without end. The egress proxy counts a refused token asked again against its limit.
+- On Kubernetes, a run's pod takes a connection only from its own place: before, any place reached any run's CLI container, with only the run's key between them. The places' namespace denies every connection no policy allows, the launcher checks that the RuntimeClass it is given runs gVisor, and the quota counts CPU and memory. **Apply `deploy/kubernetes/places` with this release**: the launcher's new rights (a run's NetworkPolicy, reading a RuntimeClass) come with it.
+
 ## [0.4.0] - 2026-11-22
 
 A person's place on the server may now work while they are away, when they choose so in the
@@ -202,7 +224,8 @@ to install, configure and update it in [deploy/OPERATIONS.md](deploy/OPERATIONS.
   server, monthly budgets, quality reports, Keycloak sign-in and more agents need a key.
 - Images for amd64 and arm64 on Docker Hub: `agentome/agentome` and `agentome/agentome-seat`.
 
-[Unreleased]: https://github.com/agentome-ai/agentome/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/agentome-ai/agentome/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/agentome-ai/agentome/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/agentome-ai/agentome/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/agentome-ai/agentome/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/agentome-ai/agentome/compare/v0.1.0...v0.2.0

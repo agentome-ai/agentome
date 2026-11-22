@@ -39,11 +39,26 @@ export function gitlabIncludes(
       if (component.includes(`/${own}/`) || component.includes('$')) unreadable = true;
       return;
     }
+    // A file of this same project by its address, on a branch the agent may push to.
+    const remote =
+      typeof entry === 'string' && /^https?:\/\//i.test(entry)
+        ? entry
+        : isRecord(entry) && typeof entry.remote === 'string'
+          ? entry.remote
+          : undefined;
+    if (remote !== undefined) {
+      const path = decodeURIComponent(remote.replace(/^https?:\/\/[^/]+/i, '')).toLowerCase();
+      if (path.startsWith(`/${own}/`) || path.includes('$')) unreadable = true;
+      return;
+    }
+    // A child pipeline from a job's artifact: what the repository's code wrote, at run time.
+    if (isRecord(entry) && entry.artifact !== undefined) {
+      unreadable = true;
+      return;
+    }
     const local =
       typeof entry === 'string'
-        ? /^https?:\/\//i.test(entry)
-          ? undefined
-          : entry
+        ? entry
         : isRecord(entry) && typeof entry.local === 'string'
           ? entry.local
           : undefined;

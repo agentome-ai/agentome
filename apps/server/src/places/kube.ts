@@ -7,7 +7,11 @@ import { Duplex } from 'node:stream';
 // the account's CA, so Node trusts the API server's certificate.
 
 export type KubeAnswer = { status: number; body: unknown };
-/** A call on the namespace's API: `path` after `/api/v1/namespaces/<namespace>`. */
+/**
+ * A call on the namespace's API: `path` after `/api/v1/namespaces/<namespace>`; or, starting with
+ * `/apis/`, a path of another API group from the API's root, `{namespace}` standing for the
+ * namespace.
+ */
 export type Kube = (method: string, path: string, body?: unknown) => Promise<KubeAnswer>;
 /** A command in a pod's container: its WebSocket, as a stream, and what else it carries. */
 export type KubeExec = (
@@ -39,8 +43,12 @@ export function inCluster(env: NodeJS.ProcessEnv = process.env) {
 }
 
 export function kubeAt(base: string, token: () => string, fetchImpl: typeof fetch = fetch): Kube {
+  const [, root = '', namespace = ''] = /^(.*)\/api\/v1\/namespaces\/([^/]+)$/.exec(base) ?? [];
   return async (method, path, body) => {
-    const answer = await fetchImpl(`${base}${path}`, {
+    const url = path.startsWith('/apis/')
+      ? `${root}${path.replace('{namespace}', namespace)}`
+      : `${base}${path}`;
+    const answer = await fetchImpl(url, {
       method,
       headers: {
         authorization: `Bearer ${token()}`,

@@ -383,7 +383,7 @@ describe('both hosts answer the same questions', () => {
     const blob = (text: string) => ({
       body: { content: Buffer.from(text).toString('base64'), encoding: 'base64' },
     });
-    const gh = (deploy: string, folder = 't1') =>
+    const gh = (deploy: string, folder = 't1', wrapped = false) =>
       host('github', {
         // The action's folder, by its tree, at the default branch and at the commit.
         'GET /repos/acme/api/contents/tools': [
@@ -407,9 +407,20 @@ describe('both hosts answer the same questions', () => {
           },
         },
         'GET /repos/acme/api/git/trees/g1': {
-          body: { truncated: false, tree: [{ path: 'workflows/ci.yml', type: 'blob', sha: 'w1' }] },
+          body: {
+            truncated: false,
+            tree: [
+              { path: 'workflows/ci.yml', type: 'blob', sha: 'w1' },
+              { path: 'actions/wrap/action.yml', type: 'blob', sha: 'aw' },
+            ],
+          },
         },
-        'GET /repos/acme/api/git/blobs/w1': blob('steps:\n  - uses: ./tools/deploy\n'),
+        'GET /repos/acme/api/git/blobs/w1': blob(
+          `steps:\n  - uses: ./${wrapped ? '.github/actions/wrap' : 'tools/deploy'}\n`,
+        ),
+        'GET /repos/acme/api/git/blobs/aw': blob(
+          'runs:\n  using: composite\n  steps:\n    - uses: ./tools/deploy\n',
+        ),
         'GET /repos/acme/api/git/blobs/a1': blob('runs:\n  using: composite\n'),
         // Read at the default branch first, then at the commit.
         'GET /repos/acme/api/contents/tools%2Fdeploy%2Faction.yml': [
@@ -423,6 +434,9 @@ describe('both hosts answer the same questions', () => {
     expect(await gh('a2').api.pipelineDiffers('acme/api', 'main', 'new')).toBe(true);
     // Its code changed, its definition not: the folder is configuration as a whole.
     expect(await gh('a1', 't2').api.pipelineDiffers('acme/api', 'main', 'new')).toBe(true);
+    // Through an action in .github that uses one outside it.
+    expect(await gh('a1', 't1', true).api.pipelineDiffers('acme/api', 'main', 'new')).toBe(false);
+    expect(await gh('a2', 't1', true).api.pipelineDiffers('acme/api', 'main', 'new')).toBe(true);
 
     const file = (id: string, text: string) => ({
       body: { blob_id: id, content: Buffer.from(text).toString('base64') },

@@ -142,6 +142,13 @@ export function madeByLauncher(labels: Record<string, string> | undefined): bool
   return !Object.keys(labels).some((label) => COMPOSE.test(label));
 }
 
+/** Security options as a launcher sets them; a run's own Docker's also unconfined. */
+const OPTS = ['no-new-privileges:true'];
+const SANDBOXED_OPTS = [...OPTS, 'seccomp=unconfined'];
+
+/** What an image pull may say: which image, nothing to import from an address or to name it. */
+const PULL = new Set(['fromImage', 'tag']);
+
 const empty = (value: unknown) =>
   value === undefined ||
   value === null ||
@@ -192,17 +199,25 @@ export function containerAllowed(name: string, body: Body, settings: GuardSettin
     }
   }
   const runtime = host.Runtime;
+  // Docker's default is the host's kernel: only where the installation chose it by name.
+  if (runtime === undefined && !settings.runtimes.includes('runc')) {
+    return no("a container without the places' runtime");
+  }
   if (runtime !== undefined && !settings.runtimes.includes(String(runtime))) {
     return no(`a container on the runtime ${String(runtime)}`);
   }
-  // Capabilities and unconfined profiles are a run's own Docker's, which needs them inside
-  // gVisor's kernel; nowhere else.
+  if (body?.User !== undefined && body.User !== '1000:1000') {
+    return no(`a container as the user ${String(body.User)}`);
+  }
+  // Capabilities and an unconfined profile are a run's own Docker's, which needs them inside
+  // gVisor's kernel; nowhere else. No other option, such as a profile of the caller's own.
   const sandboxed = settings.sandboxRuntime !== undefined && runtime === settings.sandboxRuntime;
   if (!empty(host.CapAdd) && !sandboxed) return no('a container that adds capabilities');
   const opts = (host.SecurityOpt ?? []) as string[];
-  if (!sandboxed && opts.some((opt) => /unconfined|label[=:]disable/.test(opt))) {
-    return no('a container without its security profile');
-  }
+  const allowed = sandboxed ? SANDBOXED_OPTS : OPTS;
+  const odd = opts.find((opt) => !allowed.includes(opt));
+  if (odd !== undefined) return no(`a container with the security option ${odd}`);
+  if (!opts.includes('no-new-privileges:true')) return no('a container that may gain privileges');
   return OK;
 }
 
@@ -250,7 +265,11 @@ export function callAllowed(
     const shaped = fits(body, shape);
     if (!shaped.ok) return shaped;
   }
-  if (method === 'POST' && route === '/images/create') return OK;
+  if (method === 'POST' && route === '/images/create') {
+    const odd = [...params.keys()].find((key) => !PULL.has(key));
+    if (odd !== undefined) return no(`an image pull with ${odd}`);
+    return params.get('fromImage') ? OK : no('an image pull without its image');
+  }
   if (method === 'GET' && /^\/images\/[^/]+\/json$/.test(route)) return OK;
   const container = NAMED.exec(route);
   if (container) {

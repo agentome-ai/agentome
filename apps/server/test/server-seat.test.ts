@@ -1489,10 +1489,16 @@ describe("the places' egress", () => {
       '*.amazonaws.com',
       '*.s3.amazonaws.com',
       '*.github.io',
+      '*.atlassian.net',
+      '*.ngrok.app',
+      '*.nip.io',
       'localhost',
       '127.0.0.1',
       '169.254.169.254',
       'a.example:0',
+      // The public-only mark is for one name, and a star is public only already.
+      'public:*.cdn.example',
+      'public:localhost',
     ]) {
       const refused = await app.inject({
         method: 'PATCH',
@@ -1512,6 +1518,7 @@ describe("the places' egress", () => {
           '*.jira.corp.example',
           '10.0.4.12',
           'git.corp.example:8443',
+          'public:cdn.example.io:8080',
         ],
       },
     });
@@ -1562,6 +1569,7 @@ describe("the places' egress", () => {
       '*.jira.corp.example',
       '10.0.4.12',
       'git.corp.example:8443',
+      'public:cdn.example.io:8080',
     ]);
 
     const { run } = await agentWithRun(memberId, {
@@ -1602,6 +1610,7 @@ describe("the places' egress", () => {
       '*.jira.corp.example',
       '10.0.4.12',
       'git.corp.example:8443',
+      'public:cdn.example.io:8080',
     ]);
     // The vendors are the CLI container's, the CLI's alone: its own token, derived for the run.
     const cli = cliEgressToken(placesKey(config.secretKey), run.id);
@@ -1615,7 +1624,13 @@ describe("the places' egress", () => {
     const pulls = dockerEgressToken(placesKey(config.secretKey), run.id);
     expect((await hostsFor({ kind: 'docker', id: run.id, token: pulls })).json()).toEqual({
       who: `run ${run.id}`,
-      hosts: ['gitlab.corp.example', '*.jira.corp.example', '10.0.4.12', 'git.corp.example:8443'],
+      hosts: [
+        'gitlab.corp.example',
+        '*.jira.corp.example',
+        '10.0.4.12',
+        'git.corp.example:8443',
+        'public:cdn.example.io:8080',
+      ],
     });
     expect((await hostsFor({ kind: 'docker', id: run.id, token: cli })).statusCode).toBe(401);
     // What the proxy refused the project's runs this week, for an admin to allow: not what it
@@ -1703,7 +1718,8 @@ describe("the places' egress", () => {
         events: [{ kind: 'run', token: 'x', host: 'a', port: 0, allowed: true, count: 1 }],
       },
     });
-    expect(odd.statusCode).toBe(400);
+    // An event the app cannot read is left out alone: the batch's others still count.
+    expect(odd.statusCode).toBe(204);
     // A host is a name as the proxy saw it, not a line of the log of its own.
     const forged = await app.inject({
       method: 'POST',
@@ -1723,7 +1739,65 @@ describe("the places' egress", () => {
         ],
       },
     });
-    expect(forged.statusCode).toBe(400);
+    expect(forged.statusCode).toBe(204);
+    // Not a batch at all, or too long a one, is the proxy's mistake.
+    const broken = await app.inject({
+      method: 'POST',
+      url: '/api/egress/events',
+      headers: fromProxy(),
+      payload: { events: Array.from({ length: 501 }, () => ({})) },
+    });
+    expect(broken.statusCode).toBe(400);
+  });
+
+  it('takes a connection with its rule, bytes and time, and a plain call with its method and path', async () => {
+    const token = placeEgressToken(placesKey(config.secretKey), memberId);
+    const line = { kind: 'place', id: memberId, token, host: 'registry.npmjs.org', port: 443 };
+    const tell = (events: object[]) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/egress/events',
+        headers: fromProxy(),
+        payload: { events },
+      });
+    const told = await tell([
+      {
+        ...line,
+        allowed: true,
+        count: 1,
+        rule: '*.npmjs.org',
+        sent: 517,
+        received: 40_960,
+        ms: 812,
+      },
+      {
+        ...line,
+        host: 'mirror.corp.example',
+        port: 80,
+        allowed: true,
+        count: 1,
+        rule: 'mirror.corp.example:80',
+        method: 'GET',
+        path: '/simple/requests/',
+        status: 200,
+        sent: 0,
+        received: 2_048,
+        ms: 30,
+      },
+      { ...line, host: 'evil.example', allowed: false, count: 3, reason: 'not-listed' },
+      { ...line, allowed: false, count: 1, reason: 'hello' },
+    ]);
+    expect(told.statusCode).toBe(204);
+    // What is read as text in the log is held to its shape: an event out of it is left out.
+    for (const odd of [
+      { rule: '*.npmjs.org\n{"level":50}' },
+      { method: 'get' },
+      { path: `/${'a'.repeat(600)}` },
+      { reason: 'because' },
+      { sent: -1 },
+    ]) {
+      expect((await tell([{ ...line, allowed: true, count: 1, ...odd }])).statusCode).toBe(204);
+    }
   });
 
   it("opens to a place's own token Agentome, the vendors and npm, and to no other token", async () => {

@@ -28,6 +28,7 @@ import {
   removeRuns,
   removeWorkspace,
   closedHome,
+  inertImports,
   repositoryInstructionsSection,
 } from './workspace.js';
 
@@ -701,6 +702,28 @@ describe("the repository's own instructions", () => {
     expect(section).toContain('`@scope/pkg`');
     // Each file once, though two lead to it.
     expect(section.match(/### \.claude\/rules\/naming\.md/g)).toHaveLength(1);
+  });
+
+  it('leaves no import anywhere in the profile, however the markdown around it is written', () => {
+    const others = [
+      'A comment: x @/home/node/.claude/.credentials.json',
+      '**x**@/home/node/.claude/.credentials.json',
+      '[x](y)@/home/node/.claude/.credentials.json and <b>@/home/node</b>',
+      '(@/home/node) -@/home/node',
+      'Escaped \\` @/home/node/.claude/.credentials.json `',
+      'Write to ann@example.com; `@scope/pkg` stays.',
+      '```',
+      '@Component() class A {}',
+      '```',
+    ].join('\n');
+    const inert = inertImports(others);
+    // No ASCII @ outside code but an address's: the CLI's imports start with no other.
+    const prose = inert.replace(/^```[\s\S]*?^```/m, '').replace(/(?<!\\)`[^`\n]*`/g, '');
+    expect(prose.match(/@/g)).toEqual(['@']);
+    expect(inert).toContain('ann@example.com');
+    expect(inert).toContain('**x**＠/home/node');
+    expect(inert).toContain('`@scope/pkg`');
+    expect(inert).toContain('@Component() class A {}');
   });
 
   it('takes no CLAUDE.md that is a link out of the repository', () => {

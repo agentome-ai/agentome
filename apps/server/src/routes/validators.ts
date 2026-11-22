@@ -16,6 +16,8 @@ export const Name = z.string().trim().min(1).max(100);
  * A host an admin opens to the runs in places: a full name (two labels at least, so neither the
  * platform's own services nor a whole top-level domain), `*.domain.tld` for every name under it,
  * or an IPv4 address; with `:port` when not 443. Never this machine or link-local addresses.
+ * `public:` before a name keeps it to public addresses, as `*.` does: what a host allowed from
+ * the refusals gets, since a run chose its name, and whoever owns it can point it anywhere.
  */
 export const HostPattern = z
   .string()
@@ -23,11 +25,11 @@ export const HostPattern = z
   .toLowerCase()
   .max(253)
   .regex(
-    /^(?:(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+|(?:\d{1,3}\.){3}\d{1,3})(?::\d{1,5})?$/,
+    /^(?:(?:\*\.|public:)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+|(?:\d{1,3}\.){3}\d{1,3})(?::\d{1,5})?$/,
     'A full host name, *.example.com or an IPv4 address, with :port when not 443',
   )
   .refine((pattern) => {
-    const [host = '', port] = pattern.split(':');
+    const [host = '', port] = pattern.replace(/^public:/, '').split(':');
     if (port !== undefined && !(Number(port) >= 1 && Number(port) <= 65_535)) return false;
     // `*.com` has one label under the star: the whole domain.
     if (host.startsWith('*.') && !host.slice(2).includes('.')) return false;
@@ -81,6 +83,26 @@ const SHARED = [
   'trycloudflare.com',
   'digitaloceanspaces.com',
   'ondigitalocean.app',
+  'cloudfunctions.net',
+  'firebaseio.com',
+  'azurestaticapps.net',
+  'atlassian.net',
+  'ngrok.app',
+  'ngrok.dev',
+  'loca.lt',
+  'serveo.net',
+  'deno.dev',
+  'railway.app',
+  'replit.app',
+  'repl.co',
+  'glitch.me',
+  'surge.sh',
+  'supabase.co',
+  'modal.run',
+  // Names that resolve to whatever address they spell, a company's included.
+  'nip.io',
+  'sslip.io',
+  'xip.io',
 ];
 const COUNTRY_SECOND =
   /^(?:co|com|net|org|ac|edu|gov|gob|go|ne|or|mil|nic|ltd|plc|sch|me|info|biz)\.[a-z]{2}$/;

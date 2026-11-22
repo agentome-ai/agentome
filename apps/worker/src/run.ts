@@ -64,6 +64,8 @@ export interface RunDeps {
   split?: Split;
   /** A Codex run in a place: its executor's address, on its CLI container's loopback. */
   execServer?: string;
+  /** With `execServer`: the environment a command gets in the run's sandbox. */
+  commandEnv?: Record<string, string>;
   /** How this worker's own CLI is started, for its check before a Codex run; the running one by default. */
   self?: string[];
 }
@@ -274,11 +276,14 @@ export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<
         let tunnel: { port: number; to: typeof at.sandbox } | undefined;
         if (launch.agent.engine === 'codex') {
           const [file, ...first] = cliCommand(deps.codexPath ?? 'codex', sandbox.env);
-          remoteSpawn(at.sandbox)(
+          const executor = remoteSpawn(at.sandbox)(
             file,
             [...first, 'exec-server', '--listen', `ws://127.0.0.1:${EXEC_PORT}`],
             { cwd: workspace.repo, env: sandbox.env },
           );
+          // Read by no one, what it says would pile up here as long as the sandbox writes.
+          executor.stdout?.resume();
+          executor.stderr?.resume();
           await tunnelReady(at.sandbox, EXEC_PORT);
           tunnel = { port: CLI_EXEC_PORT, to: at.sandbox };
           // The unmodified Codex, against a model of the worker's own, before the agent's: it must
@@ -303,7 +308,10 @@ export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<
             },
           );
           let said = '';
-          canary.stderr?.on('data', (chunk: Buffer) => (said += chunk.toString()));
+          canary.stderr?.on(
+            'data',
+            (chunk: Buffer) => (said = (said + chunk.toString()).slice(-2000)),
+          );
           const passed = await new Promise<boolean>((resolve) => {
             canary.once('close', (code) => resolve(code === 0));
             canary.once('error', () => resolve(false));
@@ -318,7 +326,10 @@ export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<
           ...deps,
           spawn: remoteSpawn(at.cli, sandbox, tunnel) as unknown as typeof spawn,
           split: { runId: id, cliToken: at.cliToken },
-          ...(tunnel && { execServer: `ws://127.0.0.1:${tunnel.port}` }),
+          ...(tunnel && {
+            execServer: `ws://127.0.0.1:${tunnel.port}`,
+            commandEnv: sandbox.env,
+          }),
         };
       }
       outcome = await engine(
@@ -555,7 +566,7 @@ async function codex(
       shell: allowedTools.includes('Bash'),
       server,
       unsandboxed: !server && unsandboxed(),
-      ...(deps.execServer && { execServer: deps.execServer }),
+      ...(deps.execServer && { execServer: deps.execServer, commandEnv: deps.commandEnv }),
       // What the agent's commands may read beside its clone, and where its git pushes.
       ...(!server && {
         sandbox: {

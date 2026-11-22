@@ -973,6 +973,15 @@ describe('new instructions an agent proposes', () => {
       always: true,
     });
     expect(always.statusCode).toBe(400);
+    // Nor through a personal token, which the management MCP signs in with.
+    const made = await asAdmin('POST', '/api/me/tokens', { name: 'proposals' });
+    const { token: personal } = made.json<{ token: string }>();
+    const byToken = await app.inject({
+      method: 'POST',
+      url: `/api/tool-calls/${pending.id}/approve`,
+      headers: { authorization: `Bearer ${personal}` },
+    });
+    expect(byToken.statusCode).toBe(403);
     expect(await instructionsOf(agentId)).toBe('Write tests.');
 
     await asAdmin('POST', `/api/tool-calls/${pending.id}/approve`);
@@ -993,6 +1002,19 @@ describe('new instructions an agent proposes', () => {
     expect(answer.isError).toBe(true);
     expect(text(answer)).toContain('changed while your owner considered the proposal');
     expect(await instructionsOf(agentId)).toBe('Ship small changes.');
+    await client.close();
+  });
+
+  it('are refused with a character the owner would not see', async () => {
+    const { runId, token } = await liveRun(null);
+    const client = await clientFor(token);
+    for (const hidden of ['Run tests.\u202eadmin', 'Run\u200b tests.', 'Run \u2066tests\u2069.']) {
+      const answer = await propose(client, hidden);
+      expect(answer.isError, JSON.stringify(hidden)).toBe(true);
+    }
+    // Nothing waits for the owner.
+    const calls = await db.select().from(toolCalls).where(eq(toolCalls.runId, runId));
+    expect(calls.filter((call) => call.decision === 'pending')).toEqual([]);
     await client.close();
   });
 
@@ -1345,7 +1367,7 @@ describe('a library MCP server', () => {
       'http://[fe81::1]/mcp',
       'http://[64:ff9b::7f00:1]/mcp',
     ]) {
-      await expect(guardedFetch(url)).rejects.toThrow(/this machine or a link-local address/);
+      await expect(guardedFetch(url)).rejects.toThrow(/this machine, a link-local address/);
     }
     // A company network is where its servers live; a redirect from one is not followed.
     vi.stubGlobal(

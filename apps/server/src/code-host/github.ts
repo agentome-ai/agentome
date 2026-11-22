@@ -313,9 +313,17 @@ export function githubHost(options: {
         for (const [path, sha] of before.files) {
           if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) await follow(sha);
         }
+        const inside = new Set<string>();
         for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
-          if (actions.has(next) || next.startsWith('.github/')) continue;
-          if (actions.size >= MAX_PIPELINE_FILES) return true;
+          if (actions.has(next) || inside.has(next)) continue;
+          if (actions.size + inside.size >= MAX_PIPELINE_FILES) return true;
+          // An action in `.github` was compared with the folder; one it uses outside is not.
+          if (next.startsWith('.github/')) {
+            inside.add(next);
+            const sha = before.files.get(next);
+            if (sha !== undefined) await follow(sha);
+            continue;
+          }
           const sha = await fileAt(next, base);
           actions.set(next, sha);
           if (sha !== undefined && sha !== 'a folder') await follow(sha);

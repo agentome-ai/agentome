@@ -133,6 +133,12 @@ describe('the egress rules', () => {
     expect(hostAllowed('claude.ai', 22, ['claude.ai'])).toBeUndefined();
     expect(hostAllowed('git.corp', 8443, ['git.corp:8443'])).toBeDefined();
     expect(hostAllowed('git.corp', 443, ['git.corp:8443'])).toBeUndefined();
+    // Allowed from the refusals: that host only, and public addresses only.
+    expect(hostAllowed('cdn.example.io', 8080, ['public:cdn.example.io:8080'])).toEqual({
+      pattern: 'public:cdn.example.io:8080',
+      exact: false,
+    });
+    expect(hostAllowed('x.cdn.example.io', 443, ['public:cdn.example.io'])).toBeUndefined();
     expect(ownHost('https://agentome.example.com')).toBe('agentome.example.com:443');
     expect(ownHost('http://localhost:4440')).toBe('localhost:4440');
   });
@@ -149,6 +155,8 @@ describe('the egress rules', () => {
       '::ffff:127.0.0.1',
       // The clouds' metadata, by whatever name, and inside NAT64's prefix.
       'fd00:ec2::254',
+      'fd00:ec2::23',
+      'fd20:ce::254',
       '100.100.100.200',
       '168.63.129.16',
       '64:ff9b::a9fe:a9fe',
@@ -323,6 +331,14 @@ describe('the egress proxy', () => {
     for (let i = 0; i < 40; i += 1) await status(`random ${i}`);
     // 30 new tokens a minute from this address, the run's own the first of them.
     expect(asks).toBe(29);
+    // A refused token asked again counts as a new one: in a fresh minute, 30 in all.
+    clock = 120_000;
+    asks = 0;
+    for (let i = 0; i < 30; i += 1) await status(`random ${i}`);
+    expect(asks).toBe(30);
+    clock += 10_001;
+    await status('random 0');
+    expect(asks).toBe(30);
     steady.closeAllConnections();
     await new Promise((resolve) => steady.close(resolve));
   }, 20_000);
@@ -390,35 +406,102 @@ describe('the egress proxy', () => {
     expect(
       (await send(`http://opened.test:${httpPort}/`, basic('p1', 'the place token'))).status,
     ).toBe(403);
+    // A name no CONNECT could carry, which the app would not read in the log: refused first.
+    expect((await send(`http://a_b.test:${httpPort}/`, basic('run', 'the run token'))).status).toBe(
+      400,
+    );
   });
 
-  it('tells the app what it let out and refused, by token, a host it let out once a minute', async () => {
+  it('tells the app of each connection it let out, with its rule and bytes, and of each refusal', async () => {
     const told: EgressEvent[] = [];
+    let clock = 1_000;
     const own = egressProxy({
       hostsOf,
       report: async (events) => void told.push(...events),
       log: () => {},
+      now: () => clock,
       lookup,
       reachable: () => true,
     });
     await listen(own);
     const port = (own.address() as AddressInfo).port;
-    const call = async (authority: string) =>
-      (await tunnel(authority, basic('run', 'the run token'), port)).socket.destroy();
-    for (let n = 0; n < 3; n++) await call(`opened.test:${tcpPort}`);
-    for (let n = 0; n < 2; n++) await call(`closed.test:${tcpPort}`);
-    await vi.waitFor(() => expect(told.length).toBeGreaterThan(0), { timeout: 8000 });
-    const run = { kind: 'run', token: 'the run token', port: tcpPort };
-    expect(told).toEqual([
-      { ...run, host: 'opened.test', allowed: true, count: 3 },
-      { ...run, host: 'closed.test', allowed: false, count: 2 },
-    ]);
-    // Let out again within the minute: nothing new to tell; refused again: told again.
-    told.length = 0;
-    await call(`opened.test:${tcpPort}`);
-    await call(`closed.test:${tcpPort}`);
-    await vi.waitFor(() => expect(told.length).toBeGreaterThan(0), { timeout: 8000 });
-    expect(told).toEqual([{ ...run, host: 'closed.test', allowed: false, count: 1 }]);
+    const token = basic('run', 'the run token');
+    const hello = await helloFor('opened.test');
+    // Two tunnels that speak TLS to their name: each its own line, as it ends.
+    for (let n = 0; n < 2; n++) {
+      const { socket } = await tunnel(`opened.test:${tcpPort}`, token, port);
+      const ended = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+      socket.write(hello);
+      clock += 250;
+      await ended;
+    }
+    // One that says hello to another name, and two to a host the list does not have.
+    const wrong = await tunnel(`opened.test:${tcpPort}`, token, port);
+    wrong.socket.write(await helloFor('evil.example.net'));
+    for (let n = 0; n < 2; n++)
+      (await tunnel(`closed.test:${tcpPort}`, token, port)).socket.destroy();
+    // Plain HTTP: the method, the path without its query, the answer's status.
+    await new Promise<void>((resolve, reject) => {
+      const req = request(
+        {
+          host: '127.0.0.1',
+          port,
+          path: `http://opened.test:${httpPort}/plain?secret=1`,
+          method: 'GET',
+          headers: { 'proxy-authorization': token },
+        },
+        (res) => {
+          res.resume();
+          res.on('end', () => resolve());
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    await vi.waitFor(() => expect(told.length).toBe(5), { timeout: 8000 });
+    const run = { kind: 'run', token: 'the run token' };
+    const tunnels = told.filter((event) => event.allowed && event.method === undefined);
+    expect(tunnels).toHaveLength(2);
+    for (const event of tunnels) {
+      expect(event).toMatchObject({
+        ...run,
+        host: 'opened.test',
+        port: tcpPort,
+        count: 1,
+        rule: `opened.test:${tcpPort}`,
+        sent: hello.length,
+        received: 'hello from the server'.length,
+        ms: 250,
+      });
+    }
+    expect(told).toContainEqual(
+      expect.objectContaining({
+        ...run,
+        host: 'opened.test',
+        port: httpPort,
+        allowed: true,
+        rule: `opened.test:${httpPort}`,
+        method: 'GET',
+        path: '/plain',
+        status: 200,
+      }),
+    );
+    expect(told).toContainEqual({
+      ...run,
+      host: 'opened.test',
+      port: tcpPort,
+      allowed: false,
+      count: 1,
+      reason: 'hello',
+    });
+    expect(told).toContainEqual({
+      ...run,
+      host: 'closed.test',
+      port: tcpPort,
+      allowed: false,
+      count: 2,
+      reason: 'not-listed',
+    });
     await new Promise((resolve) => own.close(resolve));
   }, 20_000);
 });

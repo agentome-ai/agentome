@@ -13,6 +13,7 @@ import {
 } from '@agentome/db';
 import { PROPOSE_INSTRUCTIONS } from '@agentome/shared';
 import { AppError } from '../errors.js';
+import { untrusted } from '../mcp/untrusted.js';
 import { createTask } from '../tasks/service.js';
 import { lastMonth, type Numbers, perTask, qualityOf, type Window } from './quality.js';
 
@@ -91,7 +92,7 @@ async function returnedSection(db: Db, returned: Returned[]): Promise<string> {
       .where(and(inArray(taskComments.taskId, ids), isNotNull(taskComments.authorUserId)))
       .orderBy(desc(taskComments.createdAt)),
   ]);
-  return returned
+  const section = returned
     .map((task) => {
       const lines = [`### ${task.title} (${cameBack(task)})`, '', 'Its runs, oldest first:'];
       for (const run of taskRuns.filter((one) => one.taskId === task.id)) {
@@ -109,6 +110,9 @@ async function returnedSection(db: Db, returned: Returned[]): Promise<string> {
       return lines.join('\n');
     })
     .join('\n\n');
+  // Titles from Jira and change requests, the reasons runs were started with, past reports and
+  // people's comments: what others wrote, read as data, as the gateway hands over theirs.
+  return untrusted('the tasks that came back, their runs and their threads', section);
 }
 
 const STEPS = `## What to do

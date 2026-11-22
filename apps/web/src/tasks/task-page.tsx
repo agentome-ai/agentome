@@ -213,10 +213,11 @@ function TaskView({ id }: { id: string }) {
           <h1 className="text-name">{task.title}</h1>
         </InPlace>,
       )}
-      {/* The run page's skeleton: what the task says on the left, what it is on the right. */}
+      {/* The run page's skeleton: what the task says on the left, what it is beside it, not at
+          the far edge of a wide screen. */}
       <div
         className={cn(
-          'grid grid-cols-[minmax(0,1fr)] gap-x-12 gap-y-8 pt-6 pb-24 lg:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_340px]',
+          'grid grid-cols-[minmax(0,1fr)] gap-x-12 gap-y-8 pt-6 pb-24 lg:grid-cols-[minmax(0,820px)_300px] 2xl:grid-cols-[minmax(0,820px)_340px]',
           frame.wide,
         )}
       >

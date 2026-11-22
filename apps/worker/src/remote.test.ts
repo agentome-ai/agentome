@@ -104,6 +104,26 @@ describe("a run's container's server", () => {
   });
 });
 
+describe('a run server the sandbox replaced', () => {
+  it('gets no more than a line of output at a time into the worker', async () => {
+    // A server that answers with one endless line, as one in a sandbox might.
+    const flood = createServer((socket) => {
+      const chunk = 'x'.repeat(64 * 1024);
+      const pour = () => {
+        while (socket.writable && socket.write(chunk));
+        if (socket.writable) socket.once('drain', pour);
+      };
+      pour();
+      socket.on('error', () => undefined);
+    });
+    await new Promise<void>((resolve) => flood.listen(0, '127.0.0.1', resolve));
+    const { port } = flood.address() as { port: number };
+    const child = remoteSpawn({ host: '127.0.0.1', port, key: KEY })(process.execPath, [], {});
+    expect(await ended(child)).toEqual([null, 'SIGKILL']);
+    flood.close();
+  });
+});
+
 describe("a run's container, as it starts", () => {
   it('knocks once on the place, so that it learns the new container, and on nothing it cannot find', async () => {
     const knocked = new Promise<void>((resolve) => {

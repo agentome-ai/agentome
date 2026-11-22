@@ -22,7 +22,8 @@ function fakeDocker() {
     asked.push({ method, path, ...(body !== undefined && { body }) });
     // Every call a launcher makes passes the docker guard, which stands before the real socket.
     const passes = callAllowed(method, path, body as Record<string, unknown> | undefined, {
-      runtimes: ['runsc', 'runsc-docker'],
+      // The runtimes the tests give places: the host's kernel by name, or gVisor.
+      runtimes: ['runc', 'runsc', 'runsc-docker'],
       sandboxRuntime: 'runsc-docker',
       peers: ['app', 'place-egress'],
     });

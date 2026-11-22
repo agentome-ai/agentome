@@ -48,7 +48,7 @@ export interface DockerPlaceSettings extends PlaceNetwork {
 }
 
 /** Docker's own image, for a run's Docker: the engine, run as root inside gVisor's kernel. */
-export const DOCKER_IMAGE = 'docker.io/library/docker:28.5.2-dind';
+export const DOCKER_IMAGE = 'docker.io/library/docker:29.9.3-dind';
 
 /**
  * A run's own Docker, beside its sandbox, for testcontainers and compose: dockerd on the place's

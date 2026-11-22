@@ -18,7 +18,7 @@ components:
 # The release: an update or a rollback changes newTag.
 images:
   - name: docker.io/agentome/agentome
-    newTag: 0.4.0
+    newTag: 0.4.1
 
 # The server's settings (deploy/CONFIG.md); add any other one as NAME=value. Secrets go into
 # the Secret instead. A change here restarts the server on the next apply.

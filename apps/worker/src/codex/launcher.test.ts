@@ -151,6 +151,28 @@ describe('runCodex', () => {
     }
   });
 
+  it("in a place, gives a command the sandbox's environment, never the CLI's way out", async () => {
+    const { outcome, invocation } = await run(
+      {
+        CODEX_FAKE_FIXTURE: join(fixtures, 'success.jsonl'),
+        HTTPS_PROXY: 'http://cli-1:cli-secret@egress:3128',
+      },
+      {
+        execServer: 'ws://127.0.0.1:7421',
+        commandEnv: { HTTPS_PROXY: 'http://run:run-secret@egress:3128', HOME: '/home/node' },
+        sandbox: { readable: [], hosts: [] },
+      },
+    );
+    expect(outcome.status).toBe('done');
+    const policy =
+      invocation.args
+        .find((arg) => arg.startsWith('shell_environment_policy='))
+        ?.slice('shell_environment_policy='.length) ?? '';
+    expect(policy).toContain('inherit = "none"');
+    expect(policy).toContain('"HTTPS_PROXY" = "http://run:run-secret@egress:3128"');
+    expect(policy).not.toContain('cli-secret');
+  });
+
   it('on a computer, checks the sandbox the run will have, whatever the server names its host', async () => {
     const checked = join(dir, 'sandbox.json');
     const { invocation } = await run(

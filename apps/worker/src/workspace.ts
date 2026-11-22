@@ -104,29 +104,45 @@ const IMPORT_DEPTH = 5;
 const IMPORT = /(^|\s)@(\S+)/g;
 
 /**
- * Markdown with its imports made plain text, outside code: the profile's CLAUDE.md is read by
- * the CLI, which would follow an `@/home/node/.claude/.credentials.json` there past every rule on
- * the file tools.
+ * `change` applied to markdown outside its code: fenced blocks and code spans, which Claude Code
+ * reads no import in. A backtick after a backslash opens no span, as in markdown.
  */
-function withoutImports(text: string, found: (path: string) => void = () => undefined): string {
+function outsideCode(text: string, change: (prose: string) => string): string {
   return text
     .split(/(^```[\s\S]*?^```)/m)
     .map((part, i) =>
       i % 2 === 1
         ? part
         : part
-            .split(/(`[^`\n]*`)/)
-            .map((piece, j) =>
-              j % 2 === 1
-                ? piece
-                : piece.replace(IMPORT, (_, before: string, path: string) => {
-                    found(path);
-                    return `${before}${path}`;
-                  }),
-            )
+            .split(/((?<!\\)`[^`\n]*`)/)
+            .map((piece, j) => (j % 2 === 1 ? piece : change(piece)))
             .join(''),
     )
     .join('');
+}
+
+/**
+ * Markdown with its imports made plain text, outside code: the profile's CLAUDE.md is read by
+ * the CLI, which would follow an `@/home/node/.claude/.credentials.json` there past every rule on
+ * the file tools.
+ */
+function withoutImports(text: string, found: (path: string) => void = () => undefined): string {
+  return outsideCode(text, (prose) =>
+    prose.replace(IMPORT, (_, before: string, path: string) => {
+      found(path);
+      return `${before}${path}`;
+    }),
+  );
+}
+
+/**
+ * The whole profile's CLAUDE.md with no `@` the CLI could take for an import: a task's thread,
+ * past reports and skills' descriptions are others' words, and the CLI's markdown splits text in
+ * places no pattern here follows (after `**x**`, a link, a tag). An `@` right after a letter or a
+ * digit stays, an address's; any other becomes a full-width `＠`, which reads the same.
+ */
+export function inertImports(text: string): string {
+  return outsideCode(text, (prose) => prose.replace(/(?<![A-Za-z0-9])@/g, '＠'));
 }
 
 /**
@@ -383,10 +399,11 @@ export async function prepareWorkspace(
   }
 
   mkdirSync(profile, { mode: 0o700 });
-  const claudeMd =
+  const claudeMd = inertImports(
     launch.workspace.profile.claudeMd +
-    repositoryInstructionsSection(repo) +
-    repositorySkillsSection(repo);
+      repositoryInstructionsSection(repo) +
+      repositorySkillsSection(repo),
+  );
   writeFileSync(join(profile, 'CLAUDE.md'), claudeMd, { mode: 0o400 });
   writeMemory(profile, launch.agent.memoryDocuments ?? []);
   writeSkills(profile, launch.agent.skills ?? []);

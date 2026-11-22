@@ -75,7 +75,7 @@ export function RunPage() {
   if (error?.code === 'not_found' || error?.code === 'validation_failed') {
     return (
       <>
-        <PageHeader title="Run" crumbs={crumbs} width="pair" />
+        <PageHeader title="Run" crumbs={crumbs} width="wide" />
         <EmptyState
           title="Run not found"
           action={
@@ -93,8 +93,8 @@ export function RunPage() {
   if (error && (!run || error.code === 'unauthorized')) {
     return (
       <>
-        <PageHeader title="Run" crumbs={crumbs} width="pair" />
-        <div className={frame.pair}>
+        <PageHeader title="Run" crumbs={crumbs} width="wide" />
+        <div className={frame.wide}>
           <ApiErrorState title="Couldn't load the run" error={error} onRetry={load} />
         </div>
       </>
@@ -103,8 +103,8 @@ export function RunPage() {
   if (!run) {
     return (
       <>
-        <PageHeader title="Run" crumbs={crumbs} width="pair" />
-        <div className={cn('pt-6', frame.pair)}>
+        <PageHeader title="Run" crumbs={crumbs} width="wide" />
+        <div className={cn('pt-6', frame.wide)}>
           <LoadingState label="Loading the run" />
         </div>
       </>
@@ -136,7 +136,7 @@ function RunView({ run, reload }: { run: RunDetail; reload: () => Promise<void> 
     <>
       <PageHeader
         title={runTitle(run)}
-        width="pair"
+        width="wide"
         crumbs={[{ label: 'Runs', to: '/runs' }]}
         actions={
           <>
@@ -156,7 +156,7 @@ function RunView({ run, reload }: { run: RunDetail; reload: () => Promise<void> 
           // and the results beside it: with a column as wide as the page the facts card ran
           // 400 px past everything under it.
           'grid grid-cols-[minmax(0,1fr)] gap-x-12 gap-y-8 pt-6 pb-24 lg:grid-cols-[minmax(0,820px)_300px] 2xl:grid-cols-[minmax(0,820px)_340px]',
-          frame.pair,
+          frame.wide,
         )}
       >
         {/* The facts first, the result under them, on a phone and a wide screen alike:

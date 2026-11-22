@@ -2,6 +2,7 @@ import type { Db } from '@agentome/db';
 import { ToolDecision } from '@agentome/shared';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { signedInWithToken } from '../auth.js';
 import { approveForGood, decideToolCall } from '../mcp/policy.js';
 import { IdParams, noStore } from '../protocol.js';
 import { listApprovals } from './service.js';
@@ -47,7 +48,11 @@ export const approvalRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { d
       },
     },
     async (request) => {
-      const call = { id: request.params.id, userId: request.user.id };
+      const call = {
+        id: request.params.id,
+        userId: request.user.id,
+        viaToken: signedInWithToken(request),
+      };
       return request.body?.always
         ? approveForGood(db, call)
         : decideToolCall(db, { ...call, decision: 'approved' });

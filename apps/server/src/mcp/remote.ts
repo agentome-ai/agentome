@@ -10,6 +10,7 @@ import {
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { type CallToolResult, McpError } from '@modelcontextprotocol/sdk/types.js';
 import packageJson from '../../package.json' with { type: 'json' };
+import { METADATA } from '../places/metadata.js';
 
 // The library's MCP servers: remote, over streamable HTTP, and the gateway is their
 // only client, with each server's secret, which never leaves the platform. A person names the
@@ -53,6 +54,12 @@ for (const [address, prefix] of [
   FORBIDDEN.addSubnet(`::ffff:${address}`, 96 + prefix, 'ipv6');
   FORBIDDEN.addSubnet(`64:ff9b::${address}`, 96 + prefix, 'ipv6');
 }
+for (const address of METADATA.ipv4) {
+  FORBIDDEN.addAddress(address, 'ipv4');
+  FORBIDDEN.addAddress(`::ffff:${address}`, 'ipv6');
+  FORBIDDEN.addAddress(`64:ff9b::${address}`, 'ipv6');
+}
+for (const address of METADATA.ipv6) FORBIDDEN.addAddress(address, 'ipv6');
 FORBIDDEN.addSubnet('::', 96, 'ipv6');
 FORBIDDEN.addSubnet('fe80::', 10, 'ipv6');
 FORBIDDEN.addSubnet('ff00::', 8, 'ipv6');
@@ -70,7 +77,9 @@ export const checkedLookup: LookupFunction = (hostname, options, callback) => {
     if (error) return callback(error, '', 0);
     const addresses = found as unknown as { address: string; family: number }[];
     if (addresses.length === 0 || addresses.some((entry) => forbidden(entry.address))) {
-      const refused = new RemoteError(`${hostname} is this machine or a link-local address`);
+      const refused = new RemoteError(
+        `${hostname} is this machine, a link-local address or a cloud's metadata service`,
+      );
       return callback(refused as NodeJS.ErrnoException, '', 0);
     }
     if (options.all) {
@@ -94,7 +103,9 @@ export const guardedFetch: FetchLike = async (url, init) => {
     ? [host]
     : (await lookup(host, { all: true })).map((found) => found.address);
   if (addresses.some(forbidden)) {
-    throw new RemoteError(`${target.host} is this machine or a link-local address`);
+    throw new RemoteError(
+      `${target.host} is this machine, a link-local address or a cloud's metadata service`,
+    );
   }
   const response = await span(
     `mcp ${init?.method ?? 'GET'} ${spanUrl(url)}`,

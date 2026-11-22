@@ -12,7 +12,7 @@ const ID = '6f1c2a7e-0b5d-4e3a-9c8f-1a2b3c4d5e6f';
 const AGENT = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
 
 type PodBody = {
-  metadata: { name: string; labels: Record<string, string> };
+  metadata: { name: string; uid?: string; labels: Record<string, string> };
   spec: {
     restartPolicy: string;
     automountServiceAccountToken: boolean;
@@ -33,8 +33,28 @@ function fakeCluster(options: { pairing?: 'Succeeded' | 'Failed' } = {}) {
   const asked: { method: string; path: string; body?: unknown }[] = [];
   const pods = new Map<string, { body: PodBody; phase: string }>();
   const claims = new Set<string>();
+  const policies = new Map<string, Record<string, unknown>>();
+  // gVisor's RuntimeClass, and one named so that runs runc.
+  const classes: Record<string, string> = { gvisor: 'runsc', 'gvisor-fake': 'runc' };
   const kube: Kube = async (method, path, body) => {
     asked.push({ method, path, ...(body !== undefined && { body }) });
+    const runtimeClass = /^\/apis\/node\.k8s\.io\/v1\/runtimeclasses\/(.+)$/.exec(path)?.[1];
+    if (runtimeClass !== undefined && method === 'GET') {
+      const handler = classes[runtimeClass];
+      return handler ? { status: 200, body: { handler } } : { status: 404, body: {} };
+    }
+    const policyPath = '/apis/networking.k8s.io/v1/namespaces/{namespace}/networkpolicies';
+    if (method === 'POST' && path === policyPath) {
+      const made = body as { metadata: { name: string } };
+      if (policies.has(made.metadata.name)) return { status: 409, body: {} };
+      policies.set(made.metadata.name, made as Record<string, unknown>);
+      return { status: 201, body };
+    }
+    if (method === 'DELETE' && path.startsWith(`${policyPath}/`)) {
+      return policies.delete(path.slice(policyPath.length + 1))
+        ? { status: 200, body: {} }
+        : { status: 404, body: {} };
+    }
     const pod = /^\/pods\/([^/?]+)/.exec(path)?.[1];
     const claim = /^\/persistentvolumeclaims\/([^/?]+)/.exec(path)?.[1];
     if (method === 'POST' && path === '/pods') {
@@ -42,6 +62,7 @@ function fakeCluster(options: { pairing?: 'Succeeded' | 'Failed' } = {}) {
       if (pods.has(made.metadata.name)) return { status: 409, body: { message: 'exists' } };
       const once =
         made.spec.restartPolicy === 'Never' && !made.metadata.name.startsWith('agentome-run-');
+      made.metadata.uid = `uid-${made.metadata.name}`;
       pods.set(made.metadata.name, {
         body: made,
         phase: once
@@ -115,7 +136,7 @@ function fakeCluster(options: { pairing?: 'Succeeded' | 'Failed' } = {}) {
       resize: (cols, rows) => void resized.push([cols, rows]),
     };
   };
-  return { kube, exec, asked, pods, claims, ran, resized };
+  return { kube, exec, asked, pods, claims, policies, ran, resized };
 }
 
 /** What a place's environment is made of, as `settingsOf` gives it. */
@@ -124,13 +145,13 @@ const settingsShape = {
   egress: { proxy: 'place-egress:3128', tokenOf: (id: string) => `token-of-${id}` },
 };
 
-function settingsOf(cluster: ReturnType<typeof fakeCluster>): LauncherSettings {
+function settingsOf(cluster: ReturnType<typeof fakeCluster>, runtime = 'runc'): LauncherSettings {
   const places: KubePlaceSettings = {
     kube: cluster.kube,
     exec: cluster.exec,
     image: 'docker.io/agentome/agentome-seat:0.1.0',
-    // The nodes' kernel, asked for by name.
-    runtime: 'runc',
+    // The nodes' kernel, asked for by name, unless a test gives a RuntimeClass.
+    runtime,
     serverUrl: 'http://agentome:3000',
     egress: { proxy: 'place-egress:3128', tokenOf: (id) => `token-of-${id}` },
     patience: { tries: 3, everyMs: 1 },
@@ -218,6 +239,25 @@ describe('the place launcher on Kubernetes', () => {
     expect((await order(settings, 'POST', `/places/${ID}`, { code: 'K7QX-M2PH' })).status).toBe(
       409,
     );
+  });
+
+  it('makes a place under a RuntimeClass that runs gVisor only', async () => {
+    const real = fakeCluster();
+    const made = await order(settingsOf(real, 'gvisor'), 'POST', `/places/${ID}`, {
+      code: 'K7QX-M2PH',
+    });
+    expect(made.status).toBe(201);
+    for (const runtime of ['gvisor-fake', 'absent']) {
+      const cluster = fakeCluster();
+      const refused = await order(settingsOf(cluster, runtime), 'POST', `/places/${ID}`, {
+        code: 'K7QX-M2PH',
+      });
+      expect(refused.status, runtime).toBe(409);
+      expect(
+        cluster.asked.some((call) => call.method === 'POST'),
+        runtime,
+      ).toBe(false);
+    }
   });
 
   it('makes no place when the pairing fails', async () => {
@@ -342,6 +382,19 @@ describe('the place launcher on Kubernetes', () => {
     const pod = cluster.pods.get(`agentome-run-${RUN}`)?.body as PodBody & {
       spec: { nodeName?: string; hostAliases?: unknown; dnsPolicy?: string };
     };
+    // Only the person's own pods reach the run's CLI container, by a policy that goes with the pod.
+    expect(cluster.policies.get(`agentome-run-${RUN}`)).toMatchObject({
+      metadata: { ownerReferences: [{ kind: 'Pod', uid: `uid-agentome-run-${RUN}` }] },
+      spec: {
+        podSelector: { matchLabels: { 'ai.agentome.run': RUN } },
+        ingress: [
+          {
+            from: [{ podSelector: { matchLabels: { 'ai.agentome.place': ID } } }],
+            ports: [{ port: 7419, protocol: 'TCP' }],
+          },
+        ],
+      },
+    });
     // On the place's node, where its volumes are; a place's label, so the places' policy holds.
     expect(pod.spec.nodeName).toBe('node-1');
     expect(pod.metadata.labels).toMatchObject({

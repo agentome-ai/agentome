@@ -15,6 +15,16 @@ import {
   writeMemory,
 } from '../memory/service.js';
 
+/**
+ * Characters the owner would not see in the change they approve: zero-width ones, and those
+ * that turn the order of text around (a line that reads one way and does another).
+ */
+// Joiners (U+200C, U+200D) stay: scripts and emoji need them, and they hide nothing.
+const HIDDEN = /[\u00ad\u180e\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/;
+const seen = (text: string) => !HIDDEN.test(text);
+const UNSEEN =
+  'Write it without invisible characters or ones that change the direction of text: your owner reads what they approve';
+
 // The agent's tools. The code host's name no repository: the server takes the run's
 // own, so an agent cannot point the organization's token anywhere else; the same five for GitHub
 // and GitLab, in our words. The Jira's name no issue either: only the one the task came from.
@@ -307,12 +317,14 @@ export const TOOLS: Tool[] = [
         .trim()
         .min(1)
         .max(100_000)
+        .refine(seen, UNSEEN)
         .describe('The whole new text of your instructions, in markdown'),
       why: z
         .string()
         .trim()
         .min(1)
         .max(4_000)
+        .refine(seen, UNSEEN)
         .describe('Why, as your owner will read it: what went wrong, and how this helps'),
     },
     readOnly: false,

@@ -16,7 +16,10 @@ const settings = {
   peers: ['app', 'place-egress'],
 };
 const place = 'agentome-place-0a1b2c3d';
-const base = { Labels: { 'ai.agentome.place': '0a1b2c3d' }, HostConfig: { NetworkMode: place } };
+const base = {
+  Labels: { 'ai.agentome.place': '0a1b2c3d' },
+  HostConfig: { NetworkMode: place, Runtime: 'runsc', SecurityOpt: ['no-new-privileges:true'] },
+};
 const refused = (body: Record<string, unknown>, name = `${place}-x`) =>
   containerAllowed(
     name,
@@ -50,10 +53,38 @@ describe('the docker guard', () => {
       { Runtime: 'runc-privileged' },
       // Capabilities on runc, under the sandbox runtime's name or not: only gVisor's Docker.
       { CapAdd: ['ALL'], Runtime: 'runsc' },
+      // A profile of the caller's own, or none against gaining privileges.
+      { SecurityOpt: ['no-new-privileges:true', 'seccomp=/etc/own-profile.json'] },
+      { SecurityOpt: [] },
     ]) {
       expect(refused({ HostConfig: host }), JSON.stringify(host)).toBe(false);
     }
     expect(refused({}, 'portainer')).toBe(false);
+    // Docker's default runtime, the host's kernel, where the installation did not choose runc.
+    const defaulted = { NetworkMode: place, SecurityOpt: ['no-new-privileges:true'] };
+    expect(containerAllowed(`${place}-x`, { ...base, HostConfig: defaulted }, settings).ok).toBe(
+      false,
+    );
+    expect(refused({ User: '0:0' })).toBe(false);
+    expect(refused({ User: '1000:1000' })).toBe(true);
+    // Where the installation chose the host's kernel, the launcher names no runtime.
+    const onRunc = { ...settings, runtimes: ['runc'] };
+    const plain = { ...base, HostConfig: defaulted };
+    expect(containerAllowed(`${place}-x`, plain, onRunc).ok).toBe(true);
+  });
+
+  it('pulls an image by its name, and imports none from an address under any name', () => {
+    const allowed = (path: string) => callAllowed('POST', path, undefined, settings).ok;
+    expect(allowed('/images/create?fromImage=docker.io%2Flibrary%2Fpostgres&tag=16')).toBe(true);
+    expect(
+      allowed(
+        '/images/create?fromSrc=http%3A%2F%2Fx.example%2Fa.tar&repo=docker.io%2Fagentome%2Fagentome&tag=0.4.0',
+      ),
+    ).toBe(false);
+    expect(allowed('/images/create?fromImage=postgres&tag=16&repo=agentome%2Fagentome')).toBe(
+      false,
+    );
+    expect(allowed('/images/create?tag=16')).toBe(false);
   });
 
   it('refuses a field in another case, a field it does not know, and the host by a volume', () => {
@@ -112,7 +143,7 @@ describe('the docker guard', () => {
         {
           HostConfig: {
             CapAdd: ['ALL'],
-            SecurityOpt: ['seccomp=unconfined'],
+            SecurityOpt: ['seccomp=unconfined', 'no-new-privileges:true'],
             Runtime: 'runsc-docker',
           },
         },

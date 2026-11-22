@@ -17,7 +17,7 @@
 set -eu
 
 # The release this script installs; the release commit sets it with compose.yaml's.
-RELEASE=0.4.0
+RELEASE=0.4.1
 
 usage() {
   cat <<'EOF'

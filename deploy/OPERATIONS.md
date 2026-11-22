@@ -162,6 +162,38 @@ cosign verify docker.io/agentome/agentome:0.2.1 \
 and the same for `docker.io/agentome/agentome-seat`. Pin the digest it names in `compose.yaml`
 (`image: docker.io/agentome/agentome@sha256:…`) to run exactly what you checked.
 
+Each image also carries what it was built from and what it holds: its build provenance (the
+repository, the commit and the workflow run) and a software bill of materials, which a scanner
+of your own can read instead of the image:
+
+```sh
+docker buildx imagetools inspect docker.io/agentome/agentome:<version> --format '{{ json .Provenance }}'
+docker buildx imagetools inspect docker.io/agentome/agentome:<version> --format '{{ json .SBOM }}'
+```
+
+A release goes out only when no secret is found in its tree and neither image has a critical
+vulnerability that already has a fix; the run's summary on GitHub lists every high and critical
+one it found. The `agentome` package on npm names the workflow run that published it, under
+**Provenance** on its page.
+
+### Checking the installer
+
+`install.sh` and `compose.yaml` of each release are on its GitHub Release page with
+`SHA256SUMS`, signed the same way. Check the script before you run it:
+
+```sh
+curl -fsSLO https://agentome.ai/install.sh
+curl -fsSLO https://github.com/agentome-ai/agentome/releases/latest/download/SHA256SUMS
+curl -fsSLO https://github.com/agentome-ai/agentome/releases/latest/download/SHA256SUMS.sigstore.json
+cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/agentome-ai/agentome/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum --ignore-missing -c SHA256SUMS
+sh install.sh
+```
+
+On macOS `shasum -a 256 --ignore-missing -c SHA256SUMS` does the same.
+
 ## Rolling back
 
 Set `AGENTOME_VERSION` back to the previous version and run
@@ -582,9 +614,11 @@ which hosts the call's token opens and lets out only those:
 - through CONNECT, only TLS to the name asked for: the proxy reads the client's first message
   (the TLS ClientHello) for the server name and closes a tunnel that names another or is not TLS.
   It reads nothing else of what passes;
-- at an address it checked and connects to: never this machine, a link-local address (the
-  cloud's metadata) or multicast, and the company's private networks (10/8, 172.16/12,
-  192.168/16, 100.64/10, fc00::/7) only for a host listed exactly, not through a `*.` pattern.
+- at an address it checked and connects to: never this machine, a link-local address, multicast
+  or a cloud's metadata service (AWS's, Google Cloud's and Alibaba's, over IPv4 and IPv6, and
+  Azure's wire server), and the company's private networks (10/8, 172.16/12, 192.168/16,
+  100.64/10, fc00::/7) only for a host listed exactly: not through a `*.` pattern, and not for a
+  host allowed from the refusals, which the list writes `public:host`.
 
 A run's token opens Agentome's address, the model vendors' hosts (`api.anthropic.com`,
 `platform.claude.com`, `claude.ai`, `api.openai.com`, `auth.openai.com`, `chatgpt.com`: the exact
@@ -606,11 +640,15 @@ what writes outside) and the vendors' own organisation controls are what limit i
 
 Every place event is in **Admin → Logs**, under the place's seat and, for a run, the run: made,
 woken, put to sleep and why, deleted, an agent's folders emptied, a terminal opened and closed
-(never what went through it), its services started or not. The egress proxy tells the app each
-host it refused (`a place was refused …`, a warning) and, once a minute a token, each host it let
-out (`a place reached …`, with how many connections), by the token each call came with, so a line
-names the run or place it was for and never the token (a run holds its token too, so it could add lines under its own name, at most 600 a minute; never under another's); `docker compose logs place-egress` has the
-refusals too.
+(never what went through it), its services started or not. The egress proxy tells the app of
+every connection it let out, as it ends (`a place reached …`, with `rule`, the entry of the list
+that let it out, `sent` and `received` bytes and `ms`; for plain HTTP also `method`, `path`
+without its query, and `status`), and of every host it refused (`a place was refused …`, a
+warning, with `reason`: `not-listed`, `address` or `hello`, and how many times in five seconds).
+For HTTPS it knows the host, never the path: it does not decrypt TLS. Each line is by the token
+the call came with, so it names the run or place it was for and never the token (a run holds its
+token too, so it could add lines under its own name, at most 600 a minute; never under
+another's); `docker compose logs place-egress` has the refusals too.
 
 In a place, an agent keeps one working folder per repository between runs, under `/seat/folders`:
 what git ignores (dependencies, builds) stays, and at the start of each run the worker writes the
@@ -649,9 +687,9 @@ containers.
 Places and runs get a kernel of their own with gVisor: install `runsc` on the Docker host
 (gvisor.dev, Install) and register it in `/etc/docker/daemon.json`, then set
 `AGENTOME_PLACE_RUNTIME=runsc` for the launcher; on Kubernetes, set it to the name of the
-cluster's gVisor RuntimeClass. The launcher makes no place until the variable is set, and on
-Docker it checks that the runtime it names is run by `runsc`: a name alone, one that Docker runs
-with runc, is refused. To run places on the host's kernel instead, say so with
+cluster's gVisor RuntimeClass. The launcher makes no place until the variable is set, and it
+checks that what it names runs gVisor: on Docker a runtime run by `runsc`, on Kubernetes a
+RuntimeClass whose handler is `runsc` (or `gvisor`, as GKE names it). A name alone is refused. To run places on the host's kernel instead, say so with
 `AGENTOME_PLACE_RUNTIME=runc`: the sign-in is still not in the sandbox's files, but an agent's
 command that broke out of its container would be on the host. Under gVisor Docker's own resolver does not answer, so the launcher writes each
 container the addresses it needs, the app, the proxy and the project's services, in its
@@ -885,15 +923,20 @@ storage class. Sleeping deletes the pod and keeps the claims; waking makes the p
 same claims. Everything else is as in [Places on the server](#places-on-the-server).
 
 - `place-launcher` makes the pods. Its service account may get, create and delete pods and
-  volume claims in `agentome-places`, and open a command in a pod there (the terminal, and
-  emptying an agent's folders), and nothing in the app's namespace or the cluster. It holds the
+  volume claims in `agentome-places`, open a command in a pod there (the terminal, and
+  emptying an agent's folders), and create and delete a run's NetworkPolicy there; in the
+  cluster it may only read a RuntimeClass, and nothing in the app's namespace. It holds the
   places' key, never the installation's.
 - Pod Security holds every pod in `agentome-places` to the baseline: none privileged, on the
   host's network or in its folders, whoever made it. Restricted is reported, not enforced: a
-  project's services keep their images' users. A ResourceQuota caps the pods, claims and
-  storage of all places; raise it in `places/namespace.yaml` for more people.
+  project's services keep their images' users. A ResourceQuota caps the pods, claims, storage
+  and the CPU and memory they ask for, of all places; raise it in `places/namespace.yaml` for
+  more people.
 - `place-egress` is the places' only way out, as with compose.
-- NetworkPolicies let a place reach the server and the egress proxy, and take no connection; a
+- Nothing in `agentome-places` connects or is connected to but by a NetworkPolicy. They let a
+  place reach the server, the egress proxy and its runs; a run's CLI container takes a
+  connection only from its own place, by a policy the launcher makes with the run's pod, which
+  goes with it. A
   place has no DNS (`dnsPolicy: None`) and gets the two services' addresses as host aliases,
   looked up when the launcher starts, so restart `place-launcher` and the places after
   recreating either service; only the server reaches the launcher, and only places the proxy. They
@@ -939,7 +982,7 @@ volume, then the server starts again:
 ```sh
 kubectl -n agentome scale deploy/agentome --replicas=0
 kubectl -n agentome run agentome-restore --rm -i --restart=Never \
-  --image=docker.io/agentome/agentome:0.4.0 --override-type=strategic --overrides='
+  --image=docker.io/agentome/agentome:0.4.1 --override-type=strategic --overrides='
 {"spec": {"securityContext": {"runAsNonRoot": true, "runAsUser": 1000, "runAsGroup": 1000,
     "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
   "containers": [{"name": "agentome-restore", "envFrom": [{"secretRef": {"name": "agentome"}}],

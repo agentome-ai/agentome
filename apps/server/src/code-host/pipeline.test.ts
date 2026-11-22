@@ -50,6 +50,18 @@ describe('the files that decide a pipeline', () => {
     });
     const mine = 'include:\n  - project: Acme/Shop\n    ref: $CI_COMMIT_SHA\n    file: ci.yml\n';
     expect(gitlabIncludes(mine, 'acme/shop').unreadable).toBe(true);
+    // This project's own file by its address, on whatever branch the address names.
+    for (const own of [
+      'include:\n  - remote: https://gitlab.corp/acme/shop/-/raw/agent/x/ci.yml\n',
+      'include: https://gitlab.corp/Acme/Shop/-/raw/main/ci.yml\n',
+      'include:\n  - remote: https://gitlab.corp/$CI_PROJECT_PATH/-/raw/main/ci.yml\n',
+    ]) {
+      expect(gitlabIncludes(own, 'acme/shop').unreadable, own).toBe(true);
+    }
+    // A child pipeline from what a job wrote at run time.
+    const dynamic =
+      'child:\n  trigger:\n    include:\n      - artifact: generated.yml\n        job: make-config\n';
+    expect(gitlabIncludes(dynamic, 'acme/shop').unreadable).toBe(true);
     const theirs = 'include:\n  - project: acme/templates\n    file: ci.yml\n';
     expect(gitlabIncludes(theirs, 'acme/shop').unreadable).toBe(false);
     const component = 'include:\n  - component: $CI_SERVER_FQDN/acme/shop/deploy@main\n';

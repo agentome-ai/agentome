@@ -260,6 +260,10 @@ describe('an agent quality', () => {
     expect(review!.body).toContain('pull/7 failed');
     expect(review!.body).toContain('Your report: Moved the badge into the header.');
     expect(review!.body).toContain('> The badge overlaps the logo.');
+    // What others wrote is quoted as data; the steps after it are the task's own.
+    const body = review!.body;
+    expect(body.indexOf('<untrusted_tool_result')).toBeLessThan(body.indexOf('### Fix the cart'));
+    expect(body.indexOf('</untrusted_tool_result>')).toBeLessThan(body.indexOf('## What to do'));
     expect(review!.body).toContain('agent_propose_instructions');
     // It runs at once, as a task a person starts.
     const queued = await db.select({ id: runs.id }).from(runs).where(eq(runs.taskId, taskId));

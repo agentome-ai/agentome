@@ -11,7 +11,13 @@ describe("a library server's connection", () => {
     for (const all of [true, false]) {
       const refused = await look('localhost', all);
       expect(refused.error).toBeInstanceOf(RemoteError);
-      expect(refused.error?.message).toMatch(/this machine or a link-local address/);
+      expect(refused.error?.message).toMatch(/this machine, a link-local address/);
+    }
+  });
+
+  it("connects to no cloud's metadata service, as the egress proxy does not", async () => {
+    for (const address of ['168.63.129.16', '100.100.100.200', 'fd20:ce::254', 'fd00:ec2::23']) {
+      expect((await look(address, true)).error, address).toBeInstanceOf(RemoteError);
     }
   });
 

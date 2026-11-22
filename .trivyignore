@@ -1,0 +1,6 @@
+# A critical vulnerability with a fix stops a release (release.yml, the gate job). One that cannot
+# be fixed before the release is named here with why and until when, one line each, and the line
+# goes when its date passes:
+#
+#   # libfoo in the seat image's .NET SDK: fixed upstream on 1 Dec, our base image takes it then.
+#   CVE-2026-00000 exp:2026-12-15

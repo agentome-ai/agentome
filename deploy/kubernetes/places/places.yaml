@@ -1,5 +1,6 @@
-# The place launcher may make and delete pods and volume claims in the places' namespace, and
-# open a command in a pod there; nothing else, and nothing in the cluster.
+# The place launcher may make and delete pods and volume claims in the places' namespace, open
+# a command in a pod there, and let a place reach its own run; in the cluster, it may only read
+# a RuntimeClass, to check that places get gVisor.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -29,6 +30,36 @@ rules:
   - apiGroups: ['']
     resources: [pods/exec]
     verbs: [get, create]
+  # A run's own policy, which lets its place in: owned by the run's pod, it goes with it.
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentome-place-launcher-runtimes
+  labels:
+    app.kubernetes.io/name: place-launcher
+rules:
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentome-place-launcher-runtimes
+  labels:
+    app.kubernetes.io/name: place-launcher
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agentome-place-launcher-runtimes
+subjects:
+  - kind: ServiceAccount
+    name: place-launcher
+    namespace: agentome-places
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -72,7 +103,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: place-launcher
-          image: docker.io/agentome/agentome:0.4.0
+          image: docker.io/agentome/agentome:0.4.1
           command: ['agentome', 'place-launcher']
           envFrom:
             - configMapRef:
@@ -165,7 +196,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: place-egress
-          image: docker.io/agentome/agentome:0.4.0
+          image: docker.io/agentome/agentome:0.4.1
           command: ['agentome', 'place-egress']
           # Its key, which the app takes its word by: `agentome egress-key` prints it, from the
           # installation's secret, for the places' Secret (deploy/OPERATIONS.md, Kubernetes).
@@ -204,9 +235,20 @@ spec:
       port: 3128
       targetPort: proxy
 ---
-# A place takes no connection, and makes only two: to the server and to the egress proxy. Not to
-# the cluster's DNS, whose forwarding would carry names out; it is given the two addresses
-# instead. Not to another place, the database or the launcher.
+# Nothing here connects or is connected to unless a policy below says so: a pod the launcher
+# made without a place's labels reaches nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# A place makes only these connections: to the server, to the egress proxy, and to its runs'
+# CLI containers on 7419. Not to the cluster's DNS, whose forwarding would carry names out; it
+# is given the two addresses instead. Not to the database or the launcher. It takes none, but
+# for a run's CLI container from its own place: the launcher makes that policy with the run.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -216,16 +258,6 @@ spec:
     matchLabels:
       app.kubernetes.io/name: agentome-place
   policyTypes: [Ingress, Egress]
-  # A place's worker starts the CLI in its run's CLI container, which serves on 7419 and takes
-  # only a connection that opens with the run's key.
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: agentome-place
-      ports:
-        - port: 7419
-          protocol: TCP
   egress:
     - to:
         - podSelector:
@@ -252,7 +284,8 @@ spec:
         - port: 3128
           protocol: TCP
 ---
-# Only the server gives the launcher orders.
+# Only the server gives the launcher orders. It calls the cluster's API, whose address no
+# policy can name in every cluster.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -261,7 +294,9 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: place-launcher
-  policyTypes: [Ingress]
+  policyTypes: [Ingress, Egress]
+  egress:
+    - {}
   ingress:
     - from:
         - namespaceSelector:
@@ -274,7 +309,8 @@ spec:
         - port: 8080
           protocol: TCP
 ---
-# Only places call out through the proxy.
+# Only places call out through the proxy, and it calls out anywhere: which host is its own
+# list's to say, by the server's answer.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -283,7 +319,9 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: place-egress
-  policyTypes: [Ingress]
+  policyTypes: [Ingress, Egress]
+  egress:
+    - {}
   ingress:
     - from:
         - podSelector:

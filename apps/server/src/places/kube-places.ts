@@ -46,6 +46,8 @@ const NAME = 'agentome-place-';
 const LABEL = 'ai.agentome.place';
 const RUN = 'ai.agentome.run';
 const runName = (runId: string) => `agentome-run-${runId}`;
+/** The handlers gVisor's RuntimeClass has: runsc as containerd names it, gvisor on GKE. */
+const GVISOR_HANDLERS = ['runsc', 'gvisor'];
 const names = (id: string) => ({
   pod: `${NAME}${id}`,
   connect: `${NAME}${id}-connect`,
@@ -223,7 +225,12 @@ export function runPod(
 }
 
 type Pod = {
-  metadata?: { name?: string; deletionTimestamp?: string; annotations?: Record<string, string> };
+  metadata?: {
+    name?: string;
+    uid?: string;
+    deletionTimestamp?: string;
+    annotations?: Record<string, string>;
+  };
   spec?: { nodeName?: string };
   status?: {
     phase?: string;
@@ -314,10 +321,66 @@ export function placePod(
 }
 
 export function kubePlaces(settings: KubePlaceSettings): Places {
-  // A RuntimeClass is the cluster's to check: a name must be given, or runc for the nodes' kernel.
-  const runtimeChecked = () => {
-    if (settings.runtime === undefined) throw new Refusal(409, NO_RUNTIME);
+  // A name must be given, or runc for the nodes' kernel; and a RuntimeClass of that name must
+  // run gVisor, not only be called so. Checked once; a failed check is made again.
+  let runtimeOk = false;
+  const runtimeChecked = async () => {
+    const asked = settings.runtime;
+    if (asked === undefined) throw new Refusal(409, NO_RUNTIME);
+    if (runtimeOk || placeRuntime(asked) === undefined) return;
+    const found = await kube(
+      'GET',
+      `/apis/node.k8s.io/v1/runtimeclasses/${encodeURIComponent(asked)}`,
+    );
+    if (found.status === 404) {
+      throw new Refusal(409, `The cluster has no RuntimeClass ${asked} (AGENTOME_PLACE_RUNTIME).`);
+    }
+    if (found.status !== 200) throw kubeError(found, `read the RuntimeClass ${asked}`);
+    const handler = (found.body as { handler?: string } | undefined)?.handler ?? '';
+    if (!GVISOR_HANDLERS.includes(handler)) {
+      throw new Refusal(
+        409,
+        `The RuntimeClass ${asked} runs ${handler || 'no handler'}, not gVisor (runsc). Name gVisor's RuntimeClass in AGENTOME_PLACE_RUNTIME, or runc for the nodes' own kernel.`,
+      );
+    }
+    runtimeOk = true;
   };
+
+  /**
+   * Only the run's own place reaches its CLI container: the namespace lets no pod connect to
+   * another, and this lets the place's pods in, to the CLI's port. Owned by the run's pod, it
+   * goes with it.
+   */
+  async function admitPlace(id: string, runId: string, pod: { name: string; uid: string }) {
+    const path = `/apis/networking.k8s.io/v1/namespaces/{namespace}/networkpolicies`;
+    const name = runName(runId);
+    // What an earlier pod of the same run left, its owner gone but not yet collected.
+    const old = await kube('DELETE', `${path}/${name}`);
+    if (old.status !== 200 && old.status !== 404) {
+      throw kubeError(old, 'clear the run’s network policy');
+    }
+    const made = await kube('POST', path, {
+      apiVersion: 'networking.k8s.io/v1',
+      kind: 'NetworkPolicy',
+      metadata: {
+        name,
+        labels: { [LABEL]: id, [RUN]: runId },
+        ownerReferences: [{ apiVersion: 'v1', kind: 'Pod', name: pod.name, uid: pod.uid }],
+      },
+      spec: {
+        podSelector: { matchLabels: { [RUN]: runId } },
+        policyTypes: ['Ingress'],
+        ingress: [
+          {
+            // The person's own pods: their place's, whose worker drives the run.
+            from: [{ podSelector: { matchLabels: { [LABEL]: id } } }],
+            ports: [{ port: RUN_PORTS.cli, protocol: 'TCP' }],
+          },
+        ],
+      },
+    });
+    if (made.status !== 201) throw kubeError(made, 'let the place reach its run');
+  }
   const { kube } = settings;
   const patience = settings.patience ?? { tries: 170, everyMs: 1000 };
 
@@ -417,7 +480,7 @@ export function kubePlaces(settings: KubePlaceSettings): Places {
   }
 
   async function wake(id: string) {
-    runtimeChecked();
+    await runtimeChecked();
     const n = names(id);
     const pod = await readPod(n.pod);
     if (alive(pod)) return;
@@ -443,7 +506,7 @@ export function kubePlaces(settings: KubePlaceSettings): Places {
     },
 
     async create(id, code) {
-      runtimeChecked();
+      await runtimeChecked();
       const n = names(id);
       for (const [claim, size] of [
         [n.home, CLAIMS.home],
@@ -530,7 +593,7 @@ export function kubePlaces(settings: KubePlaceSettings): Places {
     },
 
     async startRun(id, runId, run) {
-      runtimeChecked();
+      await runtimeChecked();
       const keeper = await readPod(names(id).pod);
       if (!alive(keeper)) throw new Refusal(409, 'The place is not awake');
       const name = runName(runId);
@@ -542,6 +605,9 @@ export function kubePlaces(settings: KubePlaceSettings): Places {
         runPod(settings, id, runId, run, keeper?.spec?.nodeName, keys),
       );
       if (made.status !== 201) throw kubeError(made, 'make the run’s pod');
+      const uid = (made.body as Pod | undefined)?.metadata?.uid;
+      if (!uid) throw new Error('Kubernetes made the run’s pod without its id');
+      await admitPlace(id, runId, { name, uid });
       await ready(name, 2 + (run.shape?.services.length ?? 0));
       const host = (await readPod(name))?.status?.podIP;
       if (!host) throw new Error('The run’s pod has no address');

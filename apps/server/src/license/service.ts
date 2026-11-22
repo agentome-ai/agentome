@@ -26,7 +26,8 @@ export { signLicense } from './sign.js';
 // peak is kept and shown, never enforced.
 
 /** The owner's public key; the private half never leaves the owner's machine. */
-const OWNER_KEY = 'MCowBQYDK2VwAyEAO77iJmyvCRlUWW7VjFDt+LAQeNEdUvScVt5k0YUh6rs=';
+// A public key, so the release's secret scan is told to pass it.
+const OWNER_KEY = 'MCowBQYDK2VwAyEAO77iJmyvCRlUWW7VjFDt+LAQeNEdUvScVt5k0YUh6rs='; // gitleaks:allow
 
 const DAY_MS = 86_400_000;
 const GRACE_DAYS = 14;

@@ -411,6 +411,9 @@ export class RemoteChild extends EventEmitter {
 }
 
 /** A `spawn` that starts the program in a run's container, over its connection. */
+/** The longest line a run server sends: a chunk of output, in base64, with room to spare. */
+const MAX_LINE = 1024 * 1024;
+
 export function remoteSpawn(server: RunServer, sandbox?: Sandbox, tunnel?: Tunnel) {
   return (
     file: string,
@@ -449,6 +452,14 @@ export function remoteSpawn(server: RunServer, sandbox?: Sandbox, tunnel?: Tunne
       child.stderr.end();
       child.emit('close', code, signal);
     };
+    // A line is one chunk of output or the end: the server in the sandbox, which its commands
+    // may replace, gets no more room than that before the connection goes.
+    let unended = 0;
+    socket.on('data', (chunk: Buffer) => {
+      const newline = chunk.lastIndexOf(10);
+      unended = newline === -1 ? unended + chunk.length : chunk.length - newline - 1;
+      if (unended > MAX_LINE) socket.destroy();
+    });
     createInterface({ input: socket, crlfDelay: Infinity }).on('line', (text) => {
       let answer: Answer;
       try {

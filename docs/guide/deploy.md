@@ -116,9 +116,10 @@ needs and nothing else:
 An admin opens hosts per project in its **Network** section: the company's GitLab, Jira, a package
 mirror. **Add public package registries** adds npm, PyPI, Maven, Go, NuGet and Docker Hub at once,
 for a project without a mirror. A host a run was refused shows there for a week, with **Allow**
-beside it. The proxy lets a host through on port 443 unless the list names another, connects
-only to the address it checked, and reaches the company's own networks only for a host listed by
-its full name.
+beside it; a host allowed that way reaches public addresses only, since a run chose its name. The
+proxy lets a host through on port 443 unless the list names another, connects only to the address
+it checked, and reaches the company's own networks only for a host an admin added by its full
+name with **Add host**.
 
 The proxy also connects to the server's own public name, for the CLI's gateway. Make sure the
 name resolves to an address the server's containers reach: on a network whose router does not

@@ -56,6 +56,12 @@ function HostName({ host }: { host: string }) {
 const patternOf = (refused: Refused) =>
   refused.port === 443 ? refused.host : `${refused.host}:${String(refused.port)}`;
 
+/**
+ * The server's mark on a host allowed from the refusals: it reaches public addresses only, since
+ * a run chose the name and its owner may point it at the company's own.
+ */
+const PUBLIC_ONLY = 'public:';
+
 export function NetworkSection(props: {
   project: ProjectView;
   isAdmin: boolean;
@@ -125,7 +131,12 @@ export function NetworkSection(props: {
             <Row
               key={host}
               lead={<Globe aria-hidden className="size-4 text-ink-3" strokeWidth={1.75} />}
-              name={<span className="truncate font-mono">{host}</span>}
+              name={
+                <span className="truncate font-mono">
+                  {host.startsWith(PUBLIC_ONLY) ? host.slice(PUBLIC_ONLY.length) : host}
+                </span>
+              }
+              detail={host.startsWith(PUBLIC_ONLY) ? 'Public addresses only' : undefined}
               what={host}
               menu={
                 isAdmin && (
@@ -185,8 +196,9 @@ export function NetworkSection(props: {
         <D.DialogContent>
           <D.DialogTitle>Allow this host?</D.DialogTitle>
           <D.DialogDescription>
-            Runs of this project will reach it through the egress proxy. A run asked for it, and a
-            run may ask for anything: check whose name it is, which its last part says.
+            Runs of this project will reach it through the egress proxy, at public addresses only. A
+            run asked for it, and a run may ask for anything: check whose name it is, which its last
+            part says. For a host inside the company network, use Add host.
           </D.DialogDescription>
           {allowing && (
             <p className="rounded-md border border-line bg-sunken px-3 py-2">
@@ -206,9 +218,10 @@ export function NetworkSection(props: {
               onClick={() => {
                 const one = allowing;
                 if (!one) return;
-                void save([...hosts, patternOf(one)], `Couldn’t allow ${patternOf(one)}`).then(() =>
-                  setAllowing(undefined),
-                );
+                void save(
+                  [...hosts, `${PUBLIC_ONLY}${patternOf(one)}`],
+                  `Couldn’t allow ${patternOf(one)}`,
+                ).then(() => setAllowing(undefined));
               }}
             >
               Allow host

@@ -90,6 +90,11 @@ export interface CodexRunOptions {
    * beside the sign-in in its own container, and without the executor it has none of those tools.
    */
   readonly execServer?: string;
+  /**
+   * With `execServer`: what a command gets in the sandbox. Codex sends each command its own
+   * environment, which would otherwise be its container's, with the CLI's way out and its token.
+   */
+  readonly commandEnv?: Readonly<Record<string, string>>;
   /** `waitedMs`: how long the run stood waiting for its owner, by which the time limit moves. */
   readonly limits: {
     readonly timeoutMs: number;
@@ -202,13 +207,22 @@ export function codexArgs(options: CodexRunOptions): string[] {
     // The run token is the gateway's, not the commands': with it a command could write the
     // run's own transcript. And git stops at a ~/.gitconfig it may not read, and warns at each
     // command about the ignore file beside it, so it is given neither.
-    const git = table([
+    const gitVars: [string, string][] = [
       ['GIT_CONFIG_GLOBAL', toml('/dev/null')],
       ['GIT_CONFIG_COUNT', toml('1')],
       ['GIT_CONFIG_KEY_0', toml('core.excludesFile')],
       ['GIT_CONFIG_VALUE_0', toml('/dev/null')],
-    ]);
-    set('shell_environment_policy', `{ inherit = "all", exclude = ["AGENTOME_*"], set = ${git} }`);
+    ];
+    const policy = options.commandEnv
+      ? `{ inherit = "none", set = ${table([
+          ...Object.entries(options.commandEnv).map(([name, value]): [string, string] => [
+            name,
+            toml(value),
+          ]),
+          ...gitVars,
+        ])} }`
+      : `{ inherit = "all", exclude = ["AGENTOME_*"], set = ${table(gitVars)} }`;
+    set('shell_environment_policy', policy);
   }
   if (options.mcp !== undefined) {
     set('mcp_servers.agentome.url', toml(options.mcp.url));

@@ -104,7 +104,8 @@ describe('the docker guard on its socket', () => {
     got.length = 0;
     const body = `{
       "Labels": {"ai.agentome.place": "0a1b2c3d"},
-      "HostConfig": {"NetworkMode": "agentome-place-0a1b2c3d"}
+      "HostConfig": {"NetworkMode": "agentome-place-0a1b2c3d", "Runtime": "runsc",
+        "SecurityOpt": ["no-new-privileges:true"]}
     }`;
     expect(
       await call('POST', '/v1.45/containers/create?name=agentome-place-0a1b2c3d-x', body),

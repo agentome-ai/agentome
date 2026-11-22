@@ -3,6 +3,7 @@ import { request as httpRequest, type IncomingMessage, type Server, createServer
 import { BlockList, connect, isIP } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { type HostMatch, hostAllowed } from './egress.js';
+import { METADATA } from './metadata.js';
 
 // The only way out of the places' network, and of the server seat's. A place sends every call
 // out through here with a token in the proxy URL: a run's own while it runs, the person's place
@@ -33,11 +34,16 @@ function makeRoom<K, V>(map: Map<K, V>, max: number) {
     map.delete(key);
   }
 }
-/** What the proxy did goes to the app this often; a host it lets out, once a minute a token. */
+/** What the proxy did goes to the app this often. */
 const REPORT_MS = 5_000;
-const REPORT_ALLOWED_MS = 60_000;
+/** Lines in one report: past them a run is flooding, and the rest of those seconds go untold. */
+const MAX_REPORT = 500;
 
-/** A host the proxy let out or refused for one token, and how many times since the last report. */
+/**
+ * One connection the proxy let out, told as it ends, or the refusals of one host for one token
+ * since the last report. A tunnel's bytes are what passed, the TLS inside unread: the proxy
+ * knows a host, never a path of HTTPS, and does not open the CLI's traffic to its vendor.
+ */
 export type EgressEvent = {
   kind: 'run' | 'cli' | 'docker' | 'place' | 'seat';
   id?: string;
@@ -45,7 +51,20 @@ export type EgressEvent = {
   host: string;
   port: number;
   allowed: boolean;
+  /** Connections this stands for: one let out, or the refusals since the last report. */
   count: number;
+  /** The entry of the token's list that let it out, such as `*.npmjs.org`. */
+  rule?: string;
+  /** Why it was refused: not on the list, at an address no place may reach, or not TLS to it. */
+  reason?: 'not-listed' | 'address' | 'hello';
+  /** Plain HTTP only: the method, the path without its query, and the answer's status. */
+  method?: string;
+  path?: string;
+  status?: number;
+  /** Bytes from the client and to it, and how long the connection was open. */
+  sent?: number;
+  received?: number;
+  ms?: number;
 };
 export type Report = (events: EgressEvent[]) => Promise<void>;
 
@@ -117,9 +136,12 @@ function credentialsOf(header: string | undefined) {
   return { kind: 'place' as const, id: user, token };
 }
 
+/** A host name or an IPv4 address, as the app reads it in the log's events. */
+const NAME = /^[a-z0-9.-]{1,253}$/;
+
 /** `host:port` of a CONNECT; an IPv6 literal is not a host anybody allows. */
 function targetOf(authority: string | undefined) {
-  const match = /^([a-z0-9.-]+):(\d{1,5})$/i.exec(authority ?? '');
+  const match = /^([a-z0-9.-]{1,253}):(\d{1,5})$/i.exec(authority ?? '');
   const port = Number(match?.[2]);
   if (!match?.[1] || !(port > 0 && port < 65_536)) return undefined;
   return { host: match[1].toLowerCase(), port };
@@ -136,11 +158,8 @@ NEVER.addAddress('::', 'ipv6');
 NEVER.addAddress('::1', 'ipv6');
 NEVER.addSubnet('fe80::', 10, 'ipv6');
 NEVER.addSubnet('ff00::', 8, 'ipv6');
-// The clouds' own metadata services, wherever they are: AWS's over IPv6, Alibaba's, Azure's wire
-// server. Whatever name resolves to them, never (review P9).
-NEVER.addAddress('fd00:ec2::254', 'ipv6');
-NEVER.addAddress('100.100.100.200');
-NEVER.addAddress('168.63.129.16');
+for (const address of METADATA.ipv4) NEVER.addAddress(address, 'ipv4');
+for (const address of METADATA.ipv6) NEVER.addAddress(address, 'ipv6');
 /** The company's own networks: reached only for a host listed exactly, never through a `*.`. */
 const PRIVATE = new BlockList();
 PRIVATE.addSubnet('10.0.0.0', 8);
@@ -273,16 +292,19 @@ export function egressProxy(options: {
   const kept = new Map<string, { opened: Opened | undefined; until: number }>();
   // Unknown tokens per address and minute: random tokens from one run cost the app nothing.
   const unknownFrom = new Map<string, { minute: number; count: number }>();
-  const pending = new Map<string, EgressEvent>();
-  const reported = new Map<string, number>();
+  // Connections let out, each its own line; refusals, one line a host and reason per report.
+  let connections: EgressEvent[] = [];
+  const refusals = new Map<string, EgressEvent>();
+  let untold = 0;
 
   type Credentials = NonNullable<ReturnType<typeof credentialsOf>>;
   async function openedFor(credentials: Credentials, from: string): Promise<Opened | undefined> {
     const key = `${credentials.kind}\n${credentials.id ?? ''}\n${credentials.token}`;
     const known = kept.get(key);
     if (known && known.until > now()) return known.opened;
-    // A token the proxy has not seen: one more from this address this minute, or no question.
-    if (!known) {
+    // A token the proxy has not seen, or one the app refused: one more from this address this
+    // minute, or no question. A refused one asked again and again would cost the app as much.
+    if (!known?.opened) {
       const minute = Math.floor(now() / 60_000);
       const tried = unknownFrom.get(from);
       const count = tried?.minute === minute ? tried.count + 1 : 1;
@@ -306,35 +328,50 @@ export function egressProxy(options: {
     return opened;
   }
 
-  /** Notes a host let out or refused, for the next report: a host let out, once a minute. */
-  function account(credentials: Credentials, host: string, port: number, allowed: boolean) {
-    const key = `${credentials.kind}\n${credentials.id ?? ''}\n${credentials.token}\n${host}:${port}\n${allowed}`;
-    const waiting = pending.get(key);
+  const whose = (credentials: Credentials) => ({
+    kind: credentials.kind,
+    ...(credentials.id !== undefined && { id: credentials.id }),
+    token: credentials.token,
+  });
+
+  /** Notes a refusal for the next report, counted with the same host's since the last. */
+  function refused(
+    credentials: Credentials,
+    host: string,
+    port: number,
+    reason: NonNullable<EgressEvent['reason']>,
+  ) {
+    const key = `${credentials.kind}\n${credentials.id ?? ''}\n${credentials.token}\n${host}:${port}\n${reason}`;
+    const waiting = refusals.get(key);
     if (waiting) {
       waiting.count += 1;
       return;
     }
-    if (allowed && now() - (reported.get(key) ?? -Infinity) < REPORT_ALLOWED_MS) return;
-    if (reported.size >= MAX_KEPT) {
-      for (const [old, at] of reported) if (now() - at >= REPORT_ALLOWED_MS) reported.delete(old);
-      makeRoom(reported, MAX_KEPT);
+    if (refusals.size + connections.length >= MAX_REPORT) {
+      untold += 1;
+      return;
     }
-    reported.set(key, now());
-    pending.set(key, {
-      kind: credentials.kind,
-      ...(credentials.id !== undefined && { id: credentials.id }),
-      token: credentials.token,
-      host,
-      port,
-      allowed,
-      count: 1,
-    });
+    refusals.set(key, { ...whose(credentials), host, port, allowed: false, count: 1, reason });
+  }
+
+  /** Notes a connection let out, as it ends. */
+  function reached(event: EgressEvent) {
+    if (refusals.size + connections.length >= MAX_REPORT) {
+      untold += 1;
+      return;
+    }
+    connections.push(event);
   }
 
   const reporting = setInterval(() => {
-    if (pending.size === 0) return;
-    const events = [...pending.values()].slice(0, 500);
-    pending.clear();
+    if (untold > 0) {
+      log(`${untold} connections went untold in ${REPORT_MS / 1000} s: more than ${MAX_REPORT}`);
+      untold = 0;
+    }
+    if (connections.length === 0 && refusals.size === 0) return;
+    const events = [...connections, ...refusals.values()];
+    connections = [];
+    refusals.clear();
     report(events).catch((error: unknown) =>
       log(`cannot tell the app: ${error instanceof Error ? error.message : String(error)}`),
     );
@@ -363,16 +400,24 @@ export function egressProxy(options: {
         // A name that does not resolve has no address to allow.
       }
     }
-    account(credentials, host, port, address !== undefined);
     if (!match) {
+      refused(credentials, host, port, 'not-listed');
       log(`${opened.who}: refused ${host}:${port}`);
       return { status: 403 as const, who: opened.who };
     }
     if (!address) {
+      refused(credentials, host, port, 'address');
       log(`${opened.who}: refused ${host}:${port}, its address is not one a place may reach`);
       return { status: 403 as const, who: opened.who };
     }
-    return { status: 200 as const, who: opened.who, address };
+    return {
+      status: 200 as const,
+      who: opened.who,
+      address,
+      credentials,
+      rule: match.pattern,
+      started: now(),
+    };
   }
 
   const server = createServer((request, response) => {
@@ -385,11 +430,14 @@ export function egressProxy(options: {
         response.writeHead(400).end();
         return;
       }
-      if (url.protocol !== 'http:') {
+      // A name as a CONNECT carries one, as the app reads it: an IPv6 literal or a name with `_`
+      // is no host anybody allows, and the app would not read its line in the log.
+      const host = url.hostname.toLowerCase();
+      if (url.protocol !== 'http:' || !NAME.test(host)) {
         response.writeHead(400).end();
         return;
       }
-      const verdict = await decide(request, url.hostname.toLowerCase(), Number(url.port || 80));
+      const verdict = await decide(request, host, Number(url.port || 80));
       if (verdict.status !== 200) {
         response.writeHead(verdict.status, proxyHeaders(verdict.status)).end();
         return;
@@ -399,6 +447,26 @@ export function egressProxy(options: {
       delete headers['proxy-connection'];
       // The host asked for, whatever the client put in Host: the address is the one checked.
       headers.host = url.host;
+      let sent = 0;
+      let received = 0;
+      let status: number | undefined;
+      request.on('data', (chunk: Buffer) => (sent += chunk.length));
+      response.once('close', () =>
+        reached({
+          ...whose(verdict.credentials),
+          host,
+          port: Number(url.port || 80),
+          allowed: true,
+          count: 1,
+          rule: verdict.rule,
+          method: (request.method ?? 'GET').slice(0, 16),
+          path: url.pathname.slice(0, 512),
+          ...(status !== undefined && { status }),
+          sent,
+          received,
+          ms: now() - verdict.started,
+        }),
+      );
       // The address checked, with the host's name kept in the Host header it came with.
       const upstream = httpRequest(
         {
@@ -409,6 +477,8 @@ export function egressProxy(options: {
           headers,
         },
         (answer) => {
+          status = answer.statusCode;
+          answer.on('data', (chunk: Buffer) => (received += chunk.length));
           response.writeHead(answer.statusCode ?? 502, answer.headers);
           answer.pipe(response);
         },
@@ -432,6 +502,7 @@ export function egressProxy(options: {
       client.write('HTTP/1.1 200 Connection established\r\n\r\n');
       const hello = await helloOf(client, head);
       if (hello.name !== target.host) {
+        refused(verdict.credentials, target.host, target.port, 'hello');
         log(
           `${verdict.who}: refused ${target.host}:${target.port}, ` +
             (hello.name ? `it said hello to ${hello.name}` : 'not TLS to a named server'),
@@ -440,6 +511,23 @@ export function egressProxy(options: {
         return;
       }
       const upstream = connect(target.port, verdict.address);
+      let told = false;
+      const tell = () => {
+        if (told) return;
+        told = true;
+        reached({
+          ...whose(verdict.credentials),
+          host: target.host,
+          port: target.port,
+          allowed: true,
+          count: 1,
+          rule: verdict.rule,
+          sent: upstream.bytesWritten,
+          received: upstream.bytesRead,
+          ms: now() - verdict.started,
+        });
+      };
+      upstream.once('close', tell);
       upstream.once('connect', () => {
         upstream.write(hello.bytes);
         upstream.pipe(client);
