@@ -103,7 +103,7 @@ describe('deploy/install.sh', () => {
       runtimes: 'runc runsc runsc-docker ',
     });
     expect(done.code, done.out).toBe(0);
-    expect(value(done.env, 'AGENTOME_VERSION')).toBe('0.3.0');
+    expect(value(done.env, 'AGENTOME_VERSION')).toBe('0.4.0');
     expect(value(done.env, 'AGENTOME_PROXY_HOST')).toBe('agentome.example.com');
     expect(value(done.env, 'AGENTOME_PUBLIC_URL')).toBe('https://agentome.example.com');
     expect(value(done.env, 'COMPOSE_PROFILES')).toBe('proxy,places');
@@ -117,10 +117,12 @@ describe('deploy/install.sh', () => {
     );
   });
 
-  it('says that places would share the kernel without gVisor, and goes on when nobody can answer', () => {
+  it('without gVisor and nobody to answer, installs places that will not start until told how', () => {
     const done = install(['--places']);
     expect(done.code, done.out).toBe(0);
     expect(done.out).toContain('gVisor (runsc) is not registered with Docker');
+    expect(done.out).toContain('Places will not start until gVisor is registered');
+    // Never runc unasked: the launcher refuses places until the admin chooses.
     expect(value(done.env, 'AGENTOME_PLACE_RUNTIME')).toBeUndefined();
     expect(value(done.env, 'COMPOSE_PROFILES')).toBe('places');
   });
@@ -191,7 +193,7 @@ describe('deploy/install.sh', () => {
       });
     const status = run('status');
     expect(status.status, status.stderr).toBe(0);
-    expect(status.stdout).toContain('Version: 0.3.0');
+    expect(status.stdout).toContain('Version: 0.4.0');
     expect(status.stdout).toContain('Address: https://agentome.example.com');
     expect(run('setup-code').stdout).toContain('CODE-1234');
     // A backup lands where the admin is, not in the server's folder, and only they may read it.

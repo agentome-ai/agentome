@@ -43,6 +43,8 @@ ARG TARGETARCH
 # Python, Java 21 with Maven, Go, .NET 8 and a C compiler; and the docker CLI with compose, for a
 # run's own Docker where the installation gives runs one. From Debian and Adoptium's signed
 # repositories, and Go's and .NET's archives by their checksums; versions are pinned here.
+# procps: interactive Codex records its background app server with `ps` and stops without it.
+# ripgrep: Codex searches code with `rg` first; Claude Code ships its own.
 ARG GO_VERSION=1.27.4
 ARG GO_SHA256_AMD64=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
 ARG GO_SHA256_ARM64=3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92
@@ -52,6 +54,7 @@ ARG DOTNET_SHA512_ARM64=bcc10091e404baaec01d538be8bd7125a33a8338594a6a795b103612
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates curl gnupg \
       python3 python3-pip python3-venv build-essential pkg-config unzip zip jq maven libicu72 \
+      procps ripgrep \
  && curl -fsSL https://packages.adoptium.net/artifactory/api/gpg/key/public \
       | gpg --dearmor -o /usr/share/keyrings/adoptium.gpg \
  && echo 'deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb bookworm main' \

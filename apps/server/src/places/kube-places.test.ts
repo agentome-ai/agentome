@@ -129,6 +129,8 @@ function settingsOf(cluster: ReturnType<typeof fakeCluster>): LauncherSettings {
     kube: cluster.kube,
     exec: cluster.exec,
     image: 'docker.io/agentome/agentome-seat:0.1.0',
+    // The nodes' kernel, asked for by name.
+    runtime: 'runc',
     serverUrl: 'http://agentome:3000',
     egress: { proxy: 'place-egress:3128', tokenOf: (id) => `token-of-${id}` },
     patience: { tries: 3, everyMs: 1 },
@@ -379,6 +381,8 @@ describe('the place launcher on Kubernetes', () => {
       { name: 'seat', mountPath: '/seat/cli', subPath: 'cli', readOnly: true },
       { name: 'home', mountPath: '/home/node/.claude', subPath: '.claude' },
       { name: 'home', mountPath: '/home/node/.codex', subPath: '.codex' },
+      // Its mark, which its bash and git look for, and nothing in it can remove.
+      { name: 'cli-mark', mountPath: '/run/agentome-cli', readOnly: true },
     ]);
     // The sandbox: no CLI, no sign-in; of the run's folder what a command reads and works in,
     // not the gateway's config.

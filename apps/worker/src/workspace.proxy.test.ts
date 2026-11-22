@@ -1,5 +1,15 @@
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { devNull, tmpdir } from 'node:os';
@@ -258,5 +268,24 @@ describe("an agent's folder that stays, in a person's place", () => {
     // The hook and the setting the run planted are gone.
     expect(existsSync(join(folder, '.git', 'hooks', 'pre-commit'))).toBe(false);
     expect(readFileSync(join(folder, '.git', 'config'), 'utf8')).not.toContain('planted');
+  });
+
+  it('writes its git configuration anew, not through a link the last run left there', async () => {
+    const home = join(dir, 'home-place-link');
+    const first = proxied();
+    const folder = (await prepareWorkspace(home, first, place)).repo;
+    // The last run points `.git/config` at a file of the place, the sign-in say.
+    const theirs = join(dir, 'the-sign-in.json');
+    writeFileSync(theirs, '{"token":"kept"}\n');
+    rmSync(join(folder, '.git', 'config'));
+    symlinkSync(theirs, join(folder, '.git', 'config'));
+    removeRun(home, first.run.id, process.env);
+
+    const second = proxied();
+    second.run.id = '4d3c2b1a-0f9e-4d8c-8b7a-6f5e4d3c2b1a';
+    second.agent.id = first.agent.id;
+    await prepareWorkspace(home, second, place);
+    expect(readFileSync(theirs, 'utf8')).toBe('{"token":"kept"}\n');
+    expect(lstatSync(join(folder, '.git', 'config')).isSymbolicLink()).toBe(false);
   });
 });

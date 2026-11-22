@@ -12,7 +12,8 @@ Each agent has a setting that says how it works: open the agent, go to the **Eng
 section and look at **Where it works**.
 
 - **With its owner.** The agent runs under its owner's own Claude subscription (Claude Code) or
-  ChatGPT sign-in (Codex), and only while the owner is at work. No API key is needed. It runs in the
+  ChatGPT sign-in (Codex), while the owner is at work, or in their place while they are away too if
+  they choose. No API key is needed. It runs in the
   owner's **place on the server**, a container the platform makes for them, or on a **computer** the
   owner connected. For a company, the place is the usual way: nothing is installed on anyone's
   computer, and the agent works in a closed container. A computer suits a small team without a
@@ -41,6 +42,18 @@ and sleeps when nothing has run for a while; your sign-in and your agents' worki
 while it sleeps. In your place each agent keeps a working folder per repository between runs, so
 its dependencies and builds stay; whatever a run left uncommitted is saved to a branch
 `agent/leftover-…` before the next one starts. **Working folders → Start fresh** empties an agent's.
+
+**Work while I'm away** lets your place take your agents' runs when you are not in Agentome: at
+night, in a meeting, on a day off. It is off until you turn it on, and Agentome asks first:
+Anthropic's and OpenAI's terms for personal plans may not allow use with nobody at it, and a limit
+or a block would fall on your account. An admin can turn it off for everyone with **Let people's
+places work while they are away**; your place then waits for you again. For agents that should work
+by themselves, an API key on the server seat is the way that needs nobody's subscription.
+
+Your place keeps only your sign-in in `~/.claude` and `~/.codex`. Before and after each run of
+your agents everything else there goes: settings, MCP servers, hooks and history you set up for
+`claude` or `codex` in the terminal. A run could write such things there, and they would run with
+your sign-in.
 **Delete place** removes it, with its sign-in and folders.
 
 Each run in your place gets two containers of its own, deleted when it ends: the **CLI

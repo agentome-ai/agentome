@@ -1,0 +1,23 @@
+# Pod Security holds every pod here to the baseline: none privileged, none on the host's network
+# or its folders, whatever made it. Restricted is not enforced, only reported: a project's
+# services keep their images' users, and a database image that starts as root would be refused.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentome-places
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+# How much the places may take in all: each place is a pod and two claims of 21 GiB, each run a
+# pod more. Raise it for more people.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: agentome-places
+spec:
+  hard:
+    pods: '300'
+    persistentvolumeclaims: '400'
+    requests.storage: 4Ti

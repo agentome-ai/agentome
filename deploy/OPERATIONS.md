@@ -273,16 +273,25 @@ CLI's installation) until it next sleeps and wakes; its runs get the new one.
 
 On Kubernetes the key comes from the Secret. Stop the server and the launcher, run the command
 in a pod as for a restore, with the new key on its input (`-- agentome rotate-key < new.key` in
-place of `-- agentome restore < …`), put the new key into the Secret and start both again:
+place of `-- agentome restore < …`), put the new key into the Secret and start both again, then
+give places their keys anew:
 
 ```sh
 (umask 077; openssl rand -hex 32 > new.key)
-kubectl -n agentome scale deploy/agentome deploy/place-launcher --replicas=0
+kubectl -n agentome scale deploy/agentome --replicas=0
+kubectl -n agentome-places scale deploy/place-launcher --replicas=0
 # the restore pod of "Backing up and restoring on Kubernetes", with -- agentome rotate-key < new.key
 # printf is the shell's own: the key stays out of every command line that ps shows
 (umask 077; printf '{"stringData":{"AGENTOME_SECRET_KEY":"%s"}}' "$(cat new.key)" > key-patch.json)
 kubectl -n agentome patch secret agentome --type merge --patch-file key-patch.json && rm key-patch.json
-kubectl -n agentome scale deploy/agentome deploy/place-launcher --replicas=1
+kubectl -n agentome scale deploy/agentome --replicas=1
+# with places: their keys anew (Places on Kubernetes, step 2), then the launcher
+kubectl -n agentome-places delete secret agentome-places
+kubectl -n agentome-places create secret generic agentome-places \
+  --from-literal=places.key="$(kubectl -n agentome exec deploy/agentome -- agentome places-key)" \
+  --from-literal=egress.key="$(kubectl -n agentome exec deploy/agentome -- agentome egress-key)"
+kubectl -n agentome-places scale deploy/place-launcher --replicas=1
+kubectl -n agentome-places rollout restart deploy/place-egress
 ```
 
 ## A forgotten password
@@ -476,7 +485,10 @@ A person can have a place of their own on the server: a container that the platf
 them, in which they sign in to Claude Code or Codex with their own subscription once, and which
 runs their agents while they work in Agentome. Nothing is installed on their computer. A place
 takes runs only while its person is present: a tab of Agentome open and in use within their idle
-time. A run that started goes on to its end.
+time. A person may let their own place take runs while they are away too, with **Work while I'm
+away** in their place's section, after a warning that a personal plan's terms may not allow use
+with nobody at it. An admin turns that off for everyone with **Let people's places work while they
+are away** in the same section; it is on until then. A run that started goes on to its end.
 
 1. Start the launcher and tell the app where it is: put `AGENTOME_PLACE_LAUNCHER_URL=http://place-launcher:8080`
    in `.env`, then `docker compose --profile places up -d`.
@@ -515,8 +527,8 @@ refusal (`docker compose logs docker-guard`). The launcher runs as the node user
 app derives from its own and writes to `places/places.key` in its data at each start (compose
 mounts that folder alone), and takes signed orders from the app and
 makes a place only from the seat image of this release, without capabilities, with no way to gain
-any, a read-only root, at most 8 GB of memory, 1024 processes and 2 CPUs, on the network
-`agentome-places`, which reaches the app and nothing else of Agentome's. A place keeps two volumes,
+any, a read-only root, at most 8 GB of memory, 1024 processes and 2 CPUs, on a network of its
+own, which reaches the app and the egress proxy and nothing else of Agentome's. A place keeps two volumes,
 `agentome-place-<id>-home` (the sign-in) and `agentome-place-<id>-seat` (its connection, the CLI
 and the agents' working folders). Once a minute the app wakes a place whose person is present and
 has a run queued, and puts to sleep one in which nothing has run for the person's idle time:
@@ -634,12 +646,14 @@ what a run could leave for the next (skills, agents, commands, settings, `CLAUDE
 ReadWriteOnce, with the CLI container, the sandbox and the project's services as its
 containers.
 
-Give places and runs a kernel of their own with gVisor: install `runsc` on the Docker host
+Places and runs get a kernel of their own with gVisor: install `runsc` on the Docker host
 (gvisor.dev, Install) and register it in `/etc/docker/daemon.json`, then set
 `AGENTOME_PLACE_RUNTIME=runsc` for the launcher; on Kubernetes, set it to the name of the
-cluster's gVisor RuntimeClass. Without it the containers share the host's kernel: the sign-in is
-still not in the sandbox's files, but an agent's command that broke out of its container would be on
-the host. Under gVisor Docker's own resolver does not answer, so the launcher writes each
+cluster's gVisor RuntimeClass. The launcher makes no place until the variable is set, and on
+Docker it checks that the runtime it names is run by `runsc`: a name alone, one that Docker runs
+with runc, is refused. To run places on the host's kernel instead, say so with
+`AGENTOME_PLACE_RUNTIME=runc`: the sign-in is still not in the sandbox's files, but an agent's
+command that broke out of its container would be on the host. Under gVisor Docker's own resolver does not answer, so the launcher writes each
 container the addresses it needs, the app, the proxy and the project's services, in its
 `/etc/hosts`.
 
@@ -649,7 +663,8 @@ container the addresses it needs, the app, the proxy and the project's services,
 
 A run may have a Docker of its own, for a project whose tests start containers (testcontainers)
 or a compose stack: register a second gVisor runtime with its raw network and set
-`AGENTOME_PLACE_DOCKER_RUNTIME` to it. Each run then gets a dockerd beside its sandbox, which reaches
+`AGENTOME_PLACE_DOCKER_RUNTIME` to it. Each run then gets a dockerd beside its sandbox, on a network
+of the run's that only the sandbox and the egress proxy share, not the place's; the sandbox reaches
 it as `DOCKER_HOST=tcp://docker:2375` (testcontainers finds its containers' ports there too); its
 images and containers are in a volume of the run's, deleted with it. It runs as root inside
 gVisor's kernel, not the host's, which is why it needs gVisor: on runc it would be the host's
@@ -770,8 +785,10 @@ has built in; no Helm chart and no operator:
 - `secret.example.yaml`: the shape of the Secret `agentome`, which holds the secret key and
   the database's address and password. The kustomization leaves it out, so that no password
   ends up in a repository next to the manifests.
-- `places/`: people's places on the server, a component that `kustomization.yaml` lists once
-  you take the `#` off its line (see [Places on Kubernetes](#places-on-kubernetes)).
+- `ingress-proxy.yaml`: the ingress controller's pods by one name, for `AGENTOME_TRUST_PROXY`;
+  it goes into the controller's namespace, so you apply it on its own.
+- `places/`: people's places on the server, in a namespace of their own, `agentome-places`,
+  applied on its own (see [Places on Kubernetes](#places-on-kubernetes)).
 
 The server seat, for agents on the server, is not covered yet: agents run on people's
 computers, or on a seat started with compose on a machine of its own (see
@@ -784,7 +801,16 @@ computers, or on a seat started with compose on a machine of its own (see
    match) and `newTag`. Without PostgreSQL in the cluster, remove the `components` lines.
 2. In `ingress.yaml`, set `ingressClassName` if the cluster has no default class, and give
    the certificate: a `kubernetes.io/tls` Secret named `agentome-tls`, or cert-manager's
-   annotation, which makes one.
+   annotation, which makes one. Name the ingress controller's pods for the server, which takes
+   the client's address from them alone; with ingress-nginx:
+
+   ```sh
+   kubectl -n ingress-nginx apply -f deploy/kubernetes/ingress-proxy.yaml
+   ```
+
+   For another controller, change the labels in the file, the namespace in the command and in
+   `AGENTOME_TRUST_PROXY` (`agentome-ingress.<its namespace>`).
+
 3. Create the namespace and the Secret. The secret key is yours to keep (see below); the
    address is the one for PostgreSQL in the cluster:
 
@@ -813,26 +839,59 @@ computers, or on a seat started with compose on a machine of its own (see
 Computers connect to the Ingress address, `AGENTOME_PUBLIC_URL`: the commands in Admin →
 Computers carry it. Give it a hostname, not an IP address ([CONFIG.md](CONFIG.md#sign-in)).
 
-The server trusts `X-Forwarded-For` (`AGENTOME_TRUST_PROXY=true`), as it must behind the
-Ingress. Its Service has no address outside the cluster, so only the Ingress controller and
-other pods reach it directly; a NetworkPolicy that admits the controller alone closes the
-rest. A company certificate authority goes in as with compose: `NODE_EXTRA_CA_CERTS` among the
+The server takes `X-Forwarded-For` from the ingress controller's pods only
+(`AGENTOME_TRUST_PROXY=agentome-ingress.ingress-nginx`, the name `ingress-proxy.yaml` gives
+them, looked up every minute), as it must behind the Ingress. Not from anyone (`true`): places
+reach the server directly, and one could claim any address, around the sign-in limit. Without
+the name, everyone shares the proxy's address and one sign-in limit. The server's Service has
+no address outside the cluster, so only the Ingress controller and other pods reach it
+directly; a NetworkPolicy that admits the controller alone closes the rest. A company certificate authority goes in as with compose: `NODE_EXTRA_CA_CERTS` among the
 settings in `kustomization.yaml`, and the PEM file mounted from a ConfigMap with a patch.
 
 ### Places on Kubernetes
 
-With the `places` component, a person's place is a pod of theirs in the namespace, with two
-volume claims: `agentome-place-<id>-home` (1 GiB, the sign-in) and `agentome-place-<id>-seat`
+Places, their launcher and their egress proxy are in a namespace of their own,
+`agentome-places`, so that the launcher, which makes pods and opens commands in them, can do
+neither where the database and the app's Secret are. Once the server runs:
+
+1. Apply them, take the `#` off `AGENTOME_PLACE_LAUNCHER_URL` in `kustomization.yaml`, and apply
+   the app again. In `places/kustomization.yaml`, give the same `newTag` as the app's, and the
+   name of the cluster's gVisor RuntimeClass in `AGENTOME_PLACE_RUNTIME` (below).
+
+   ```sh
+   kubectl apply -k deploy/kubernetes/places
+   kubectl apply -k deploy/kubernetes
+   ```
+
+2. Give the launcher and the egress proxy their keys, in the Secret `agentome-places`. Both are
+   derived from the secret key, which neither holds, so make them again after
+   `agentome rotate-key`:
+
+   ```sh
+   kubectl -n agentome-places create secret generic agentome-places \
+     --from-literal=places.key="$(kubectl -n agentome exec deploy/agentome -- agentome places-key)" \
+     --from-literal=egress.key="$(kubectl -n agentome exec deploy/agentome -- agentome egress-key)"
+   kubectl -n agentome-places rollout restart deploy/place-launcher deploy/place-egress
+   ```
+
+With the app in another namespace than `agentome`, put its name into `places/places.yaml`: the
+`agentome` Service there, by which places and the proxy call the app, and the two policies that
+let them.
+
+A person's place is a pod of theirs in `agentome-places`, with two volume claims:
+`agentome-place-<id>-home` (1 GiB, the sign-in) and `agentome-place-<id>-seat`
 (20 GiB, the connection, the CLI and the agents' working folders), of the cluster's default
 storage class. Sleeping deletes the pod and keeps the claims; waking makes the pod again on the
 same claims. Everything else is as in [Places on the server](#places-on-the-server).
 
 - `place-launcher` makes the pods. Its service account may get, create and delete pods and
-  volume claims in the namespace, and open a command in a pod (the terminal, and emptying an
-  agent's folders), and nothing in the cluster. It derives the places' key from the Secret's
-  `AGENTOME_SECRET_KEY` and keeps nothing else of it; to keep the installation's key out of the
-  launcher's pod too, give it `AGENTOME_PLACES_KEY_FILE` from a Secret of its own holding the
-  places' key (the app writes it to `places/places.key` in its data folder).
+  volume claims in `agentome-places`, and open a command in a pod there (the terminal, and
+  emptying an agent's folders), and nothing in the app's namespace or the cluster. It holds the
+  places' key, never the installation's.
+- Pod Security holds every pod in `agentome-places` to the baseline: none privileged, on the
+  host's network or in its folders, whoever made it. Restricted is reported, not enforced: a
+  project's services keep their images' users. A ResourceQuota caps the pods, claims and
+  storage of all places; raise it in `places/namespace.yaml` for more people.
 - `place-egress` is the places' only way out, as with compose.
 - NetworkPolicies let a place reach the server and the egress proxy, and take no connection; a
   place has no DNS (`dnsPolicy: None`) and gets the two services' addresses as host aliases,
@@ -880,7 +939,7 @@ volume, then the server starts again:
 ```sh
 kubectl -n agentome scale deploy/agentome --replicas=0
 kubectl -n agentome run agentome-restore --rm -i --restart=Never \
-  --image=docker.io/agentome/agentome:0.3.0 --override-type=strategic --overrides='
+  --image=docker.io/agentome/agentome:0.4.0 --override-type=strategic --overrides='
 {"spec": {"securityContext": {"runAsNonRoot": true, "runAsUser": 1000, "runAsGroup": 1000,
     "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
   "containers": [{"name": "agentome-restore", "envFrom": [{"secretRef": {"name": "agentome"}}],

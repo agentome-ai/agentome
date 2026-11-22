@@ -2,6 +2,10 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { type Kube, type KubeExec, kubeError } from './kube.js';
 import type { ServiceSpec } from '../projects/devcontainer.js';
 import {
+  CLI_MARK,
+  codexCliFolders,
+  NO_RUNTIME,
+  placeRuntime,
   type PlaceNetwork,
   type Places,
   sandboxMounts,
@@ -153,7 +157,7 @@ export function runPod(
     spec: {
       restartPolicy: 'Never',
       ...(nodeName && { nodeName }),
-      ...(settings.runtime && { runtimeClassName: settings.runtime }),
+      ...(placeRuntime(settings.runtime) && { runtimeClassName: placeRuntime(settings.runtime) }),
       automountServiceAccountToken: false,
       enableServiceLinks: false,
       terminationGracePeriodSeconds: 5,
@@ -168,12 +172,23 @@ export function runPod(
       ],
       containers: [
         container('cli', [
-          ...mounts.map(onSeat),
+          // A Codex run's CLI container: the CLI and the sign-in, its working folders empty.
+          ...(run.engine === 'codex'
+            ? [
+                ...mounts.filter((mount) => mount.subPath === 'cli').map(onSeat),
+                ...codexCliFolders(runId, run.folder).map((path, i) => ({
+                  name: `codex-folder-${i}`,
+                  mountPath: path,
+                })),
+              ]
+            : mounts.map(onSeat)),
           ...Object.values(SIGN_IN).map((path) => ({
             name: 'home',
             mountPath: path,
             subPath: path.slice('/home/node/'.length),
           })),
+          // Its mark, read-only: its bash and git pass every command to the sandbox.
+          { name: 'cli-mark', mountPath: CLI_MARK, readOnly: true },
         ]),
         // No CLI, no sign-in, the run's folder only to read.
         container(
@@ -195,6 +210,13 @@ export function runPod(
         { name: 'sandbox-home', emptyDir: { sizeLimit: '2Gi' } },
         { name: 'cli-tmp', emptyDir: { sizeLimit: '2Gi' } },
         { name: 'sandbox-tmp', emptyDir: { sizeLimit: '2Gi' } },
+        { name: 'cli-mark', emptyDir: { medium: 'Memory', sizeLimit: '1Ki' } },
+        ...(run.engine === 'codex'
+          ? codexCliFolders(runId, run.folder).map((_, i) => ({
+              name: `codex-folder-${i}`,
+              emptyDir: { medium: 'Memory', sizeLimit: '1Mi' },
+            }))
+          : []),
       ],
     },
   };
@@ -237,7 +259,7 @@ export function placePod(
     },
     spec: {
       restartPolicy: run.restart,
-      ...(settings.runtime && { runtimeClassName: settings.runtime }),
+      ...(placeRuntime(settings.runtime) && { runtimeClassName: placeRuntime(settings.runtime) }),
       automountServiceAccountToken: false,
       enableServiceLinks: false,
       terminationGracePeriodSeconds: 30,
@@ -292,6 +314,10 @@ export function placePod(
 }
 
 export function kubePlaces(settings: KubePlaceSettings): Places {
+  // A RuntimeClass is the cluster's to check: a name must be given, or runc for the nodes' kernel.
+  const runtimeChecked = () => {
+    if (settings.runtime === undefined) throw new Refusal(409, NO_RUNTIME);
+  };
   const { kube } = settings;
   const patience = settings.patience ?? { tries: 170, everyMs: 1000 };
 
@@ -391,6 +417,7 @@ export function kubePlaces(settings: KubePlaceSettings): Places {
   }
 
   async function wake(id: string) {
+    runtimeChecked();
     const n = names(id);
     const pod = await readPod(n.pod);
     if (alive(pod)) return;
@@ -416,6 +443,7 @@ export function kubePlaces(settings: KubePlaceSettings): Places {
     },
 
     async create(id, code) {
+      runtimeChecked();
       const n = names(id);
       for (const [claim, size] of [
         [n.home, CLAIMS.home],
@@ -502,6 +530,7 @@ export function kubePlaces(settings: KubePlaceSettings): Places {
     },
 
     async startRun(id, runId, run) {
+      runtimeChecked();
       const keeper = await readPod(names(id).pod);
       if (!alive(keeper)) throw new Refusal(409, 'The place is not awake');
       const name = runName(runId);

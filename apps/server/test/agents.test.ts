@@ -231,6 +231,7 @@ describe('creating an agent', () => {
       ['Task', 'task_comment', 'allow'],
       ['Memory', 'memory_read', 'allow'],
       ['Memory', 'memory_write', 'allow'],
+      ['Agent', 'agent_propose_instructions', 'ask'],
       ['Knowledge', 'knowledge_search', 'allow'],
       ['Knowledge', 'knowledge_read', 'allow'],
       ['Jira', 'jira_get_issue', 'allow'],

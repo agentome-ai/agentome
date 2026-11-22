@@ -34,6 +34,10 @@ const USAGE = `Usage:
                                      needs Docker's socket and the app's data, read-only
   agentome place-egress              the places' only way out: a proxy that lets a place reach
                                      the hosts its run's project opens, and nothing else
+  agentome egress-key                the egress proxy's key, to stdout, for a cluster's Secret;
+                                     compose mounts the file the app writes instead
+  agentome places-key                the place launcher's key, to stdout, for a cluster's Secret:
+                                     derived from the secret key, which the launcher never holds
 `;
 
 // stdin, stdout and stderr of a tool. During a backup our stdout is the archive, so only tar
@@ -328,9 +332,10 @@ async function placeLauncherCommand(): Promise<void> {
   const { dockerEgressToken, launcherKey, placeEgressToken } = await import('./places/keys.js');
   const { lookup } = await import('node:dns/promises');
   const config = loadLauncherConfig(process.env);
-  // Agentome's services by their names, in compose as in the manifests.
+  const { SERVER_NAME } = await import('./places/launcher.js');
+  // The app by its name on the places' networks, the proxy by its service's.
   const network = {
-    serverUrl: cluster ? 'http://agentome:3000' : 'http://app:3000',
+    serverUrl: `http://${SERVER_NAME}:3000`,
     egress: {
       proxy: 'place-egress:3128',
       tokenOf: (id: string) => placeEgressToken(config.placesKey, id),
@@ -342,7 +347,8 @@ async function placeLauncherCommand(): Promise<void> {
     ? await Promise.all(
         ['agentome', 'place-egress'].map(async (name) => ({
           ip: (await lookup(name)).address,
-          hostnames: [name],
+          // The app's service name stays, for places connected at it.
+          hostnames: name === 'agentome' ? [name, SERVER_NAME] : [name],
         })),
       )
     : [];
@@ -430,9 +436,27 @@ async function placeEgressCommand(): Promise<void> {
   const serverUrl = process.env.KUBERNETES_SERVICE_HOST
     ? 'http://agentome:3000'
     : 'http://app:3000';
+  // Its key, which the app takes its word by: a file the app writes (compose), or the
+  // environment (a cluster's Secret, made with `agentome egress-key`).
+  const { readFileSync } = await import('node:fs');
+  const keyFile = process.env.AGENTOME_EGRESS_KEY_FILE?.trim() || '/egress/egress.key';
+  const key =
+    process.env.AGENTOME_EGRESS_KEY?.trim() ||
+    (() => {
+      try {
+        return readFileSync(keyFile, 'utf8').trim();
+      } catch {
+        return '';
+      }
+    })();
+  if (!key) {
+    throw new Error(
+      `No key in ${keyFile} nor AGENTOME_EGRESS_KEY: start the app first, which writes it, or on a cluster put the key \`agentome egress-key\` prints in the proxy's Secret.`,
+    );
+  }
   const server = egressProxy({
-    hostsOf: hostsFromServer(serverUrl),
-    report: reportToServer(serverUrl),
+    hostsOf: hostsFromServer(serverUrl, key),
+    report: reportToServer(serverUrl, key),
     log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
   });
   await new Promise<void>((resolve) => server.listen(3128, '0.0.0.0', resolve));
@@ -452,6 +476,18 @@ async function main([command, ...rest]: string[]): Promise<number> {
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       process.stderr.write(`agentome license sign: ${error.message}\n`);
+      return 1;
+    }
+  }
+  if ((command === 'egress-key' || command === 'places-key') && rest.length === 0) {
+    try {
+      const { egressProxyKey, placesKey } = await import('./places/keys.js');
+      const places = placesKey(loadConfig(process.env).secretKey);
+      process.stdout.write(`${command === 'places-key' ? places : egressProxyKey(places)}\n`);
+      return 0;
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      process.stderr.write(`agentome ${command}: ${error.message}\n`);
       return 1;
     }
   }

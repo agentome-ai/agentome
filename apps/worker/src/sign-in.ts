@@ -1,32 +1,61 @@
-import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 // The person's sign-in to the CLIs in their place, which each run's container mounts:
 // `~/.claude` and `~/.codex` of the place's home. A run may write there, since the CLIs refresh
-// their tokens there; so before each run the place takes out what is not the sign-in and would
-// be read as instructions by the next run of any of the person's agents. The sign-in files
-// themselves are left as they are, never read.
+// their tokens there, and what it wrote would be read as instructions or run as commands by the
+// next run of any of the person's agents, by the place's check of the sign-in and by the person's
+// own CLI in its terminal: an MCP server, a hook, an API key helper. So the place keeps only the
+// sign-in, by name, and takes out everything else, whatever a CLI version adds: before each run
+// and after it, and before each check. The sign-in files themselves are never read.
 
-/** What of the CLIs' folders a run could leave for the next one to follow. */
-const NOT_THE_SIGN_IN = {
-  '.claude': [
-    'skills',
-    'agents',
-    'commands',
-    'plugins',
-    'hooks',
-    'output-styles',
-    'settings.json',
-    'settings.local.json',
-    'CLAUDE.md',
-    'CLAUDE.local.md',
-  ],
-  '.codex': ['config.toml', 'AGENTS.md', 'AGENTS.override.md', 'prompts', 'skills', 'rules'],
+/** What of the CLIs' folders is the sign-in: every other name goes. */
+const SIGN_IN = {
+  '.claude': ['.credentials.json', '.claude.json'],
+  '.codex': ['auth.json'],
 };
 
-/** Makes the sign-in folders ready for a run's container; says what it took out. */
+/**
+ * What of Claude Code's account file stays: the account and that it was set up. Not its MCP
+ * servers, nor its per-folder settings (`projects`), whose tools and servers a run could add.
+ */
+const ACCOUNT = [
+  'oauthAccount',
+  'userID',
+  'hasCompletedOnboarding',
+  'lastOnboardingVersion',
+  'theme',
+  'installMethod',
+  'autoUpdates',
+  'firstStartTime',
+];
+
+/** The account file with its account alone; nothing when it is not one. */
+function accountOnly(path: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+    const kept = Object.fromEntries(
+      Object.entries(parsed).filter(([key]) => ACCOUNT.includes(key)),
+    );
+    return `${JSON.stringify(kept, null, 2)}\n`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Makes the sign-in folders ready for a run's container, or a check; says what it took out. */
 export function readySignIn(home: string, say: (text: string) => void): void {
-  for (const folder of Object.keys(NOT_THE_SIGN_IN)) {
+  for (const folder of Object.keys(SIGN_IN)) {
     mkdirSync(join(home, folder), { recursive: true, mode: 0o700 });
   }
   // Claude Code keeps its account file in its config folder when CLAUDE_CONFIG_DIR names it, as
@@ -35,25 +64,26 @@ export function readySignIn(home: string, say: (text: string) => void): void {
   const kept = join(home, '.claude', '.claude.json');
   if (existsSync(legacy) && !existsSync(kept)) renameSync(legacy, kept);
   const removed: string[] = [];
-  for (const [folder, names] of Object.entries(NOT_THE_SIGN_IN)) {
-    for (const name of names) {
+  for (const [folder, names] of Object.entries(SIGN_IN)) {
+    for (const name of readdirSync(join(home, folder))) {
       const path = join(home, folder, name);
-      if (!existsSync(path)) continue;
+      // A sign-in file is a file: a link in its place would point a CLI's write somewhere else.
+      if (names.includes(name) && lstatSync(path).isFile()) continue;
       rmSync(path, { recursive: true, force: true });
       removed.push(`~/${folder}/${name}`);
     }
   }
-  if (removed.length > 0) {
-    say(`took out of the sign-in folders what a run left there: ${removed.join(', ')}`);
+  if (existsSync(kept)) {
+    const account = accountOnly(kept);
+    if (account === undefined) {
+      rmSync(kept, { force: true });
+      removed.push('~/.claude/.claude.json');
+    } else if (account !== readFileSync(kept, 'utf8')) {
+      writeFileSync(kept, account, { mode: 0o600 });
+      removed.push("~/.claude/.claude.json's settings other than the account");
+    }
   }
-  // Claude Code's lock while it refreshes its token. With the token expired, `claude auth
-  // status`, the place's check of the sign-in each minute, leaves it behind without refreshing,
-  // and a run's CLI that finds it fails ("another Claude Code process is refreshing it"): so the
-  // place never ran again until the token was refreshed by hand. Before a run no other Claude
-  // Code of the place's is working, so a lock here is a leftover.
-  const lock = join(home, '.claude', '.oauth_refresh.lock');
-  if (existsSync(lock)) {
-    rmSync(lock, { recursive: true, force: true });
-    say("took out Claude Code's lock on refreshing its sign-in, which a check left");
+  if (removed.length > 0) {
+    say(`took out of the sign-in folders what is not the sign-in: ${removed.join(', ')}`);
   }
 }

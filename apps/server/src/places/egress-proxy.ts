@@ -23,6 +23,16 @@ export type HostsOf = (
 const KEEP_MS = 15_000;
 const KEEP_REFUSED_MS = 10_000;
 const MAX_KEPT = 2_000;
+/** New tokens the app does not know, from one address in a minute, before the app is asked no more. */
+const UNKNOWN_A_MINUTE = 30;
+
+/** Drops a map's oldest entries until it has room: the newest are the ones in use. */
+function makeRoom<K, V>(map: Map<K, V>, max: number) {
+  for (const key of map.keys()) {
+    if (map.size < max) return;
+    map.delete(key);
+  }
+}
 /** What the proxy did goes to the app this often; a host it lets out, once a minute a token. */
 const REPORT_MS = 5_000;
 const REPORT_ALLOWED_MS = 60_000;
@@ -40,12 +50,19 @@ export type EgressEvent = {
 export type Report = (events: EgressEvent[]) => Promise<void>;
 
 /** Tells the app, which writes it to the platform's log under the run or the place. */
-export function reportToServer(serverUrl: string, fetchImpl: typeof fetch = fetch): Report {
+/** The header the proxy shows its key to the app in (egress.ts). */
+const KEY_HEADER = 'x-agentome-egress';
+
+export function reportToServer(
+  serverUrl: string,
+  key: string,
+  fetchImpl: typeof fetch = fetch,
+): Report {
   const url = `${serverUrl.replace(/\/+$/, '')}/api/egress/events`;
   return async (events) => {
     const answer = await fetchImpl(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', [KEY_HEADER]: key },
       body: JSON.stringify({ events }),
       signal: AbortSignal.timeout(10_000),
     });
@@ -54,12 +71,16 @@ export function reportToServer(serverUrl: string, fetchImpl: typeof fetch = fetc
 }
 
 /** Asks the app, as the proxy does in compose. */
-export function hostsFromServer(serverUrl: string, fetchImpl: typeof fetch = fetch): HostsOf {
+export function hostsFromServer(
+  serverUrl: string,
+  key: string,
+  fetchImpl: typeof fetch = fetch,
+): HostsOf {
   const url = `${serverUrl.replace(/\/+$/, '')}/api/egress/hosts`;
   return async (kind, id, token) => {
     const answer = await fetchImpl(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', [KEY_HEADER]: key },
       body: JSON.stringify({ kind, ...(id !== undefined && { id }), token }),
       signal: AbortSignal.timeout(10_000),
     });
@@ -115,6 +136,11 @@ NEVER.addAddress('::', 'ipv6');
 NEVER.addAddress('::1', 'ipv6');
 NEVER.addSubnet('fe80::', 10, 'ipv6');
 NEVER.addSubnet('ff00::', 8, 'ipv6');
+// The clouds' own metadata services, wherever they are: AWS's over IPv6, Alibaba's, Azure's wire
+// server. Whatever name resolves to them, never (review P9).
+NEVER.addAddress('fd00:ec2::254', 'ipv6');
+NEVER.addAddress('100.100.100.200');
+NEVER.addAddress('168.63.129.16');
 /** The company's own networks: reached only for a host listed exactly, never through a `*.`. */
 const PRIVATE = new BlockList();
 PRIVATE.addSubnet('10.0.0.0', 8);
@@ -127,7 +153,14 @@ PRIVATE.addSubnet('fc00::', 7, 'ipv6');
 export function addressAllowed(address: string, match: HostMatch): boolean {
   // An IPv4 address written as IPv6 (::ffff:10.0.0.1) is judged as the IPv4 one.
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address)?.[1];
-  const ip = mapped ?? address;
+  // So is one inside NAT64's prefix (64:ff9b::a9fe:a9fe is 169.254.169.254), wherever it leads.
+  const nat64 = /^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(address);
+  const translated = nat64
+    ? [parseInt(nat64[1] ?? '0', 16), parseInt(nat64[2] ?? '0', 16)]
+        .flatMap((word) => [word >> 8, word & 0xff])
+        .join('.')
+    : undefined;
+  const ip = mapped ?? translated ?? address;
   const family = isIP(ip) === 6 ? 'ipv6' : 'ipv4';
   if (isIP(ip) === 0 || NEVER.check(ip, family)) return false;
   return match.exact || !PRIVATE.check(ip, family);
@@ -238,19 +271,37 @@ export function egressProxy(options: {
   const lookup = options.lookup ?? systemLookup;
   const reachable = options.reachable ?? addressAllowed;
   const kept = new Map<string, { opened: Opened | undefined; until: number }>();
+  // Unknown tokens per address and minute: random tokens from one run cost the app nothing.
+  const unknownFrom = new Map<string, { minute: number; count: number }>();
   const pending = new Map<string, EgressEvent>();
   const reported = new Map<string, number>();
 
   type Credentials = NonNullable<ReturnType<typeof credentialsOf>>;
-  async function openedFor(credentials: Credentials): Promise<Opened | undefined> {
+  async function openedFor(credentials: Credentials, from: string): Promise<Opened | undefined> {
     const key = `${credentials.kind}\n${credentials.id ?? ''}\n${credentials.token}`;
     const known = kept.get(key);
     if (known && known.until > now()) return known.opened;
-    const opened = await hostsOf(credentials.kind, credentials.id, credentials.token);
-    if (kept.size >= MAX_KEPT) {
-      for (const [old, entry] of kept) if (entry.until <= now()) kept.delete(old);
-      if (kept.size >= MAX_KEPT) kept.clear();
+    // A token the proxy has not seen: one more from this address this minute, or no question.
+    if (!known) {
+      const minute = Math.floor(now() / 60_000);
+      const tried = unknownFrom.get(from);
+      const count = tried?.minute === minute ? tried.count + 1 : 1;
+      unknownFrom.delete(from);
+      makeRoom(unknownFrom, MAX_KEPT);
+      unknownFrom.set(from, { minute, count });
+      if (count > UNKNOWN_A_MINUTE) return undefined;
     }
+    let opened: Opened | undefined;
+    try {
+      opened = await hostsOf(credentials.kind, credentials.id, credentials.token);
+    } catch (error) {
+      // The app did not answer: a token it opened a moment ago keeps what it opened, rather than
+      // every place losing its way out together.
+      if (known?.opened) return known.opened;
+      throw error;
+    }
+    kept.delete(key);
+    makeRoom(kept, MAX_KEPT);
     kept.set(key, { opened, until: now() + (opened ? KEEP_MS : KEEP_REFUSED_MS) });
     return opened;
   }
@@ -266,7 +317,7 @@ export function egressProxy(options: {
     if (allowed && now() - (reported.get(key) ?? -Infinity) < REPORT_ALLOWED_MS) return;
     if (reported.size >= MAX_KEPT) {
       for (const [old, at] of reported) if (now() - at >= REPORT_ALLOWED_MS) reported.delete(old);
-      if (reported.size >= MAX_KEPT) reported.clear();
+      makeRoom(reported, MAX_KEPT);
     }
     reported.set(key, now());
     pending.set(key, {
@@ -296,7 +347,7 @@ export function egressProxy(options: {
     if (!credentials) return { status: 407 as const };
     let opened: Opened | undefined;
     try {
-      opened = await openedFor(credentials);
+      opened = await openedFor(credentials, request.socket.remoteAddress ?? '');
     } catch (error) {
       log(`cannot ask the app: ${error instanceof Error ? error.message : String(error)}`);
       return { status: 503 as const };

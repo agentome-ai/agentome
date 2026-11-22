@@ -73,6 +73,16 @@ export interface Connection {
   token: string;
 }
 
+/**
+ * In a place, the server at the address its launcher gives on each waking, over the one it was
+ * connected at: places connected earlier know it as `app` or `agentome`, a name their way
+ * around the egress proxy read as a domain's tail, opening every host in `.app` along with it.
+ */
+export function placeConnection(connection: Connection, env: NodeJS.ProcessEnv): Connection {
+  const at = env.AGENTOME_PLACE_SERVER?.trim();
+  return at ? { ...connection, serverUrl: at } : connection;
+}
+
 export const connectionFile = (home: string) => join(home, 'config.json');
 
 /** The connection `connect` saved, or nothing on a computer that was never connected. */

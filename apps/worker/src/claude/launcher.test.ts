@@ -123,8 +123,6 @@ describe('runClaude: the invocation', () => {
       'Bash(git:*)',
       '--add-dir',
       profile,
-      '--add-dir',
-      workspace,
       '--settings',
       join(profile, 'settings.json'),
     ]);

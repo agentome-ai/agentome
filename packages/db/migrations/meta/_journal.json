@@ -71,6 +71,13 @@
       "when": 1794768312772,
       "tag": "0009_installation_id",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795175752061,
+      "tag": "0010_away_mode",
+      "breakpoints": true
     }
   ]
 }

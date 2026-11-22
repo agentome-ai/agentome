@@ -1,4 +1,5 @@
-import type { Db } from '@agentome/db';
+import { agents, and, type Db, eq } from '@agentome/db';
+import { PROPOSE_INSTRUCTIONS } from '@agentome/shared';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { ChangeRequest, CodeHost, RepositoryRef } from '../code-host/index.js';
@@ -292,6 +293,45 @@ export const TOOLS: Tool[] = [
         text: json({ path: written.path, version: written.version }),
         summary: `${written.path} v${written.version}`,
       };
+    },
+  }),
+  tool({
+    connector: 'Agent',
+    name: PROPOSE_INSTRUCTIONS,
+    title: 'Propose new instructions',
+    description:
+      'Proposes a new text of your own instructions (the Instructions section of your CLAUDE.md) to your owner, who sees it as a change against the text now and approves or denies it; the run waits for the answer. Give the whole new text, not a change, and why. Propose only what your work has shown you need.',
+    input: {
+      instructions: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100_000)
+        .describe('The whole new text of your instructions, in markdown'),
+      why: z
+        .string()
+        .trim()
+        .min(1)
+        .max(4_000)
+        .describe('Why, as your owner will read it: what went wrong, and how this helps'),
+    },
+    readOnly: false,
+    // The gateway adds the text the instructions had when the call came (`previous`): the owner
+    // approves the change against it, and it is kept with the call.
+    async run({ db, agentId }, args) {
+      const { previous } = args as { previous?: unknown };
+      if (typeof previous !== 'string') throw new Error('The proposal came without its base');
+      const [changed] = await db
+        .update(agents)
+        .set({ instructions: args.instructions })
+        .where(and(eq(agents.id, agentId), eq(agents.instructions, previous)))
+        .returning({ id: agents.id });
+      if (!changed) {
+        throw new ToolRefusal(
+          'Your instructions changed while your owner considered the proposal, so it was not applied. Say so in your report: your next run reads the new text.',
+        );
+      }
+      return { text: 'Approved: your next run reads the new instructions.', summary: args.why };
     },
   }),
   tool({

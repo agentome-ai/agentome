@@ -28,6 +28,7 @@ import {
   removeRuns,
   removeWorkspace,
   closedHome,
+  repositoryInstructionsSection,
 } from './workspace.js';
 
 let dir: string;
@@ -662,5 +663,69 @@ describe('the git proxy of a place', () => {
     ).toBe('http://app:3000/git/acme/shop.git');
     const none = { workspace: {} } as unknown as LaunchPackage;
     expect(gitAtServer(none, 'http://app:3000')).toBe(none);
+  });
+});
+
+describe("the repository's own instructions", () => {
+  it('follows imports inside the repository only, and leaves none for the CLI to follow', () => {
+    const repo = join(dir, 'instructed');
+    mkdirSync(join(repo, 'docs'), { recursive: true });
+    mkdirSync(join(repo, '.claude', 'rules'), { recursive: true });
+    const secret = join(dir, 'sign-in.json');
+    writeFileSync(secret, 'the sign-in');
+    writeFileSync(
+      join(repo, 'CLAUDE.md'),
+      [
+        '# Acme',
+        'Style: @docs/style.md',
+        `Keys: @${secret} and @~/.codex/auth.json`,
+        'Through a link: @docs/link.md',
+        '```ts',
+        '@Component() class A {}',
+        '```',
+        'Inline `@scope/pkg` stays.',
+      ].join('\n'),
+    );
+    writeFileSync(join(repo, 'docs', 'style.md'), 'Two spaces. More: @../.claude/rules/naming.md');
+    symlinkSync(secret, join(repo, 'docs', 'link.md'));
+    writeFileSync(join(repo, '.claude', 'rules', 'naming.md'), 'Names in English.');
+    const section = repositoryInstructionsSection(repo);
+    expect(section).toContain('Two spaces.');
+    expect(section).toContain('Names in English.');
+    // Nothing outside the repository, by a path or by a link, and no import left at all.
+    expect(section).not.toContain('the sign-in');
+    expect(section).toContain(`Keys: ${secret} and ~/.codex/auth.json`);
+    expect(section).not.toMatch(/(^|\s)@[^C\s]/m);
+    // Code is code: a decorator and an inline package name keep their @.
+    expect(section).toContain('@Component() class A {}');
+    expect(section).toContain('`@scope/pkg`');
+    // Each file once, though two lead to it.
+    expect(section.match(/### \.claude\/rules\/naming\.md/g)).toHaveLength(1);
+  });
+
+  it('takes no CLAUDE.md that is a link out of the repository', () => {
+    const repo = join(dir, 'linked');
+    mkdirSync(repo);
+    writeFileSync(join(dir, 'elsewhere.md'), 'not the repository');
+    symlinkSync(join(dir, 'elsewhere.md'), join(repo, 'CLAUDE.md'));
+    expect(repositoryInstructionsSection(repo)).toBe('');
+  });
+});
+
+describe("a run's settings in a person's place", () => {
+  it("close the CLI container's home and run folder to the file tools", async () => {
+    const workspace = await prepareWorkspace(home, launchPackage(), { ...options, place: true });
+    const { permissions } = JSON.parse(
+      readFileSync(join(workspace.profile, 'settings.json'), 'utf8'),
+    ) as { permissions: { deny: string[] } };
+    expect(permissions.deny).toEqual(
+      expect.arrayContaining([
+        'Read(//home/node)',
+        'Read(//home/node/**)',
+        'Edit(//home/node/**)',
+        'Read(//tmp/agentome/**)',
+        'Edit(//tmp/agentome/**)',
+      ]),
+    );
   });
 });

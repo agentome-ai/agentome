@@ -31,3 +31,15 @@ group("a team lead's assignment in Approvals", () => {
     });
   });
 });
+
+group('new instructions an agent proposes, in Approvals', () => {
+  it('reads as a change of its own instructions, with its reason as what it wrote', () => {
+    expect(
+      describe({
+        tool: 'agent_propose_instructions',
+        task: null,
+        input: { instructions: 'Run the linter.', why: 'CI failed twice.', previous: '' },
+      }),
+    ).toEqual({ refs: [], action: 'Change its own instructions', body: 'CI failed twice.' });
+  });
+});

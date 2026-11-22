@@ -81,16 +81,21 @@ company's networks: see [Places on the server](../../deploy/OPERATIONS.md#places
 
 ## Install on Kubernetes
 
-The manifests are in `deploy/kubernetes` of the release, with the places in the `places`
-component. In short:
+The manifests are in `deploy/kubernetes` of the release. Places, their launcher and their egress
+proxy are in `places`, a namespace of their own, `agentome-places`, so the launcher never makes a
+pod where the database and the app's secret are. In short:
 
 1. Install gVisor on the nodes and create its RuntimeClass, `gvisor` say.
 2. Set the namespace, `AGENTOME_PUBLIC_URL` and the image tag in `kustomization.yaml`, the
    certificate in `ingress.yaml`, and create the Secret with the secret key and the database's
-   address.
-3. Take the `places` component and set `AGENTOME_PLACE_RUNTIME=gvisor` (the RuntimeClass's name).
-   The cluster's network plugin must enforce NetworkPolicies: Calico and Cilium do.
-4. `kubectl apply -k deploy/kubernetes`, then open `/setup` with the setup code.
+   address. Apply `ingress-proxy.yaml` in the ingress controller's namespace, so that the server
+   takes the client's address from the controller alone.
+3. `kubectl apply -k deploy/kubernetes`, then open `/setup` with the setup code.
+4. For places: set the image tag and `AGENTOME_PLACE_RUNTIME=gvisor` (the RuntimeClass's name) in
+   `places/kustomization.yaml`, `kubectl apply -k deploy/kubernetes/places`, turn on
+   `AGENTOME_PLACE_LAUNCHER_URL` in `kustomization.yaml`, and give the places their keys with
+   `agentome places-key` and `agentome egress-key`. The cluster's network plugin must enforce
+   NetworkPolicies: Calico and Cilium do.
 
 Every step is in [Kubernetes](../../deploy/OPERATIONS.md#kubernetes). On Kubernetes a run has no
 Docker of its own yet: a project's databases come from its devcontainer, as its services.

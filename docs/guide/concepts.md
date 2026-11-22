@@ -109,8 +109,8 @@ and nested teams, need a license key. See [Teams](teams.md).
 A person's own container on the company's server, made by the platform, that runs their agents.
 
 A place runs the worker under the person's own Claude or ChatGPT subscription, which they sign in to
-once in its terminal in the browser. It takes runs only while the person has Agentome open and in
-use, and sleeps when nothing runs. It keeps the sign-in and each agent's working folder per
+once in its terminal in the browser. It takes runs while the person has Agentome open and in use,
+or while they are away too if they turned on **Work while I'm away**, and sleeps when nothing runs. It keeps the sign-in and each agent's working folder per
 repository between runs, runs the services a project's devcontainer lists beside the agent once an
 admin approves them, and reaches nothing outside but Agentome, the model's vendor and the hosts a
 project allows. Nothing is installed on the person's computer. See

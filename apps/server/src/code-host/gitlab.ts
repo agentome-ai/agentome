@@ -313,6 +313,9 @@ export function gitlabHost(options: {
     pipelineDiffers: (repository, base, head) =>
       call(async () => {
         const project = (await api.Projects.show(repository)) as unknown as Json;
+        // A token that is not shown where the configuration is cannot check it: no telling it
+        // is the default file.
+        if (!Object.hasOwn(project, 'ci_config_path')) return true;
         const config = String(project.ci_config_path || '.gitlab-ci.yml');
         // A configuration in another project or at a URL is not this repository's to change.
         if (config.includes('@') || /^https?:/i.test(config)) return false;

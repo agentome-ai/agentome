@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { callAllowed, containerAllowed, cutInspect, joinAllowed } from './docker-guard.js';
+import {
+  callAllowed,
+  containerAllowed,
+  cutInfo,
+  cutInspect,
+  joinAllowed,
+  madeByLauncher,
+} from './docker-guard.js';
 
 // What the docker guard keeps from a launcher broken into: each a way to the host's root.
 
@@ -9,7 +16,7 @@ const settings = {
   peers: ['app', 'place-egress'],
 };
 const place = 'agentome-place-0a1b2c3d';
-const base = { HostConfig: { NetworkMode: place } };
+const base = { Labels: { 'ai.agentome.place': '0a1b2c3d' }, HostConfig: { NetworkMode: place } };
 const refused = (body: Record<string, unknown>, name = `${place}-x`) =>
   containerAllowed(
     name,
@@ -47,6 +54,56 @@ describe('the docker guard', () => {
       expect(refused({ HostConfig: host }), JSON.stringify(host)).toBe(false);
     }
     expect(refused({}, 'portainer')).toBe(false);
+  });
+
+  it('refuses a field in another case, a field it does not know, and the host by a volume', () => {
+    // Docker reads `privileged` as Privileged and `binds` as Binds.
+    for (const host of [
+      { privileged: true },
+      { binds: ['/:/h'] },
+      { PidMode: 'container:agentome-app-1' },
+      { IpcMode: 'container:agentome-app-1' },
+      { SecurityOpt: ['seccomp=/etc/own-profile.json'], CapAdd: ['NET_ADMIN'] },
+    ]) {
+      expect(refused({ HostConfig: host }), JSON.stringify(host)).toBe(false);
+    }
+    for (const top of [
+      { privileged: true },
+      // Into the database's network, besides the place's own.
+      { NetworkingConfig: { EndpointsConfig: { agentome_default: {} } } },
+      { Labels: { 'ai.agentome.place': 'x', 'com.docker.compose.service': 'app' } },
+      { Labels: {} },
+    ]) {
+      expect(refused(top), JSON.stringify(top)).toBe(false);
+    }
+    const allowed = (method: string, path: string, body?: Record<string, unknown>) =>
+      callAllowed(method, path, body, settings).ok;
+    // A volume that is a folder of the host, by its driver's options.
+    expect(
+      allowed('POST', '/volumes/create', {
+        Name: 'agentome-place-0a1b2c3d-home',
+        DriverOpts: { type: 'none', o: 'bind', device: '/' },
+      }),
+    ).toBe(false);
+    expect(allowed('POST', `/containers/${place}/exec`, { user: 'root', User: '1000:1000' })).toBe(
+      false,
+    );
+    expect(allowed('POST', `/containers/${place}/start`, { anything: true })).toBe(false);
+  });
+
+  it("acts on containers a launcher made, by their labels, not the installation's own", () => {
+    expect(madeByLauncher({ 'ai.agentome.place': '0a1b' })).toBe(true);
+    // The egress proxy's name looks like a place's; its labels are compose's.
+    expect(
+      madeByLauncher({
+        'com.docker.compose.project': 'agentome',
+        'com.docker.compose.service': 'place-egress',
+      }),
+    ).toBe(false);
+    expect(
+      madeByLauncher({ 'ai.agentome.place': 'x', 'com.docker.compose.project': 'agentome' }),
+    ).toBe(false);
+    expect(madeByLauncher(undefined)).toBe(false);
   });
 
   it("lets a run's own Docker have its capabilities under gVisor alone", () => {
@@ -115,5 +172,16 @@ describe('the docker guard', () => {
       Config: { Labels: { a: 'b' } },
     });
     expect(cutInspect(place, app)).toBe(app);
+  });
+
+  it("answers Docker's info with its runtimes alone", () => {
+    expect(callAllowed('GET', '/info', undefined, settings).ok).toBe(true);
+    const info = {
+      Name: 'host-1',
+      Runtimes: { runsc: { path: '/usr/local/bin/runsc', runtimeArgs: ['--net-raw'] } },
+      SecurityOptions: ['name=seccomp'],
+      Swarm: { NodeAddr: '10.0.0.5' },
+    };
+    expect(cutInfo(info)).toEqual({ Runtimes: { runsc: { path: '/usr/local/bin/runsc' } } });
   });
 });

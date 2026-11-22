@@ -14,8 +14,17 @@
 //   CODEX_FAKE_LOGGED_OUT  a file: while it exists, `login status` says signed out
 //   CODEX_FAKE_SANDBOX   exit code of `codex sandbox`, the computer's check before a run (default 0)
 //   CODEX_FAKE_SANDBOX_RECORD  file that gets the arguments of that check, as JSON
-/* global process, setInterval */
+//   CODEX_FAKE_SANDBOX_MS  how long that check takes, in ms (default 0)
+//   CODEX_FAKE_CANARY    `brain`: in the worker's check before a place run, the command says it ran
+//                        beside the sign-in, as a Codex that ran it locally would
+// With the canary's model (`model_provider="agentome-canary"`) it asks that model as Codex does,
+// runs the one command it is given with sh here, and tells the model its output.
+// `exec-server --listen ws://127.0.0.1:<port>` says back what it hears on that port, as Codex's
+// executor answers its CLI; a run with CODEX_EXEC_SERVER_URL says "ping" there first and records
+// the answer as `executor`.
+/* global process, setInterval, setTimeout, URL, fetch */
 import { spawn } from 'node:child_process';
+import { connect, createServer } from 'node:net';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 const args = process.argv.slice(2);
@@ -34,10 +43,55 @@ async function main() {
     return out ? 1 : 0;
   }
   if (args[0] === 'sandbox') {
+    await new Promise((resolve) => setTimeout(resolve, Number(env.CODEX_FAKE_SANDBOX_MS ?? 0)));
     if (env.CODEX_FAKE_SANDBOX_RECORD !== undefined) {
       writeFileSync(env.CODEX_FAKE_SANDBOX_RECORD, JSON.stringify(args));
     }
     return Number(env.CODEX_FAKE_SANDBOX ?? 0);
+  }
+  if (args.includes('model_provider="agentome-canary"')) {
+    const base = /base_url="([^"]+)"/.exec(
+      args.find((arg) => arg.includes('base_url=')) ?? '',
+    )?.[1];
+    const ask = async (input) => {
+      const answer = await fetch(`${base}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'agentome-canary', input, stream: true }),
+      });
+      return answer.text();
+    };
+    const first = await ask([{ role: 'user', content: 'run it' }]);
+    const call = /"arguments":"((?:\\.|[^"\\])*)"/.exec(first)?.[1];
+    const cmd = call ? JSON.parse(JSON.parse(`"${call}"`)).cmd : '';
+    const output =
+      env.CODEX_FAKE_CANARY === 'brain'
+        ? 'CANARY-BRAIN\nCANARY-SEALED\n'
+        : await new Promise((resolve) => {
+            const child = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'ignore'] });
+            let out = '';
+            child.stdout.on('data', (chunk) => (out += chunk));
+            child.on('close', () => resolve(out));
+          });
+    await ask([{ type: 'function_call_output', call_id: 'call_canary', output }]);
+    return 0;
+  }
+  if (args[0] === 'exec-server') {
+    const port = Number(/:(\d+)$/.exec(args[args.indexOf('--listen') + 1] ?? '')?.[1]);
+    createServer((socket) => socket.pipe(socket)).listen(port, '127.0.0.1');
+    await new Promise(() => undefined);
+  }
+  let executor;
+  if (env.CODEX_EXEC_SERVER_URL !== undefined) {
+    const url = new URL(env.CODEX_EXEC_SERVER_URL);
+    executor = await new Promise((resolve) => {
+      const socket = connect(Number(url.port), url.hostname, () => socket.write('ping'));
+      socket.on('data', (data) => {
+        resolve(data.toString());
+        socket.end();
+      });
+      socket.on('error', (error) => resolve(`error: ${error.message}`));
+    });
   }
   let stdin = '';
   process.stdin.setEncoding('utf8');
@@ -47,6 +101,7 @@ async function main() {
     const prefixes = ['AGENTOME_', 'CODEX_HOME', 'OPENAI_', 'ANTHROPIC_'];
     const record = {
       args,
+      ...(executor !== undefined && { executor }),
       cwd: process.cwd(),
       stdin,
       env: Object.fromEntries(

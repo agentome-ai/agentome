@@ -1,0 +1,21 @@
+# The ingress controller's pods by one name, for AGENTOME_TRUST_PROXY: the server takes the
+# client's address from these pods' X-Forwarded-For and from nobody else's. It goes into the
+# controller's namespace, not the app's, so kustomization.yaml leaves it out:
+#
+#   kubectl -n ingress-nginx apply -f deploy/kubernetes/ingress-proxy.yaml
+#
+# Headless, so its name gives the pods' own addresses, which connect to the app. For another
+# controller, put its namespace in the command and in AGENTOME_TRUST_PROXY, and its pods' labels
+# below: Traefik in k3s is in kube-system, its pods app.kubernetes.io/name: traefik.
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentome-ingress
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: controller
+  ports:
+    - name: http
+      port: 80

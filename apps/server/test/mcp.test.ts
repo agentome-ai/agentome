@@ -279,6 +279,7 @@ describe('the gateway', () => {
     const client = await clientFor(token);
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'agent_propose_instructions',
       'ask_owner',
       'code_host_create_branch',
       'code_host_get_change_request',
@@ -932,11 +933,78 @@ describe('auto and manual', () => {
     const auto = await policies('allow');
     expect(auto.memory_write).toBe('deny');
     expect(auto.code_host_open_change_request).toBe('allow');
-    expect(Object.values(auto).filter((policy) => policy === 'ask')).toEqual([]);
+    // New instructions wait for the owner in auto too.
+    expect(Object.entries(auto).filter(([, policy]) => policy === 'ask')).toEqual([
+      ['agent_propose_instructions', 'ask'],
+    ]);
     const manual = await policies('ask');
     expect(manual.memory_write).toBe('deny');
     expect(manual.memory_read).toBe('ask');
     expect(Object.values(manual).filter((policy) => policy === 'allow')).toEqual([]);
+  });
+});
+
+describe('new instructions an agent proposes', () => {
+  const propose = (client: Client, instructions: string) =>
+    client.callTool({
+      name: 'agent_propose_instructions',
+      arguments: { instructions, why: 'Two tasks came back for a missed lint run.' },
+    });
+  const instructionsOf = async (id: string) =>
+    (await db.select({ text: agents.instructions }).from(agents).where(eq(agents.id, id)))[0]?.text;
+
+  it('wait for the owner with the text they replace, and become its own once approved', async () => {
+    const { runId, agentId, token } = await liveRun(null);
+    await asAdmin('PATCH', `/api/agents/${agentId}`, { instructions: 'Write tests.' });
+    // Allow is not the owner's to give, in one tool's policy nor by stopping the asking.
+    const allow = await asAdmin('PUT', `/api/agents/${agentId}/tools/agent_propose_instructions`, {
+      policy: 'allow',
+    });
+    expect(allow.statusCode).toBe(400);
+    const client = await clientFor(token);
+    const proposing = propose(client, 'Write tests.\nRun the linter before you push.');
+    const pending = await pendingOf(runId);
+    expect(pending.input).toEqual({
+      instructions: 'Write tests.\nRun the linter before you push.',
+      why: 'Two tasks came back for a missed lint run.',
+      previous: 'Write tests.',
+    });
+    const always = await asAdmin('POST', `/api/tool-calls/${pending.id}/approve`, {
+      always: true,
+    });
+    expect(always.statusCode).toBe(400);
+    expect(await instructionsOf(agentId)).toBe('Write tests.');
+
+    await asAdmin('POST', `/api/tool-calls/${pending.id}/approve`);
+    expect(text(await proposing)).toContain('Approved');
+    expect(await instructionsOf(agentId)).toBe('Write tests.\nRun the linter before you push.');
+    await client.close();
+  });
+
+  it('are not applied over what the owner wrote while they waited', async () => {
+    const { runId, agentId, token } = await liveRun(null);
+    const client = await clientFor(token);
+    const proposing = propose(client, 'Run the linter before you push.');
+    const pending = await pendingOf(runId);
+    expect(pending.input).toMatchObject({ previous: '' });
+    await asAdmin('PATCH', `/api/agents/${agentId}`, { instructions: 'Ship small changes.' });
+    await asAdmin('POST', `/api/tool-calls/${pending.id}/approve`);
+    const answer = await proposing;
+    expect(answer.isError).toBe(true);
+    expect(text(answer)).toContain('changed while your owner considered the proposal');
+    expect(await instructionsOf(agentId)).toBe('Ship small changes.');
+    await client.close();
+  });
+
+  it('cannot be proposed at all once the owner denies the tool', async () => {
+    const { agentId, token } = await liveRun(null);
+    await asAdmin('PUT', `/api/agents/${agentId}/tools/agent_propose_instructions`, {
+      policy: 'deny',
+    });
+    const client = await clientFor(token);
+    const { tools } = await client.listTools();
+    expect(tools.map((tool) => tool.name)).not.toContain('agent_propose_instructions');
+    await client.close();
   });
 });
 

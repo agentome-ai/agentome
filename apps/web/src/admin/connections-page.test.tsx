@@ -255,4 +255,49 @@ describe('connections', () => {
     expect(await screen.findByText('Only admins manage connections')).toBeTruthy();
     expect(screen.queryByRole('table')).toBeNull();
   });
+
+  it('edits where a connection reaches, and takes the token again only for a new address', async () => {
+    const gitlab = {
+      ...github,
+      kind: 'gitlab',
+      config: { baseUrl: 'https://gitlab.acme.com', group: 'pay' },
+      host: 'gitlab.acme.com',
+      namespace: 'pay',
+    };
+    const { user, calls } = open({
+      'GET /api/connections': { connections: [gitlab] },
+      'PATCH /api/connections/c1': () => ({ json: gitlab }),
+    });
+    const row = await screen.findByRole('row', { name: /gitlab.acme.com\/pay/ });
+    await user.click(within(row).getByRole('button', { name: 'Actions for gitlab.acme.com/pay' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Edit connection' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit connection' });
+    const save = within(dialog).getByRole('button', { name: 'Save changes' });
+    expect(save).toHaveProperty('disabled', true);
+    const group = within(dialog).getByLabelText('Group');
+    await user.clear(group);
+    await user.type(group, 'acme/pay');
+    expect(within(dialog).queryByLabelText('Token')).toBeNull();
+    await user.click(save);
+    expect(calls.find((call) => call.route === 'PATCH /api/connections/c1')?.body).toEqual({
+      config: { kind: 'gitlab', baseUrl: 'https://gitlab.acme.com', group: 'acme/pay' },
+    });
+
+    await user.click(within(row).getByRole('button', { name: 'Actions for gitlab.acme.com/pay' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Edit connection' }));
+    const again = screen.getByRole('dialog', { name: 'Edit connection' });
+    const address = within(again).getByLabelText('GitLab address');
+    await user.clear(address);
+    await user.type(address, 'https://git.acme.com');
+    const button = within(again).getByRole('button', { name: 'Save changes' });
+    expect(button).toHaveProperty('disabled', true);
+    await user.type(within(again).getByLabelText('Token'), 'glpat-new');
+    await user.click(button);
+    expect(calls.filter((call) => call.route === 'PATCH /api/connections/c1').at(-1)?.body).toEqual(
+      {
+        config: { kind: 'gitlab', baseUrl: 'https://git.acme.com', group: 'pay' },
+        token: 'glpat-new',
+      },
+    );
+  });
 });

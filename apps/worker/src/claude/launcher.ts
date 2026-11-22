@@ -247,12 +247,10 @@ function claudeArgs(options: ClaudeRunOptions, resume: string | undefined): stri
   if (options.agents !== undefined) {
     args.push('--agents', JSON.stringify(options.agents), '--forward-subagent-text');
   }
+  // The profile's CLAUDE.md holds the agent's instructions and, below them, the repository's own
+  // (CLAUDE.md, .claude/CLAUDE.md, .claude/rules) and its skills, read by the worker
+  // (workspace.ts): the CLI would follow a repository's import to any file on the disk.
   args.push('--add-dir', options.profileDir);
-  // The repository's own CLAUDE.md, .claude/CLAUDE.md and .claude/rules, as Claude Code reads
-  // them for whoever works there: an --add-dir folder's instructions load without the project
-  // source, whose settings and hooks the repository must not run here. Its skills are listed in
-  // the profile's CLAUDE.md (workspace.ts).
-  args.push('--add-dir', options.cwd);
   args.push('--settings', join(options.profileDir, 'settings.json'));
   return args;
 }

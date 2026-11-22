@@ -297,7 +297,15 @@ describe('a project', () => {
 
   it('lets an admin allow a host the runs were refused, and add the public registries', async () => {
     const refused = {
-      hosts: [{ host: 'pypi.org', port: 443, count: 3, lastAt: new Date().toISOString() }],
+      hosts: [
+        { host: 'pypi.org', port: 443, count: 3, lastAt: new Date().toISOString() },
+        {
+          host: 'gitlab.acme.com.x.attacker.tld',
+          port: 443,
+          count: 1,
+          lastAt: new Date().toISOString(),
+        },
+      ],
     };
     const { user, calls } = open('/projects/p1', {
       'GET /api/projects/p1': view,
@@ -308,14 +316,21 @@ describe('a project', () => {
     expect(within(allowed).getByText('gitlab.acme.com')).toBeTruthy();
     const asked = await screen.findByRole('list', { name: 'Refused hosts' });
     expect(within(asked).getByText(/3 times, last/)).toBeTruthy();
-    // In one click, from the row itself.
+    // A name made to start like the company's shows whole, its owner apart.
+    expect(within(asked).getByText('attacker.tld')).toBeTruthy();
+    // Asked first, from the row itself: nothing changes on the click alone.
     await user.click(within(asked).getByRole('button', { name: 'Allow pypi.org' }));
+    expect(calls.some((call) => call.route === 'PATCH /api/projects/p1')).toBe(false);
+    const sure = await screen.findByRole('dialog', { name: 'Allow this host?' });
+    await user.click(within(sure).getByRole('button', { name: 'Allow host' }));
     expect(calls.find((call) => call.route === 'PATCH /api/projects/p1')?.body).toEqual({
       allowedHosts: ['gitlab.acme.com', 'pypi.org'],
     });
 
     await user.click(screen.getByRole('button', { name: 'Add host' }));
     const dialog = await screen.findByRole('dialog', { name: 'Add a host' });
+    // It says what the public registries also take.
+    expect(within(dialog).getByText(/also take uploads/)).toBeTruthy();
     await user.click(within(dialog).getByRole('button', { name: 'Add public package registries' }));
     const sent = calls.filter((call) => call.route === 'PATCH /api/projects/p1').at(-1)?.body as {
       allowedHosts: string[];

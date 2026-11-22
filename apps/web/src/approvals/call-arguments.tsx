@@ -1,3 +1,6 @@
+import { PROPOSE_INSTRUCTIONS } from '@agentome/shared';
+import { Changes } from '../ui/text-diff';
+
 // What a call sends, as it will be sent: every argument whole and literal, in monospace, next to
 // every Approve. A summary or rendered Markdown can hide a link: `![status](https://…/?d=…)` reads
 // as nothing, yet the code host loads it for everyone who opens the change. So the addresses in
@@ -22,8 +25,35 @@ export function addressesIn(value: unknown, found: string[] = []): string[] {
 const literal = (value: unknown) =>
   typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 
+/**
+ * Proposed instructions: why, then the change against the text they replace, which Approve
+ * makes the agent's own. The text the gateway kept is the base, not the agent's word for it.
+ */
+function ProposedInstructions(props: { input: Record<string, unknown>; compact?: boolean }) {
+  const text = (value: unknown) => (typeof value === 'string' ? value : '');
+  return (
+    <div className="grid gap-2">
+      {/* The page beside a full request shows the agent's reason already; a card does not. */}
+      {props.compact && text(props.input.why) && (
+        <p className="text-ui break-words whitespace-pre-wrap">{text(props.input.why)}</p>
+      )}
+      <p className="text-small text-ink-2">
+        Its instructions now, and what they become if you approve
+      </p>
+      <div className={props.compact ? '[&_pre]:max-h-48' : undefined}>
+        <Changes before={text(props.input.previous)} after={text(props.input.instructions)} />
+      </div>
+    </div>
+  );
+}
+
 export function CallArguments(props: { tool: string; input: unknown; compact?: boolean }) {
   const { input } = props;
+  if (props.tool === PROPOSE_INSTRUCTIONS && input && typeof input === 'object') {
+    return (
+      <ProposedInstructions input={input as Record<string, unknown>} compact={props.compact} />
+    );
+  }
   const entries: [string, unknown][] =
     input && typeof input === 'object' && !Array.isArray(input)
       ? Object.entries(input)

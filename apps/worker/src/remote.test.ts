@@ -1,6 +1,14 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { connect, createServer } from 'node:net';
-import { knockOnPlace, remoteSpawn, runServer, serverReady } from './remote.js';
+import {
+  EXEC_PORT,
+  knockOnPlace,
+  openTunnel,
+  remoteSpawn,
+  runServer,
+  serverReady,
+  tunnelReady,
+} from './remote.js';
 import { stopTree } from './platform.js';
 import { sandboxMain } from './sandbox.js';
 import { PassThrough } from 'node:stream';
@@ -14,7 +22,7 @@ import { join } from 'node:path';
 const KEY = 'k'.repeat(43);
 
 async function started() {
-  const { port, close } = await runServer(KEY, () => {}, 0);
+  const { port, close } = await runServer(KEY, () => {}, 0, false, undefined, '127.0.0.1');
   const server = { host: '127.0.0.1', port, key: KEY };
   await serverReady(server);
   return { server, close };
@@ -171,5 +179,48 @@ describe("the CLI container's bash and git", () => {
     );
     expect(err).toMatch(/no sandbox/);
     expect(await sandboxMain(['sh', '-c', 'true'], {}, none, dir, file)).toBe(126);
+  });
+});
+
+describe("a Codex run's executor", () => {
+  it("is reached from the CLI container's loopback through the sandbox, at its port alone", async () => {
+    // The executor in the sandbox: it says back what it hears.
+    const executor = createServer((socket) => socket.pipe(socket));
+    // A port of the test's own: the worker's tests run an executor of their own at the same time.
+    const execPort = 17421;
+    await new Promise<void>((resolve) => executor.listen(execPort, '127.0.0.1', resolve));
+    const box = await runServer(KEY, () => {}, 0, false, execPort, '127.0.0.1');
+    const sandbox = { server: { host: '127.0.0.1', port: box.port, key: KEY }, close: box.close };
+    await serverReady(sandbox.server);
+    await tunnelReady(sandbox.server, execPort, 5_000);
+    // The CLI container's server, and a Codex in it that talks to its loopback port.
+    const cli = await runServer(KEY, () => {}, 0, true, undefined, '127.0.0.1');
+    const cliServer = { host: '127.0.0.1', port: cli.port, key: KEY };
+    await serverReady(cliServer);
+    const local = 17422;
+    const child = remoteSpawn(cliServer, undefined, {
+      port: local,
+      to: sandbox.server,
+      exec: execPort,
+    })(
+      process.execPath,
+      [
+        '-e',
+        `const s = require('node:net').connect(${local}, '127.0.0.1', () => s.write('ping')); s.on('data', (d) => { process.stdout.write(d); s.end(); });`,
+      ],
+      { env: { PATH: process.env.PATH ?? '' } },
+    );
+    let out = '';
+    child.stdout?.on('data', (chunk: Buffer) => (out += chunk.toString()));
+    expect(await ended(child)).toEqual([0, null]);
+    expect(out).toBe('ping');
+    // No other port of the sandbox is tunnelled to, and nothing without the key.
+    await expect(openTunnel(sandbox.server, 22)).rejects.toThrow();
+    await expect(
+      openTunnel({ ...sandbox.server, key: 'x'.repeat(43) }, EXEC_PORT),
+    ).rejects.toThrow();
+    cli.close();
+    sandbox.close();
+    executor.close();
   });
 });

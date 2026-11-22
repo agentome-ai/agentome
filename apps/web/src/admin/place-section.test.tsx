@@ -64,6 +64,49 @@ describe('Your place on the server', () => {
       expect(calls.map((call) => call.route)).toContain('DELETE /api/me/place'),
     );
   });
+  it('works while its person is away only once they confirm, and stops at once', async () => {
+    const quiet = { ...awake, awayAllowed: true, place: { ...awake.place, signedOut: [] } };
+    const on = { ...quiet, place: { ...quiet.place, worksWhileAway: true } };
+    const calls = mockApi({
+      'GET /api/me/place': quiet,
+      'PUT /api/me/place/away': (body) => ({ json: (body as { on: boolean }).on ? on : quiet }),
+    });
+    const user = userEvent.setup();
+    render(<PlaceSection />);
+    await user.click(await screen.findByRole('switch', { name: "Work while I'm away" }));
+    const dialog = screen.getByRole('dialog', { name: 'Let your place work while you are away?' });
+    expect(dialog.textContent).toMatch(/a block would fall on your account/);
+    expect(calls.some((call) => call.route === 'PUT /api/me/place/away')).toBe(false);
+    await user.click(within(dialog).getByRole('button', { name: "Work while I'm away" }));
+    const away = await screen.findByRole('switch', { name: "Work while I'm away" });
+    await vi.waitFor(() => expect(away.getAttribute('aria-checked')).toBe('true'));
+    await user.click(away);
+    await vi.waitFor(() => expect(away.getAttribute('aria-checked')).toBe('false'));
+    expect(
+      calls.filter((call) => call.route === 'PUT /api/me/place/away').map((c) => c.body),
+    ).toEqual([{ on: true }, { on: false }]);
+  });
+
+  it('cannot work while its person is away when an admin turned that off; an admin decides', async () => {
+    const off = { ...awake, awayAllowed: false, place: { ...awake.place, worksWhileAway: true } };
+    const calls = mockApi({
+      'GET /api/me/place': off,
+      'PUT /api/admin/places/away': { ...off, awayAllowed: true },
+    });
+    const user = userEvent.setup();
+    render(<PlaceSection admin />);
+    const mine = await screen.findByRole('switch', { name: "Work while I'm away" });
+    expect(mine.getAttribute('aria-checked')).toBe('false');
+    expect(mine.hasAttribute('disabled')).toBe(true);
+    expect(screen.getByText(/An admin has turned this off/)).toBeTruthy();
+    await user.click(
+      screen.getByRole('switch', { name: "Let people's places work while they are away" }),
+    );
+    await vi.waitFor(() => expect(mine.getAttribute('aria-checked')).toBe('true'));
+    expect(calls.find((call) => call.route === 'PUT /api/admin/places/away')?.body).toEqual({
+      allowed: true,
+    });
+  });
 });
 
 describe('the terminal of a place', () => {

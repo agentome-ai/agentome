@@ -6,12 +6,13 @@ import { banner } from '@agentome/shared';
 
 import { teamHookMain } from './claude/team-hook.js';
 import { pair, ServerError } from './client.js';
-import { alive, describe, readConnection, readSettings, readState } from './config.js';
+import { alive, describe, placeConnection, readConnection, readSettings, readState } from './config.js';
 import { stderrLog, UserError, writeConnection } from './config.js';
 import type { Settings } from './config.js';
 import { ENGINES, runWorker, WAITS_FOR_SANDBOX } from './loop.js';
 import { installService, serviceFile, serviceMain, serviceSpec } from './service.js';
 import { uninstallService } from './service.js';
+import { canaryMain } from './codex/canary.js';
 import { sandboxMain } from './sandbox.js';
 import { knockOnPlace, RUN_PORT, runServer } from './remote.js';
 
@@ -42,6 +43,7 @@ export async function main(args: readonly string[], env: NodeJS.ProcessEnv = pro
   if (command === 'run-server') return runServerMain(rest[0], env);
   // The CLI container's /bin/bash in a run in a place; not a command for people.
   if (command === 'sandbox') return sandboxMain(rest, env);
+  if (command === 'codex-canary') return canaryMain(rest, env);
   try {
     const settings = readSettings(env);
     if (command === 'connect') return await connect(rest, settings);
@@ -55,8 +57,9 @@ export async function main(args: readonly string[], env: NodeJS.ProcessEnv = pro
       console.log(USAGE);
       return command === undefined || command === 'help' || command === '--help' ? 0 : 1;
     }
-    const connection = readConnection(settings.home);
-    if (!connection) throw new UserError(NOT_CONNECTED);
+    const connected = readConnection(settings.home);
+    if (!connected) throw new UserError(NOT_CONNECTED);
+    const connection = settings.place ? placeConnection(connected, env) : connected;
     if (command === 'install-service') {
       const spec = serviceSpec(settings.home, env);
       const file = await installService(spec);

@@ -79,7 +79,7 @@ export function AdminPage() {
   return (
     <>
       <PageHeader title="Admin" />
-      <div className={cn('grid gap-8 pt-8 pb-24 max-md:gap-5.5 max-md:pt-4', frame.read)}>
+      <div className={cn('grid gap-8 pt-8 pb-24 max-md:gap-5.5 max-md:pt-4', frame.wide)}>
         {newer && build?.version && (
           <p
             role="status"

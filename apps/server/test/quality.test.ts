@@ -6,11 +6,15 @@ import {
   createDb,
   type Db,
   migrate,
+  projectAgents,
+  projects,
   runArtifacts,
   runs,
+  taskComments,
   tasks,
   users,
 } from '@agentome/db';
+import { eq } from '@agentome/db';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
@@ -177,6 +181,89 @@ describe('an agent quality', () => {
       .json<{ agents: { id: string; month: unknown }[] }>()
       .agents.find((agent) => agent.id === agentId);
     expect(listed?.month).toEqual({ accepted: 3, handed: 3, medianUsd: '1.00' });
+  });
+
+  it('starts a review: a task of the agent that tells of what came back and why', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/agents',
+      headers: { cookie },
+      payload: { name: 'Frontend' },
+    });
+    const agentId = created.json<{ id: string }>().id;
+    const [admin] = await db.select({ id: users.id }).from(users);
+    if (!admin) throw new Error('no admin');
+
+    // On no project, a review has nowhere to be filed.
+    const nowhere = await app.inject({
+      method: 'POST',
+      url: `/api/agents/${agentId}/review`,
+      headers: { cookie },
+    });
+    expect(nowhere.statusCode).toBe(400);
+
+    const [project] = await db
+      .insert(projects)
+      .values({ name: 'Shop', createdBy: admin.id })
+      .returning({ id: projects.id });
+    await db.insert(projectAgents).values({ projectId: project!.id, agentId });
+    const [task] = await db
+      .insert(tasks)
+      .values({
+        agentId,
+        projectId: project!.id,
+        title: 'Fix the cart badge',
+        status: 'done',
+        source: 'manual',
+        createdBy: admin.id,
+        createdAt: ago(30),
+      })
+      .returning({ id: tasks.id });
+    await db.insert(runs).values([
+      {
+        agentId,
+        taskId: task!.id,
+        startedBy: 'user',
+        status: 'done',
+        summary: 'Moved the badge into the header.',
+        createdAt: ago(29),
+        startedAt: ago(29),
+        endedAt: ago(28),
+      },
+      {
+        agentId,
+        taskId: task!.id,
+        startedBy: 'webhook',
+        reason: 'The pipeline of your change request https://github.com/acme/shop/pull/7 failed.',
+        status: 'done',
+        createdAt: ago(10),
+        startedAt: ago(10),
+        endedAt: ago(9),
+      },
+    ]);
+    await db
+      .insert(taskComments)
+      .values({ taskId: task!.id, authorUserId: admin.id, body: 'The badge overlaps the logo.' });
+
+    const started = await app.inject({
+      method: 'POST',
+      url: `/api/agents/${agentId}/review`,
+      headers: { cookie },
+    });
+    expect(started.statusCode).toBe(201);
+    const { taskId } = started.json<{ taskId: string }>();
+    const [review] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    expect(review).toMatchObject({ agentId, projectId: project!.id, title: 'Review your work' });
+    expect(review!.body).toContain(
+      '### Fix the cart badge (came back 1 time: 1 by a failed pipeline)',
+    );
+    expect(review!.body).toContain('pull/7 failed');
+    expect(review!.body).toContain('Your report: Moved the badge into the header.');
+    expect(review!.body).toContain('> The badge overlaps the logo.');
+    expect(review!.body).toContain('agent_propose_instructions');
+    // It runs at once, as a task a person starts.
+    const queued = await db.select({ id: runs.id }).from(runs).where(eq(runs.taskId, taskId));
+    expect(queued).toHaveLength(1);
   });
 
   it('is only for those who see the agent', async () => {

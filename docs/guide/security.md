@@ -17,20 +17,27 @@ A person's agents run in their **place**, a container the platform makes for the
 Each run in it gets two containers of its own, made when it starts and deleted when it ends:
 
 - The **CLI container** runs the official Claude Code or Codex, unmodified, with the person's
-  sign-in to their subscription.
+  sign-in to their subscription. Claude Code's file tools are kept out of its home folder, where
+  the sign-in is. Codex has no way to run anything there at all: every command and edit it makes
+  goes to Codex's own executor, `codex exec-server`, in the sandbox, and the CLI container has no
+  working folder of the agent's, so a repository's `.codex` is never read beside the sign-in.
 - The **sandbox** runs every command the agent runs: builds, tests, `git`, scripts. It has the
   task's repository and nothing of the sign-in, the CLI or the platform's own settings. The CLI's
   `bash` and `git` pass each command there.
 
 So a command the agent was talked into cannot read the subscription's token, and the CLI never
-runs a command itself. Every place and every run has a kernel of its own under gVisor, not the
-host's. A place has a read-only root, no Linux capabilities, at most 2 CPUs and 8 GB of memory,
+runs a command itself. The container is marked as the CLI's by a read-only mount nothing in it can
+remove, so `bash` there never runs a command beside the sign-in. A repository's own `CLAUDE.md` is
+read by Agentome, not the CLI: its imports reach files inside the repository only. Every place and every run has a kernel of its own under gVisor, not the
+host's: the launcher makes none without it, unless an admin chose the host's kernel by name. A place has a read-only root, no Linux capabilities, at most 2 CPUs and 8 GB of memory,
 and no DNS for names outside. The service that makes containers holds no Docker socket: a guard does, with no
-network, and passes only the calls that make places and runs. Places, the sandbox and a run's own
+network, and passes only the calls that make places and runs, each body field by field under its
+exact name and written anew by the guard, and only on containers labelled as a place's. Places, the sandbox and a run's own
 Docker never get the host's folders, ports or namespaces.
 
-A place runs a person's subscription only while that person is at work in Agentome, and the
-person signs the CLI in themselves, in the place's terminal. Agentome neither reads nor keeps the
+A place runs a person's subscription only while that person is at work in Agentome, unless they
+turned on **Work while I'm away** for their own place themselves, in the browser; an admin can turn
+that off for everyone. The person signs the CLI in themselves, in the place's terminal. Agentome neither reads nor keeps the
 sign-in, and never runs a subscription for anyone else.
 
 ## What a run can reach

@@ -166,7 +166,7 @@ test('approvals: the queue in words, Approve, then nothing waiting', async ({ pa
   });
   await page.goto('/approvals');
   const sidebar = page.getByRole('complementary', { name: 'Sidebar' });
-  await expect(sidebar.getByRole('link', { name: /Approvals/ })).toContainText('2');
+  await expect(sidebar.getByRole('link', { name: /Approvals/ })).toContainText('3');
   // An inbox: the requests on the left, the one picked on the right.
   const queue = page.getByRole('list', { name: 'Waiting for you' });
   const first = queue.getByRole('listitem').filter({
@@ -192,9 +192,15 @@ test('approvals: the queue in words, Approve, then nothing waiting', async ({ pa
   const dialog = page.getByRole('dialog', { name: 'Deny this request?' });
   await dialog.getByLabel('Reason (optional)').fill('Wait for the 2.14 tag.');
   await dialog.getByRole('button', { name: 'Deny' }).click();
+  // An agent's new instructions: its reason and the change, approved one by one.
+  await expect(request).toContainText('Change its own instructions');
+  await expect(request).toContainText('two for a failed lint job');
+  await expect(request.getByLabel('Changes')).toContainText('+ When a migration changes a table');
+  await expect(request.getByRole('button', { name: 'More ways to approve' })).toHaveCount(0);
+  await request.getByRole('button', { name: 'Approve', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Nothing is waiting for you' })).toBeVisible();
   await expect(sidebar.getByRole('link', { name: /Approvals/ })).not.toContainText(/\d/);
-  expect(decided).toEqual(['approve tc1', 'deny tc2']);
+  expect(decided).toEqual(['approve tc1', 'deny tc2', 'approve tc3']);
 });
 
 test("an agent's question and its offered answers fit a phone", async ({ page }) => {

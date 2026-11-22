@@ -41,4 +41,51 @@ export const HostPattern = z
       }
     }
     return true;
-  }, 'Not a host a place may reach: this machine, link-local addresses and whole top-level domains are refused');
+  }, 'Not a host a place may reach: this machine, link-local addresses and whole top-level domains are refused')
+  .refine(
+    (pattern) => !pattern.startsWith('*.') || !shared(pattern.slice(2).split(':')[0] ?? ''),
+    'A star over a domain many companies share opens all of them: name the host in full',
+  );
+
+/**
+ * Domains under which strangers get names of their own: a country's second level (co.uk,
+ * com.au) and the clouds' and code hosts' shared ones. A star over one of them is everyone's.
+ */
+const SHARED = [
+  'amazonaws.com',
+  'cloudfront.net',
+  'azurewebsites.net',
+  'azureedge.net',
+  'cloudapp.net',
+  'cloudapp.azure.com',
+  'windows.net',
+  'appspot.com',
+  'googleusercontent.com',
+  'googleapis.com',
+  'run.app',
+  'web.app',
+  'firebaseapp.com',
+  'github.io',
+  'githubusercontent.com',
+  'gitlab.io',
+  'herokuapp.com',
+  'vercel.app',
+  'netlify.app',
+  'pages.dev',
+  'workers.dev',
+  'r2.dev',
+  'fly.dev',
+  'onrender.com',
+  'ngrok.io',
+  'ngrok-free.app',
+  'trycloudflare.com',
+  'digitaloceanspaces.com',
+  'ondigitalocean.app',
+];
+const COUNTRY_SECOND =
+  /^(?:co|com|net|org|ac|edu|gov|gob|go|ne|or|mil|nic|ltd|plc|sch|me|info|biz)\.[a-z]{2}$/;
+
+function shared(domain: string): boolean {
+  if (COUNTRY_SECOND.test(domain)) return true;
+  return SHARED.some((suffix) => domain === suffix || domain.endsWith(`.${suffix}`));
+}

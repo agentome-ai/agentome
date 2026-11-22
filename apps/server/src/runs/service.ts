@@ -6,6 +6,7 @@ import {
   agents,
   costEvents,
   type Db,
+  installation,
   modelConnections,
   projectAgents,
   projects,
@@ -186,9 +187,10 @@ export async function claimRun(
       .where(and(eq(runs.seatId, seat.id), isLive()))
       .limit(1);
     if (!active || busy) return null;
-    // A place on the server runs its owner's subscription only while the owner is there: read
-    // under the seat's lock, so a claim that was waiting gets nothing once they have gone.
-    if (active.kind === 'subscription-server' && !(await ownerPresent(tx, seat))) return null;
+    // A place on the server runs its owner's subscription only while the owner is there, or when
+    // they let it work without them: read under the seat's lock, so a claim that was waiting gets
+    // nothing once they have gone.
+    if (active.kind === 'subscription-server' && !(await placeMayRun(tx, seat))) return null;
     // A place runs a project's services beside the agent: the run waits until they are up.
     if (active.kind === 'subscription-server') {
       const place = await placeReadyFor(tx, seat, next.taskId);
@@ -294,24 +296,31 @@ export async function claimRun(
 }
 
 /**
- * Whether the owner of a seat is at work by the web app: it said so within the seat's idle time
- * (POST /api/me/presence). Only a person's place on the server asks.
+ * Whether a person's place on the server may take a run now: its owner is at work by the web app
+ * (they said so within the seat's idle time, POST /api/me/presence), or they let it work while
+ * they are away and the installation allows that. A disabled person's place never may.
  */
-export async function ownerPresent(
-  db: Pick<Db, 'select'>,
-  seat: { ownerUserId: string; idleMinutes: number },
-): Promise<boolean> {
-  const [owner] = await db
-    .select({ id: users.id })
-    .from(users)
+export async function placeMayRun(db: Pick<Db, 'select'>, seat: { id: string }): Promise<boolean> {
+  const [found] = await db
+    .select({ id: seats.id })
+    .from(seats)
+    .innerJoin(users, eq(users.id, seats.ownerUserId))
+    // One row, made at setup; a database without it allows, as the column's default does.
+    .leftJoin(installation, sql`true`)
     .where(
       and(
-        eq(users.id, seat.ownerUserId),
+        eq(seats.id, seat.id),
         isNull(users.disabledAt),
-        sql`${users.presentAt} > now() - make_interval(mins => ${seat.idleMinutes})`,
+        or(
+          sql`${users.presentAt} > now() - make_interval(mins => ${seats.idleMinutes})`,
+          and(
+            eq(seats.worksWhileAway, true),
+            sql`coalesce(${installation.placesAwayAllowed}, true)`,
+          ),
+        ),
       ),
     );
-  return owner !== undefined;
+  return found !== undefined;
 }
 
 /**
@@ -519,15 +528,8 @@ export async function finishRun(
     // A server run that called its model through the relay is priced by what the relay counted
     // from the provider's answers: a run with a shell holds its token and could call more than it
     // reports. Otherwise, what the seat counted.
-    const relayed = Object.entries(run.relayUsage ?? {});
-    const usageRows = relayed.length
-      ? relayed.map(([model, tokens]) => ({
-          ...tokens,
-          model,
-          tokensCacheWrite1h: 0,
-          source: 'relay',
-        }))
-      : body.usage;
+    const relayed = relayRows(run.relayUsage);
+    const usageRows = relayed.length ? relayed : body.usage;
     if (usageRows.length) {
       await tx.insert(costEvents).values(
         usageRows.map((usage) => ({
@@ -592,6 +594,16 @@ export async function cancelQueuedRuns(db: Db | Tx, agentId: string) {
     .where(and(eq(runs.agentId, agentId), eq(runs.status, 'queued')));
 }
 
+/** What the relay counted of a run's calls, as cost rows of each model. */
+function relayRows(usage: (typeof runs.$inferSelect)['relayUsage']) {
+  return Object.entries(usage ?? {}).map(([model, tokens]) => ({
+    ...tokens,
+    model,
+    tokensCacheWrite1h: 0,
+    source: 'relay' as const,
+  }));
+}
+
 /**
  * Closes running runs whose seat fell silent, and those whose seat goes on sending heartbeats
  * the same minutes past a stop request or the run's time limit: a seat that ignores both would
@@ -606,7 +618,7 @@ export async function reapOrphanedRuns(db: Db, orphanMinutes: number): Promise<s
       .where(
         and(isLive(), sql`coalesce(${runs.lastHeartbeatAt}, ${runs.startedAt}) < now() - ${grace}`),
       )
-      .returning({ id: runs.id });
+      .returning({ id: runs.id, agentId: runs.agentId, relayUsage: runs.relayUsage });
     const asked = sql`${runs.cancelRequestedAt} is not null`;
     const overstayed = await tx
       .update(runs)
@@ -625,7 +637,23 @@ export async function reapOrphanedRuns(db: Db, orphanMinutes: number): Promise<s
           ),
         ),
       )
-      .returning({ id: runs.id, cancelled: sql<boolean>`${runs.status} = 'cancelled'` });
+      .returning({
+        id: runs.id,
+        agentId: runs.agentId,
+        relayUsage: runs.relayUsage,
+        cancelled: sql<boolean>`${runs.status} = 'cancelled'`,
+      });
+    // A closed run's seat never finishes it, so what the relay counted is priced here: the
+    // provider charged for those calls whether the run ended well or not.
+    const costs = [...silent, ...overstayed].flatMap((run) =>
+      relayRows(run.relayUsage).map((usage) => ({
+        runId: run.id,
+        agentId: run.agentId,
+        ...usage,
+        usd: priceUsage(usage).usd,
+      })),
+    );
+    if (costs.length) await tx.insert(costEvents).values(costs);
     const notes = [
       ...silent.map(({ id }) => ({ id, note: orphaned(orphanMinutes) })),
       ...overstayed.map(({ id, cancelled }) => ({ id, note: overstay(cancelled) })),

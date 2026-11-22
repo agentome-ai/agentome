@@ -1,6 +1,10 @@
 import { type Docker, type DockerAttach, dockerError } from './docker.js';
 import type { ServiceSpec } from '../projects/devcontainer.js';
 import {
+  CLI_MARK,
+  codexCliFolders,
+  NO_RUNTIME,
+  placeRuntime,
   type PlaceNetwork,
   type Places,
   placeEnv,
@@ -11,6 +15,7 @@ import {
   runEnv,
   runMounts,
   type RunSpec,
+  SERVER_NAME,
   SERVICE_CAP_DROP,
   type Shape,
   shellFor,
@@ -96,7 +101,10 @@ export function dockerContainer(
       Memory: 8 * 1024 ** 3,
       PidsLimit: 2048,
       NanoCpus: 2_000_000_000,
-      NetworkMode: placeNetwork(id),
+      // Not the place's network, where the place's worker talks to the app with its token: a
+      // container this Docker runs has every capability, and could listen there or answer for
+      // others. Its own network, with the run's sandbox and the egress proxy alone.
+      NetworkMode: dockerNetwork(runId),
       ExtraHosts: hosts,
       Dns: NO_RESOLVER,
     },
@@ -105,6 +113,8 @@ export function dockerContainer(
 
 /** A run's Docker's images and containers: a volume of the run's, deleted with it. */
 const dockerVolume = (runId: string) => `agentome-run-${runId}-docker`;
+/** A run's Docker's network: internal, the Docker, the run's sandbox and the egress proxy on it. */
+export const dockerNetwork = (runId: string) => `agentome-run-${runId}-docker-net`;
 
 /** A place's own network: internal, its place and runs, the app and the egress proxy on it. */
 export const placeNetwork = (id: string) => `agentome-place-${id}`;
@@ -114,6 +124,8 @@ const LABEL = 'ai.agentome.place';
 const SERVICE = 'ai.agentome.service';
 const PROJECT = 'ai.agentome.project';
 const HASH = 'ai.agentome.hash';
+/** The runtime a service was made under, so one made before the setting changed is made anew. */
+const RUNTIME = 'ai.agentome.runtime';
 const RUN = 'ai.agentome.run';
 const ROLE = 'ai.agentome.role';
 
@@ -179,7 +191,7 @@ export function placeContainer(
       // resolves for itself.
       ExtraHosts: hosts,
       Dns: NO_RESOLVER,
-      ...(settings.runtime && { Runtime: settings.runtime }),
+      ...(placeRuntime(settings.runtime) && { Runtime: placeRuntime(settings.runtime) }),
       RestartPolicy: { Name: 'on-failure', MaximumRetryCount: 5 },
     },
   };
@@ -190,6 +202,8 @@ export interface RunContainers {
   keys: { cli: string; sandbox: string };
   /** `name:address` for /etc/hosts: the app and the proxy; the services too, for the sandbox. */
   hosts: { cli: string[]; sandbox: string[] };
+  /** A Codex run: its CLI container gets empty folders where Claude Code's gets the agent's. */
+  codex?: boolean;
 }
 
 /**
@@ -229,7 +243,7 @@ export function runContainers(
       Tmpfs: {
         '/tmp': 'mode=1777,size=2g,exec',
         '/home/node': 'mode=0755,uid=1000,gid=1000,size=2g,exec',
-      },
+      } as Record<string, string>,
       Mounts: mounts,
       Memory: 8 * 1024 ** 3,
       PidsLimit: 1024,
@@ -237,7 +251,7 @@ export function runContainers(
       NetworkMode: placeNetwork(id),
       ExtraHosts: given.hosts[role],
       Dns: NO_RESOLVER,
-      ...(settings.runtime && { Runtime: settings.runtime }),
+      ...(placeRuntime(settings.runtime) && { Runtime: placeRuntime(settings.runtime) }),
     },
   });
   const onSeat = (mount: { subPath: string; path: string; readOnly: boolean }) => ({
@@ -248,16 +262,29 @@ export function runContainers(
     VolumeOptions: { Subpath: mount.subPath },
   });
   const all = runMounts(runId, folder);
+  // A Codex run's CLI container: the CLI and the sign-in, and its working folders empty.
+  const cliMounts = given.codex ? all.filter((mount) => mount.subPath === 'cli') : all;
+  const cli = container('cli', [
+    ...cliMounts.map(onSeat),
+    ...Object.values(SIGN_IN).map((path) => ({
+      Type: 'volume',
+      Source: home,
+      Target: path,
+      VolumeOptions: { Subpath: path.slice('/home/node/'.length) },
+    })),
+  ]);
+  // The CLI container's mark, read-only: its bash and git pass every command to the sandbox
+  // (deploy/sandbox-shim.sh), and nothing in it can take the mark away.
+  cli.HostConfig.Tmpfs = {
+    ...cli.HostConfig.Tmpfs,
+    [CLI_MARK]: 'ro,size=4k,mode=0555',
+    ...(given.codex &&
+      Object.fromEntries(
+        codexCliFolders(runId, folder).map((path) => [path, 'mode=0755,uid=1000,gid=1000,size=1m']),
+      )),
+  };
   return {
-    cli: container('cli', [
-      ...all.map(onSeat),
-      ...Object.values(SIGN_IN).map((path) => ({
-        Type: 'volume',
-        Source: home,
-        Target: path,
-        VolumeOptions: { Subpath: path.slice('/home/node/'.length) },
-      })),
-    ]),
+    cli,
     // No CLI and no sign-in; of the run's folder, what a command works in and reads.
     sandbox: container(
       'sandbox',
@@ -274,15 +301,27 @@ export function runContainers(
  * A service beside the agent: its image as the repository names it, on the project's own network
  * only, reached by its name; no privilege to gain, memory, processes and CPU capped. It keeps the
  * image's user and the capabilities a database needs to set itself up (owning and switching to
- * its user); the ones that reach past it — raw packets, device files — are dropped.
+ * its user); the ones that reach past it — raw packets, device files — are dropped. It runs
+ * under the places' runtime: a run reaches it, and a database runs programs its user asks for.
  */
-export function serviceContainer(id: string, shape: Shape, service: ServiceSpec) {
+export function serviceContainer(
+  id: string,
+  shape: Shape,
+  service: ServiceSpec,
+  runtime: string | undefined,
+) {
   const n = projectNames(id, shape.project);
   return {
     Image: service.image,
     ...(service.command && { Cmd: service.command }),
     Env: Object.entries(service.environment).map(([name, value]) => `${name}=${value}`),
-    Labels: { [LABEL]: id, [SERVICE]: service.name, [PROJECT]: shape.project, [HASH]: shape.hash },
+    Labels: {
+      [LABEL]: id,
+      [SERVICE]: service.name,
+      [PROJECT]: shape.project,
+      [HASH]: shape.hash,
+      [RUNTIME]: runtime ?? '',
+    },
     HostConfig: {
       NetworkMode: n.network,
       SecurityOpt: ['no-new-privileges:true'],
@@ -295,6 +334,7 @@ export function serviceContainer(id: string, shape: Shape, service: ServiceSpec)
       Memory: 2 * 1024 ** 3,
       PidsLimit: 512,
       NanoCpus: 1_000_000_000,
+      ...(placeRuntime(runtime) && { Runtime: placeRuntime(runtime) }),
       RestartPolicy: { Name: 'on-failure', MaximumRetryCount: 5 },
     },
     NetworkingConfig: { EndpointsConfig: { [n.network]: { Aliases: [service.name] } } },
@@ -329,11 +369,60 @@ async function ensureImage(docker: Docker, image: string) {
   if (pulled.status !== 200) throw dockerError(pulled, `pull ${image}`);
 }
 
+/**
+ * The runtime places get, checked with Docker before the first is made: gVisor's, a runtime whose
+ * program is runsc, unless runc is asked for by name. A name alone is not trusted: one that
+ * Docker runs with runc would put places on the host's kernel unseen.
+ */
+export async function checkRuntime(
+  docker: Docker,
+  asked: string | undefined,
+  variable = 'AGENTOME_PLACE_RUNTIME',
+): Promise<void> {
+  if (asked === undefined) throw new Refusal(409, NO_RUNTIME);
+  if (asked === 'runc' && variable === 'AGENTOME_PLACE_RUNTIME') return;
+  const info = await docker('GET', '/info');
+  if (info.status !== 200) throw dockerError(info, 'read the runtimes Docker has');
+  const runtimes = (info.body as { Runtimes?: Record<string, { path?: string }> } | undefined)
+    ?.Runtimes;
+  const program = runtimes?.[asked]?.path?.split('/').pop();
+  if (program !== 'runsc') {
+    throw new Refusal(
+      409,
+      program === undefined
+        ? `Docker has no runtime ${asked}, which ${variable} names: register gVisor's runsc under that name.`
+        : `The runtime ${asked}, which ${variable} names, runs ${program}, not gVisor's runsc: its containers would be on the host's kernel. Register runsc under that name.`,
+    );
+  }
+}
+
 export function dockerPlaces(settings: DockerPlaceSettings): Places {
   const { docker } = settings;
+  /** The runtimes, once checked; a failed check is made again, after Docker or its settings change. */
+  const checks = new Map<string, Promise<void>>();
+  const checkedOnce = (what: string, check: () => Promise<void>) => {
+    let done = checks.get(what);
+    if (!done) {
+      done = check().catch((error: unknown) => {
+        checks.delete(what);
+        throw error;
+      });
+      checks.set(what, done);
+    }
+    return done;
+  };
+  const runtimeChecked = () => checkedOnce('places', () => checkRuntime(docker, settings.runtime));
+  // A run's own Docker has every capability inside its kernel: only gVisor's, never the host's.
+  const dockerRuntimeChecked = () =>
+    checkedOnce('docker', () =>
+      settings.dockerRuntime === undefined
+        ? Promise.resolve()
+        : checkRuntime(docker, settings.dockerRuntime, 'AGENTOME_PLACE_DOCKER_RUNTIME'),
+    );
 
   /** Runs a throw-away container of the place's kind to its end; its exit code. */
   async function runOnce(name: string, body: object, what: string): Promise<number | undefined> {
+    await runtimeChecked();
     await docker('DELETE', `/containers/${name}?force=true`);
     const made = await docker('POST', `/containers/create?name=${name}`, body);
     if (made.status !== 201) throw dockerError(made, `make the container to ${what}`);
@@ -360,6 +449,7 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
       name: (container.Names?.[0] ?? '').replace(/^\//, ''),
       project: container.Labels?.[PROJECT],
       hash: container.Labels?.[HASH],
+      runtime: container.Labels?.[RUNTIME],
       running: container.State === 'running',
     }));
   }
@@ -406,10 +496,14 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
       if (joined.status !== 200 && !already)
         throw dockerError(joined, `join ${peer.alias} to the place`);
     }
+    // The app by its name on the places' networks, and by its service's, for places connected at it.
     const peers = await settings.peers();
     return hostsOn(
       name,
-      peers.map((peer) => ({ match: peer.container, alias: peer.alias })),
+      peers.flatMap((peer) => [
+        { match: peer.container, alias: peer.alias },
+        ...(peer.alias === 'app' ? [{ match: peer.container, alias: SERVER_NAME }] : []),
+      ]),
     );
   }
 
@@ -438,15 +532,34 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
    * Starts a run's own Docker and answers `docker:<address>` for its sandbox's /etc/hosts, once
    * dockerd answers there.
    */
-  async function startDocker(
-    id: string,
-    runId: string,
-    folder: string | undefined,
-    hosts: string[],
-  ) {
+  async function startDocker(id: string, runId: string, folder: string | undefined) {
+    await dockerRuntimeChecked();
     const name = runName(runId, 'docker');
     await docker('DELETE', `/containers/${name}?force=true`);
     await ensureImage(docker, DOCKER_IMAGE);
+    // Its own network, the egress proxy on it for the images it pulls.
+    const network = dockerNetwork(runId);
+    const madeNet = await docker('POST', '/networks/create', {
+      Name: network,
+      Internal: true,
+      Labels: { [LABEL]: id, [RUN]: runId },
+    });
+    if (madeNet.status !== 201 && madeNet.status !== 409) {
+      throw dockerError(madeNet, 'make the run’s Docker’s network');
+    }
+    const egress = (await settings.peers()).filter((peer) => peer.alias === 'place-egress');
+    for (const peer of egress) {
+      const joined = await docker('POST', `/networks/${network}/connect`, {
+        Container: peer.container,
+        EndpointConfig: { Aliases: [peer.alias] },
+      });
+      const already = /already exists/.test(JSON.stringify(joined.body ?? ''));
+      if (joined.status !== 200 && !already) throw dockerError(joined, 'join the egress proxy');
+    }
+    const hosts = await hostsOn(
+      network,
+      egress.map((peer) => ({ match: peer.container, alias: peer.alias })),
+    );
     const volume = await docker('POST', '/volumes/create', {
       Name: dockerVolume(runId),
       Labels: { [LABEL]: id, [RUN]: runId },
@@ -460,9 +573,32 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
     if (made.status !== 201) throw dockerError(made, 'make the run’s Docker');
     const started = await docker('POST', `/containers/${name}/start`);
     if (started.status !== 204) throw dockerError(started, 'start the run’s Docker');
-    const [address] = await hostsOn(placeNetwork(id), [{ match: name, alias: 'docker' }]);
-    if (!address) throw new Error('The run’s Docker has no address on the place’s network');
+    const [address] = await hostsOn(network, [{ match: name, alias: 'docker' }]);
+    if (!address) throw new Error('The run’s Docker has no address on its network');
     return [address];
+  }
+
+  /** Takes a run's Docker's network away, the egress proxy off it first. */
+  const removeDockerNetwork = (runId: string) => removeNetwork(dockerNetwork(runId));
+
+  /**
+   * Takes a network of a place away, whatever is still on it off first: the app and the egress
+   * proxy stay joined to a place's network, and Docker deletes no network with anyone on it.
+   */
+  async function removeNetwork(network: string) {
+    const found = await docker('GET', `/networks/${network}`);
+    if (found.status === 404) return;
+    if (found.status !== 200) throw dockerError(found, 'read the run’s Docker’s network');
+    for (const container of Object.keys(
+      (found.body as { Containers?: Record<string, unknown> } | undefined)?.Containers ?? {},
+    )) {
+      await docker('POST', `/networks/${network}/disconnect`, {
+        Container: container,
+        Force: true,
+      });
+    }
+    const gone = await docker('DELETE', `/networks/${network}`);
+    if (gone.status !== 204 && gone.status !== 404) throw dockerError(gone, 'remove a network');
   }
 
   /** A place's run containers: none outlives the place awake. */
@@ -482,6 +618,13 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
     for (const volume of (volumes.body as { Volumes?: { Name: string }[] }).Volumes ?? []) {
       await docker('DELETE', `/volumes/${volume.Name}?force=true`);
     }
+    // And their Docker's networks.
+    const networks = await docker('GET', `/networks?filters=${filters([`${LABEL}=${id}`, RUN])}`);
+    for (const network of (networks.body as { Labels?: Record<string, string> }[] | undefined) ??
+      []) {
+      const runId = network.Labels?.[RUN];
+      if (runId) await removeDockerNetwork(runId);
+    }
   }
 
   async function stopServices(id: string) {
@@ -496,6 +639,7 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
    * it is (its services' network joined, a run going).
    */
   async function wake(id: string) {
+    await runtimeChecked();
     const name = names(id).container;
     const found = await docker('GET', `/containers/${name}/json`);
     if (found.status === 404) throw new Refusal(404, 'This person has no place');
@@ -580,8 +724,17 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
     },
 
     async create(id, code) {
+      await runtimeChecked();
       const n = names(id);
       await ensureImage(docker, settings.image);
+      // A place made again keeps the volumes it had, the sign-in among them; a new one that does
+      // not pair leaves nothing behind.
+      const listed = await docker('GET', `/volumes?filters=${filters([`${LABEL}=${id}`])}`);
+      const had = new Set(
+        ((listed.body as { Volumes?: { Name: string }[] } | undefined)?.Volumes ?? []).map(
+          (volume) => volume.Name,
+        ),
+      );
       for (const volume of [n.home, n.seat]) {
         const made = await docker('POST', '/volumes/create', {
           Name: volume,
@@ -596,7 +749,13 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
         placeContainer(settings, id, ['connect', code, '--server', settings.serverUrl], hosts),
         'pair the place',
       );
-      if (exit !== 0) throw new Refusal(502, 'The place could not connect to the server');
+      if (exit !== 0) {
+        if (had.size === 0) {
+          for (const network of await networksOf(id)) await removeNetwork(network);
+          for (const volume of [n.home, n.seat]) await docker('DELETE', `/volumes/${volume}`);
+        }
+        throw new Refusal(502, 'The place could not connect to the server');
+      }
       const made = await docker(
         'POST',
         `/containers/create?name=${n.container}`,
@@ -630,7 +789,7 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
       for (const service of await servicesOf(id)) {
         await docker('DELETE', `/containers/${service.name}?force=true`);
       }
-      for (const network of await networksOf(id)) await docker('DELETE', `/networks/${network}`);
+      for (const network of await networksOf(id)) await removeNetwork(network);
       const volumes = await docker('GET', `/volumes?filters=${filters([`${LABEL}=${id}`])}`);
       const named = (volumes.body as { Volumes?: { Name: string }[] } | undefined)?.Volumes ?? [];
       for (const volume of new Set([n.home, n.seat, ...named.map((found) => found.Name)])) {
@@ -658,7 +817,11 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
       for (const service of await servicesOf(id)) {
         if (service.project !== shape.project) {
           if (service.running) await docker('POST', `/containers/${service.name}/stop?t=10`);
-        } else if (!wanted.has(service.name) || service.hash !== shape.hash) {
+        } else if (
+          !wanted.has(service.name) ||
+          service.hash !== shape.hash ||
+          service.runtime !== (settings.runtime ?? '')
+        ) {
           await docker('DELETE', `/containers/${service.name}?force=true`);
         }
       }
@@ -689,7 +852,7 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
           const made = await docker(
             'POST',
             `/containers/create?name=${name}`,
-            serviceContainer(id, shape, service),
+            serviceContainer(id, shape, service, settings.runtime),
           );
           if (made.status !== 201) throw dockerError(made, `make ${service.name}`);
         }
@@ -702,6 +865,7 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
     },
 
     async startRun(id, runId, run: RunSpec) {
+      await runtimeChecked();
       const keys = { cli: newRunKey(), sandbox: newRunKey() };
       const place = await ensureNetwork(id);
       const project = run.shape && projectNames(id, run.shape.project);
@@ -717,14 +881,13 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
             )
           : [];
       // The run's own Docker first: the sandbox finds it by name.
-      const ownDocker = settings.dockerRuntime
-        ? await startDocker(id, runId, run.folder, place)
-        : [];
+      const ownDocker = settings.dockerRuntime ? await startDocker(id, runId, run.folder) : [];
       // The place too, by its address: the run's containers knock on it as they start.
       const self = await hostsOn(placeNetwork(id), [
         { match: names(id).container, alias: 'place' },
       ]);
       const bodies = runContainers(settings, id, runId, run.folder, {
+        codex: run.engine === 'codex',
         keys,
         hosts: {
           cli: [...place, ...self],
@@ -742,6 +905,12 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
             Container: name,
           });
           if (joined.status !== 200) throw dockerError(joined, 'join the services’ network');
+        }
+        if (role === 'sandbox' && ownDocker.length > 0) {
+          const joined = await docker('POST', `/networks/${dockerNetwork(runId)}/connect`, {
+            Container: name,
+          });
+          if (joined.status !== 200) throw dockerError(joined, 'join the run’s Docker’s network');
         }
         const started = await docker('POST', `/containers/${name}/start`);
         if (started.status !== 204) throw dockerError(started, `start the run’s ${role}`);
@@ -761,6 +930,7 @@ export function dockerPlaces(settings: DockerPlaceSettings): Places {
         const gone = await docker('DELETE', `/containers/${runName(runId, role)}?force=true`);
         if (gone.status !== 204 && gone.status !== 404) throw dockerError(gone, 'end the run');
       }
+      await removeDockerNetwork(runId);
       const volume = await docker('DELETE', `/volumes/${dockerVolume(runId)}?force=true`);
       if (volume.status !== 204 && volume.status !== 404) {
         throw dockerError(volume, 'delete the run’s Docker');

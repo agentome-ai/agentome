@@ -25,12 +25,18 @@ export function gitlabIncludes(
   let unreadable = false;
   const own = repository.toLowerCase();
   const add = (entry: unknown) => {
+    // A variable ($CI_PROJECT_PATH, say) may name this same project: no telling which.
     if (isRecord(entry) && typeof entry.project === 'string') {
-      if (entry.project.replace(/^\/+|\/+$/g, '').toLowerCase() === own) unreadable = true;
+      const project = entry.project.replace(/^\/+|\/+$/g, '').toLowerCase();
+      if (project === own || project.includes('$')) unreadable = true;
       return;
     }
     if (isRecord(entry) && typeof entry.component === 'string') {
-      if (entry.component.toLowerCase().includes(`/${own}/`)) unreadable = true;
+      // The instance's own name stands at the front of most components: that one is known.
+      const component = entry.component
+        .toLowerCase()
+        .replace(/^\$\{?ci_server_(fqdn|host)\}?\//, 'host/');
+      if (component.includes(`/${own}/`) || component.includes('$')) unreadable = true;
       return;
     }
     const local =

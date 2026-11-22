@@ -193,6 +193,9 @@ export const installation = pgTable(
     licensePeakAgents: integer('license_peak_agents').notNull().default(0),
     // The latest time the server has seen: a clock put back does not bring a key back.
     licenseSeenAt: at('license_seen_at'),
+    // Whether people may let their place on the server take runs while they are away. Each
+    // person still chooses it for their own place; an admin turns it off for everyone here.
+    placesAwayAllowed: boolean('places_away_allowed').notNull().default(true),
   },
   (t) => [check('installation_single_row', sql`${t.id} = 1`)],
 );
@@ -354,6 +357,9 @@ export const seats = pgTable(
     // hash of their approved list, and how far that got (PlaceShape in the server). Null when
     // nothing is running beside the agent; sleep clears it.
     placeShape: jsonb('place_shape'),
+    // A person's place on the server takes runs while its person is away, by their own choice:
+    // their subscription works without them. Off, it takes runs only while they are here.
+    worksWhileAway: boolean('works_while_away').notNull().default(false),
     // A revoked seat the owner took off the list; its runs still name it, so the row stays.
     removedAt: at('removed_at'),
     createdAt: createdAt(),

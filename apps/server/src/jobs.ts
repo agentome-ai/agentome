@@ -15,7 +15,7 @@ import { wakeParents } from './tasks/subtasks.js';
 import { processWebhook, type WebhookJob } from './webhooks/process.js';
 import { licenseState } from './license/service.js';
 import { placeLauncher } from './places/client.js';
-import { tendPlaces } from './places/tend.js';
+import { endClosedRuns, tendPlaces } from './places/tend.js';
 
 const REAP = 'reap-orphaned-runs';
 const PLACES = 'tend-places';
@@ -65,9 +65,15 @@ export function createJobs(config: Config) {
       await boss.start();
       await boss.createQueue(REAP);
       await boss.schedule(REAP, '* * * * *');
+      const launcher =
+        config.placeLauncherUrl === undefined
+          ? undefined
+          : placeLauncher(config.placeLauncherUrl, config.secretKey);
       await boss.work(REAP, async () => {
         const reaped = await reapOrphanedRuns(db, config.orphanMinutes);
         if (reaped.length > 0) log.warn({ runIds: reaped }, 'closed runs whose seat fell silent');
+        // Their containers in places go too: a worker that fell silent will not ask.
+        if (launcher) await endClosedRuns(db, launcher, reaped, log);
         for (const runId of reaped) {
           const notificationIds = await notifyRunEnded(db, runId);
           if (notificationIds.length) await boss.send(PUSH, { notificationIds });
@@ -83,8 +89,7 @@ export function createJobs(config: Config) {
         if (made.length > 0) log.info({ taskIds: made }, 'started the tasks of schedules');
       });
       // Each minute, people's places on the server: woken for work, put to sleep without it.
-      if (config.placeLauncherUrl !== undefined) {
-        const launcher = placeLauncher(config.placeLauncherUrl, config.secretKey);
+      if (launcher) {
         await boss.createQueue(PLACES);
         await boss.schedule(PLACES, '* * * * *');
         await boss.work(PLACES, () => tendPlaces(db, launcher, log, config.placeLimits.diskBytes));

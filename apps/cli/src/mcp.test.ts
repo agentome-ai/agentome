@@ -99,11 +99,16 @@ describe('agentome mcp', () => {
     );
   });
 
-  it('takes the server or its /mcp/manage, and only http(s)', () => {
+  it('takes the server or its /mcp/manage, over https, or http on this machine', () => {
     expect(manageUrl('https://a.example.com/')).toBe('https://a.example.com/mcp/manage');
     expect(manageUrl('https://a.example.com/mcp/manage')).toBe('https://a.example.com/mcp/manage');
     expect(() => manageUrl('ftp://a.example.com')).toThrow(Refusal);
     expect(() => manageUrl('a.example.com')).toThrow(Refusal);
+    // http:// carries the token in the clear: this machine only.
+    expect(() => manageUrl('http://a.example.com')).toThrow(Refusal);
+    expect(() => manageUrl('http://10.0.0.5:3000')).toThrow(Refusal);
+    expect(manageUrl('http://localhost:3000')).toBe('http://localhost:3000/mcp/manage');
+    expect(manageUrl('http://127.0.0.1:3000/')).toBe('http://127.0.0.1:3000/mcp/manage');
   });
 
   it('reads the data of each event of a stream', () => {

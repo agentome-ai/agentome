@@ -38,6 +38,9 @@ export type TaskSource = z.infer<typeof TaskSource>;
 export const ToolDecision = z.enum(['allowed', 'pending', 'approved', 'denied']);
 export type ToolDecision = z.infer<typeof ToolDecision>;
 
+/** The agent proposing its own instructions: the owner approves each time, never "allow". */
+export const PROPOSE_INSTRUCTIONS = 'agent_propose_instructions';
+
 /** The code hosts a connection may reach: the gateway, git proxy and webhooks take only these. */
 export const CodeHostKind = z.enum(['github', 'gitlab']);
 export type CodeHostKind = z.infer<typeof CodeHostKind>;

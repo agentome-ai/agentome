@@ -383,8 +383,13 @@ describe('both hosts answer the same questions', () => {
     const blob = (text: string) => ({
       body: { content: Buffer.from(text).toString('base64'), encoding: 'base64' },
     });
-    const gh = (deploy: string) =>
+    const gh = (deploy: string, folder = 't1') =>
       host('github', {
+        // The action's folder, by its tree, at the default branch and at the commit.
+        'GET /repos/acme/api/contents/tools': [
+          { body: [{ name: 'deploy', type: 'dir', sha: 't1' }] },
+          { body: [{ name: 'deploy', type: 'dir', sha: folder }] },
+        ],
         'GET /repos/acme/api/git/trees/main': {
           body: {
             tree: [
@@ -416,6 +421,8 @@ describe('both hosts answer the same questions', () => {
     expect(await gh('a1').api.pipelineDiffers('acme/api', 'main', 'new')).toBe(false);
     // A local action a workflow uses is configuration too, wherever it lives.
     expect(await gh('a2').api.pipelineDiffers('acme/api', 'main', 'new')).toBe(true);
+    // Its code changed, its definition not: the folder is configuration as a whole.
+    expect(await gh('a1', 't2').api.pipelineDiffers('acme/api', 'main', 'new')).toBe(true);
 
     const file = (id: string, text: string) => ({
       body: { blob_id: id, content: Buffer.from(text).toString('base64') },
@@ -441,6 +448,9 @@ describe('both hosts answer the same questions', () => {
       .filter((call) => call.path.includes('/repository/files/'))
       .map((call) => new URL(`https://x${call.path}`).searchParams.get('ref'));
     expect(refs).toEqual(['main', 'main', 'new', 'new']);
+    // A token not shown where the configuration is: no telling it is the default file.
+    const hidden = host('gitlab', { 'GET /api/v4/projects/acme%2Fapi': { body: { id: 1 } } });
+    expect(await hidden.api.pipelineDiffers('acme/api', 'main', 'new')).toBe(true);
   });
 
   it('lists the files of a branch and reads one by the id of its content', async () => {

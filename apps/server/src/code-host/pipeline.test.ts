@@ -54,6 +54,17 @@ describe('the files that decide a pipeline', () => {
     expect(gitlabIncludes(theirs, 'acme/shop').unreadable).toBe(false);
     const component = 'include:\n  - component: $CI_SERVER_FQDN/acme/shop/deploy@main\n';
     expect(gitlabIncludes(component, 'acme/shop').unreadable).toBe(true);
+    // Another project's component, behind the instance's own name, is another project's.
+    const shared = 'include:\n  - component: $CI_SERVER_FQDN/acme/templates/deploy@1.0\n';
+    expect(gitlabIncludes(shared, 'acme/shop').unreadable).toBe(false);
+    // A variable that may name this same project: no telling, so the proxy refuses.
+    for (const text of [
+      'include:\n  - project: $CI_PROJECT_PATH\n    file: ci.yml\n',
+      'include:\n  - project: ${CI_PROJECT_NAMESPACE}/shop\n    file: ci.yml\n',
+      'include:\n  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/deploy@main\n',
+    ]) {
+      expect(gitlabIncludes(text, 'acme/shop').unreadable, text).toBe(true);
+    }
   });
 
   it('matches include patterns as GitLab does', () => {

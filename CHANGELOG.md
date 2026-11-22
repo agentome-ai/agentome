@@ -6,14 +6,58 @@ What changed in each release of Agentome. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-22
+
+A person's place on the server may now work while they are away, when they choose so in the
+browser and an admin allows it. An agent can review its own last month and propose better
+instructions, which land only on its owner's approval. Codex agents run in people's places again,
+every command on Codex's own executor in the sandbox. The third security review is closed: places
+on Kubernetes move to a namespace of their own, and the egress proxy, the model relay, the docker
+guard and the git proxy's CI check hold harder. **Read the update notes in Security before you
+update a server with places.**
+
+### Security
+
+- **On Kubernetes**, places, their launcher and their egress proxy move to a namespace of their own, `agentome-places`, where the launcher can no longer reach the app's database or its secret; Pod Security there refuses privileged and host pods. The launcher gets a key of its own instead of the installation's, and the server takes the client's address from the ingress controller only. **When you update** with places: apply `deploy/kubernetes/places` on its own, give the places their keys with `agentome places-key` and `agentome egress-key`, and point `AGENTOME_PLACE_LAUNCHER_URL` at the launcher (see the deploy guide); places made before are made anew, and people sign in to their CLIs again.
+- Places run under gVisor unless an admin chooses the host's kernel with `AGENTOME_PLACE_RUNTIME=runc`; the launcher checks that the runtime it is given really is gVisor's, and a run's own Docker is checked the same way. **When you update** a server with places and no `AGENTOME_PLACE_RUNTIME` in `.env`, set it to `runsc`, or to `runc`, before people's agents run again.
+- A project's services beside a place on Docker, such as its database, run under the places' runtime too; before, on a server with gVisor they ran on the host's kernel. A service made under another runtime is made anew when its place next gets its project's services; its volume stays.
+- The places' egress proxy proves itself to the server with a key of its own, so a run cannot write into a project's Network section or ask about tokens, and one run's flood of bad tokens no longer cuts every place off. Cloud metadata addresses are refused under any name. Allowing a refused host now shows its whole name and asks first. The proxy's log counts a run's reached and refused hosts apart, so a flood of refused names cannot hide where a run got through.
+- A run's own Docker is on a network of its own with the run's sandbox and the egress proxy alone, no longer on the place's network, where the place's worker talks to the server.
+- The docker guard checks each call's body field by field against the fields a launcher sends, and passes Docker its own writing of it; a container it acts on must be a place's. The server itself now deletes the containers of a place's run it closed, so a worker that died no longer leaves the CLI container with the person's sign-in behind.
+- The model relay for server runs on an API key keeps its limits before it reads a call, stops a run's calls once its agent's or project's month is spent, and counts the calls a run hangs up on and those of runs the server closed, so they show in costs.
+- Codex agents run in people's places again: every command, edit and image read of Codex runs in the run's sandbox, on Codex's own executor, never beside the person's ChatGPT sign-in. Before each Codex run the worker checks, without a subscription, that a command really lands in the sandbox, and fails the run otherwise.
+- A person's place keeps only their sign-in in `~/.claude` and `~/.codex`, before and after each run of their agents: settings, MCP servers and hooks there are taken out, so nothing a run writes there runs with the sign-in.
+- In a person's place on the server, an agent's commands can no longer end up beside the person's sign-in: the CLI's container is marked so that nothing inside can unmark it, the CLI's file tools are kept out of its home folder, and a repository's CLAUDE.md can import only its own files.
+- The git proxy's CI check closes three gaps: a GitLab `include` or component that names its project with a variable, a project whose CI file path the token cannot see, and a GitHub local action outside `.github`, now compared as its whole folder.
+- A project's Network section refuses a star over a domain strangers share, such as `*.co.uk`, `*.amazonaws.com` or `*.github.io`: name the host in full. A repository's devcontainer and compose files are read up to 256 KB each, and `agentome mcp` takes `http://` only on this machine.
+
 ### Added
 
-- The site, the README and the guide link the npm package, the MCP Registry record and the n8n node, and show `npx agentome install` as a second way to install.
+- **Work while I'm away**, in a person's place on the server: off until they turn it on in the browser, after a warning that a personal plan's terms may not allow use with nobody at it. An admin turns it off for everyone in Admin, Computers, with **Let people's places work while they are away**, on by default.
+- An agent reviews its own work: **Start a review** in Quality, on the agent's page, gives the agent a task written from its last 30 days, the tasks that came back most and what people wrote. It writes its lessons into its memory and may propose new instructions with the new gateway tool `agent_propose_instructions`, which always asks its owner; Approvals shows the proposal as a diff. The management MCP has `start_agent_review`.
+- A run started by a failed pipeline is told what to do with a failure outside its change, such as a runner or a missing secret: not to fix it, and to tell its owner which job failed and what a person must do.
+- **Edit connection** in a connection's menu changes where it reaches: GitHub's owner, a GitLab address and group, or a Jira address, project key, filter and statuses. The project, the agent and the token stay.
 - New team can start from the Development team template: it creates a Development lead, a new role template, with Backend developer, Frontend developer, Code reviewer and QA engineer, in three steps: build, review and test. The five agents fit Free.
+- Each agent in the site's catalog has its own page with its instructions and every skill in full, so you can read what you import before you download it.
+- The site, the README and the guide link the npm package, the MCP Registry record and the n8n node, and show `npx agentome install` as a second way to install.
 
 ### Changed
 
 - A team's members can be put in another order on its page, from a member's menu or by dragging; the chart and the lists show that order. The project and team pages are as wide as the rest of the app.
+- Places know the app as `agentome.internal`: an installation whose address ends in `.app` was reached around the egress proxy, where nothing answers, so a project's `.app` hosts failed and Codex lost the gateway's tools. An awake place is made anew once after the update.
+- Compose names the places' network by its project, `agentome_places`, so two installations on one host stay apart.
+- A place's image has `ripgrep` and `ps`, which Codex needs to search code and to start interactively.
+- **Create token** is enabled before a name is typed, and says so when the name is missing.
+- Admin and License stand in the same column as Admin's other pages.
+
+### Fixed
+
+- The terminal of a person's place on Docker opens again.
+- A Codex run in a place without a repository starts again.
+- The places' egress proxy starts on an update or a fresh install: compose waits for the app, which writes the proxy's key.
+- Deleting a person's place on Docker removes its networks as well; before, each deleted place left one behind, and a server with many places could run out of Docker's networks.
+- A new place whose pairing fails leaves no volumes or network behind.
+- A kept folder's `.git/config` is written anew, never through a link the last run left.
 
 ## [0.3.0] - 2026-11-16
 
@@ -158,5 +202,8 @@ to install, configure and update it in [deploy/OPERATIONS.md](deploy/OPERATIONS.
   server, monthly budgets, quality reports, Keycloak sign-in and more agents need a key.
 - Images for amd64 and arm64 on Docker Hub: `agentome/agentome` and `agentome/agentome-seat`.
 
-[Unreleased]: https://github.com/agentome-ai/agentome/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/agentome-ai/agentome/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/agentome-ai/agentome/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/agentome-ai/agentome/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/agentome-ai/agentome/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/agentome-ai/agentome/releases/tag/v0.1.0

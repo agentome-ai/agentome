@@ -323,6 +323,26 @@ export function githubHost(options: {
         for (const [path, sha] of actions) {
           if ((await fileAt(path, head)) !== sha) return true;
         }
+        // An action's code is its folder's, not its definition alone: the folder as a whole, by
+        // its tree, at both commits. The repository's root, an action of `./`, is all of it, and
+        // its definition is what stands for it.
+        const folders = new Set(
+          [...actions.keys()].map((path) => path.replace(/\/?action\.ya?ml$/, '')).filter(Boolean),
+        );
+        const treeAt = async (folder: string, ref: string) => {
+          const parent = folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : '';
+          const name = folder.slice(folder.lastIndexOf('/') + 1);
+          try {
+            const { data } = await octokit.rest.repos.getContent({ ...repo, path: parent, ref });
+            return Array.isArray(data) ? data.find((entry) => entry.name === name)?.sha : undefined;
+          } catch (error) {
+            if ((error as { status?: number }).status === 404) return undefined;
+            throw error;
+          }
+        };
+        for (const folder of folders) {
+          if ((await treeAt(folder, base)) !== (await treeAt(folder, head))) return true;
+        }
         return false;
       }),
 

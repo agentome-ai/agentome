@@ -28,13 +28,7 @@ import {
   PairBody,
   PairResponse,
 } from '../protocol.js';
-import {
-  claimRun,
-  LIVE_RUN_STATUSES,
-  ownerPresent,
-  requestStop,
-  type Tx,
-} from '../runs/service.js';
+import { claimRun, LIVE_RUN_STATUSES, placeMayRun, requestStop, type Tx } from '../runs/service.js';
 import {
   bearerToken,
   hashSecret,
@@ -283,7 +277,7 @@ export const seatRoutes: FastifyPluginAsyncZod<{
       reply.header(IDLE_MINUTES_HEADER, String(seat.idleMinutes));
       if (waits) reply.header(WAITING_HEADER, 'sandbox');
       // A person's place on the server says why it waits; claimRun itself refuses it a run.
-      else if (seat.kind === 'subscription-server' && !(await ownerPresent(db, seat))) {
+      else if (seat.kind === 'subscription-server' && !(await placeMayRun(db, seat))) {
         reply.header(WAITING_HEADER, 'presence');
       }
       // Once the seat hangs up, nothing more is claimed for it.

@@ -24,7 +24,7 @@ const LIMITS = ['timeout', 'max_turns', 'token_limit'];
 const PIPELINE = 'The pipeline of%';
 
 /** Each task of the agents in the window, with how it went: the `per_task` relation. */
-const perTask = (agentIds: string[], window: Window) => sql`
+export const perTask = (agentIds: string[], window: Window) => sql`
   t as (
     select id, agent_id, title, status, created_at from tasks
     where agent_id in (${sql.join(

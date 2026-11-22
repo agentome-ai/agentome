@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { privateFolder, readSettings } from './config.js';
+import { placeConnection, privateFolder, readSettings } from './config.js';
 
 describe('readSettings', () => {
   it('has a default for every setting', () => {
@@ -61,5 +61,21 @@ describe('privateFolder', () => {
     chmodSync(shared, 0o777);
     privateFolder(shared, 99_999);
     expect(modeOf(shared)).toBe(0o777);
+  });
+});
+
+describe('placeConnection', () => {
+  const connected = { serverUrl: 'http://app:3000', seatId: 's1', token: 't' };
+
+  it("takes the server's address from the launcher, over the one the place was connected at", () => {
+    const env = { AGENTOME_PLACE_SERVER: 'http://agentome.internal:3000' };
+    expect(placeConnection(connected, env)).toEqual({
+      ...connected,
+      serverUrl: 'http://agentome.internal:3000',
+    });
+  });
+
+  it('keeps the connection when the launcher gives no address', () => {
+    expect(placeConnection(connected, {})).toBe(connected);
   });
 });

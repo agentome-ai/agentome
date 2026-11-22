@@ -1,5 +1,5 @@
 import { agents, agentStatusEnum, type Db, engineEnum, eq, sql } from '@agentome/db';
-import { ConnectionKind, GrantLevel, RunStatus } from '@agentome/shared';
+import { ConnectionKind, GrantLevel, PROPOSE_INSTRUCTIONS, RunStatus } from '@agentome/shared';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { resumeBudget } from '../budgets/service.js';
@@ -15,6 +15,7 @@ import {
 } from '../agents/service.js';
 import { transferAgent } from '../agents/ownership.js';
 import { lastMonth, mostReturned, qualityOf } from '../agents/quality.js';
+import { startReview } from '../agents/review.js';
 import {
   AgentFile,
   AgentFileV2,
@@ -342,6 +343,24 @@ export const agentRoutes: FastifyPluginAsyncZod<{ db: Db; config: Config }> = as
     },
   );
 
+  app.post(
+    '/api/agents/:id/review',
+    {
+      schema: {
+        summary:
+          'Starts a task in which the agent reviews its last 30 days: the tasks that came back and why. It writes lessons into its memory and may propose new instructions for its owner to approve',
+        params: IdParams,
+        response: { 201: z.object({ taskId: z.uuid() }) },
+      },
+    },
+    async (request, reply) => {
+      const agent = await agentFor(db, request.params.id, request.user.id);
+      await requireEnterprise(db, 'analytics');
+      const started = await startReview(db, agent.id, request.user.id);
+      return reply.code(201).send({ taskId: started.task.id });
+    },
+  );
+
   app.patch(
     '/api/agents/:id',
     {
@@ -529,6 +548,12 @@ export const agentRoutes: FastifyPluginAsyncZod<{ db: Db; config: Config }> = as
       if ((await reportsOf(db, agent.id)).length > 0) known.push(ASSIGN_TASK);
       if (!known.includes(name))
         throw new AppError('validation_failed', `This agent has no tool ${name}`);
+      if (name === PROPOSE_INSTRUCTIONS && request.body.policy === 'allow') {
+        throw new AppError(
+          'validation_failed',
+          'New instructions always wait for your approval: ask, or deny to turn them off',
+        );
+      }
       const row = await setPolicy(db, agent.id, name, request.body.policy);
       if (!row) throw new AppError('not_found', 'Agent not found');
       return view(row);

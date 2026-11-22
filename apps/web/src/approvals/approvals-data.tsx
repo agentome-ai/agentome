@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { PROPOSE_INSTRUCTIONS } from '@agentome/shared';
 import { type ApiError, api, asApiError } from '../api';
 
 // The approvals API as the pages read it.
@@ -119,6 +120,8 @@ export function describe(call: Pick<Approval, 'tool' | 'input' | 'task'>): {
       return { refs, action: `Read ${number}` };
     case 'code_host_get_pipeline_failures':
       return { refs, action: `Read the pipeline failures of ${number}` };
+    case PROPOSE_INSTRUCTIONS:
+      return { refs: [], action: 'Change its own instructions', body: text(input.why) };
     case 'team_step': {
       // A team lead's assignment: a manual step, or in auto the one approval of the
       // task, after the first assignment: the run shows what that one found.

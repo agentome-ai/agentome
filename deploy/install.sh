@@ -17,7 +17,7 @@
 set -eu
 
 # The release this script installs; the release commit sets it with compose.yaml's.
-RELEASE=0.3.0
+RELEASE=0.4.0
 
 usage() {
   cat <<'EOF'
@@ -379,12 +379,18 @@ main() {
   runtimes=$(docker info --format '{{range $name, $_ := .Runtimes}}{{$name}} {{end}}' 2>/dev/null || true)
   gvisor=0
   case " $runtimes " in *' runsc '*) gvisor=1 ;; esac
+  # Without gVisor places are made only when the admin says so: runc, the host's kernel, by name.
+  host_kernel=0
   if [ "$places" = y ] && [ "$gvisor" = 0 ]; then
     say 'gVisor (runsc) is not registered with Docker: places would share this machine'"'"'s kernel.'
     say 'Install it: https://gvisor.dev/docs/user_guide/install/ (see agentome.ai/docs/deploy/).'
     if can_ask; then
-      ask_yes 'Go on without gVisor' y
+      ask_yes 'Run places on this machine'"'"'s kernel, without gVisor' n
       [ "$answer" = y ] || fail 'install gVisor, then run this again'
+      host_kernel=1
+    else
+      say 'Places will not start until gVisor is registered and AGENTOME_PLACE_RUNTIME=runsc is in .env,'
+      say 'or AGENTOME_PLACE_RUNTIME=runc is there to run them on this machine'"'"'s kernel.'
     fi
   fi
 
@@ -427,6 +433,9 @@ main() {
       case " $runtimes " in
         *' runsc-docker '*) set_env AGENTOME_PLACE_DOCKER_RUNTIME runsc-docker; say 'Each run gets a Docker of its own.' ;;
       esac
+    elif [ "$host_kernel" = 1 ]; then
+      set_env AGENTOME_PLACE_RUNTIME runc
+      say 'Places run on this machine'"'"'s kernel, as you chose.'
     fi
   fi
 

@@ -229,6 +229,7 @@ describe('the management MCP', () => {
         'deny_tool_call',
         'get_agent',
         'agent_quality',
+        'start_agent_review',
         'get_run',
         'get_run_transcript',
         'get_task',

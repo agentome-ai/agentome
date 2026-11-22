@@ -43,7 +43,7 @@ import { logRoutes } from './logs/routes.js';
 import { modelConnectionRoutes } from './models/routes.js';
 import { relayRoutes } from './models/relay.js';
 import { type Launcher, placeLauncher as placeLauncherClient } from './places/client.js';
-import { egressRoutes } from './places/egress.js';
+import { egressRoutes, fromEgressProxy, PROXY_KEY_HEADER } from './places/egress.js';
 import { placeRoutes } from './places/routes.js';
 import websocket from '@fastify/websocket';
 import { scheduleRoutes } from './schedules/routes.js';
@@ -182,7 +182,12 @@ export async function buildApp(
       max: API_CALLS_A_MINUTE,
       timeWindow: 60_000,
       keyGenerator: (request) => request.ip,
-      allowList: (request) => request.url === '/health' || request.url === '/ready',
+      // The egress proxy asks for every place and run from one address: by its key, not counted.
+      allowList: (request) =>
+        request.url === '/health' ||
+        request.url === '/ready' ||
+        (request.url.startsWith('/api/egress/') &&
+          fromEgressProxy(request.headers[PROXY_KEY_HEADER], config.secretKey)),
       errorResponseBuilder: (_request, context) =>
         new AppError(
           'rate_limited',

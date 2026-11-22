@@ -51,10 +51,6 @@ describe('Settings, API tokens', () => {
 
     await user.click(screen.getByRole('button', { name: 'New token' }));
     const composer = screen.getByRole('dialog', { name: 'New token' });
-    expect(within(composer).getByRole('button', { name: 'Create token' })).toHaveProperty(
-      'disabled',
-      true,
-    );
     await user.type(within(composer).getByLabelText('Token name'), 'Claude Code');
     await user.click(within(composer).getByRole('button', { name: 'Create token' }));
     expect(await within(composer).findByText('tok_shown_once')).toBeTruthy();
@@ -113,5 +109,21 @@ describe('Settings, API tokens', () => {
       scope: 'read',
       expiresInDays: 90,
     });
+  });
+
+  it('says the name is missing instead of keeping Create grey', async () => {
+    const { calls, user } = renderTokens({ 'GET /api/me/tokens': { tokens: [] } });
+    await user.click(await screen.findByRole('button', { name: 'New token' }));
+    const composer = screen.getByRole('dialog', { name: 'New token' });
+    await user.click(within(composer).getByRole('combobox', { name: 'Expires: 30 days' }));
+    await user.click(await screen.findByRole('option', { name: '7 days' }));
+    await user.click(within(composer).getByRole('button', { name: 'Create token' }));
+    expect(within(composer).getByText('Name the token first.')).toBeTruthy();
+    const field = within(composer).getByLabelText('Token name');
+    expect(document.activeElement).toBe(field);
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(calls.some((call) => call.route === 'POST /api/me/tokens')).toBe(false);
+    await user.type(field, 'C');
+    expect(within(composer).queryByText('Name the token first.')).toBeNull();
   });
 });

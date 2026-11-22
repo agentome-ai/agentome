@@ -108,7 +108,7 @@ export function SeatsPage() {
         actions={seats?.length && canConnect ? connect : undefined}
       />
       <div className={cn('pt-4 pb-24', frame.wide)}>
-        <PlaceSection onComputers={setComputers} />
+        <PlaceSection onComputers={setComputers} admin={admin} />
         <p className="mb-4 max-w-[72ch] text-read text-ink-2">
           {computers
             ? 'The computers that run your agents. A computer takes runs only while you are signed in to it and using it.'

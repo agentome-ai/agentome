@@ -1,5 +1,5 @@
-# The place launcher may make and delete pods and volume claims in this namespace, and open a
-# command in a pod; nothing else, and nothing in the cluster.
+# The place launcher may make and delete pods and volume claims in the places' namespace, and
+# open a command in a pod there; nothing else, and nothing in the cluster.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -72,21 +72,26 @@ spec:
           type: RuntimeDefault
       containers:
         - name: place-launcher
-          image: docker.io/agentome/agentome:0.3.0
+          image: docker.io/agentome/agentome:0.4.0
           command: ['agentome', 'place-launcher']
+          envFrom:
+            - configMapRef:
+                name: place-launcher
           ports:
             - name: http
               containerPort: 8080
           env:
-            # The orders the server signs are checked with a key derived from this one.
-            - name: AGENTOME_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: agentome
-                  key: AGENTOME_SECRET_KEY
+            # The places' key, derived from the installation's secret key, which the launcher
+            # never holds: `agentome places-key` prints it for this Secret (deploy/OPERATIONS.md).
+            - name: AGENTOME_PLACES_KEY_FILE
+              value: /places/places.key
             # Node trusts the API server's certificate by the service account's CA.
             - name: NODE_EXTRA_CA_CERTS
               value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          volumeMounts:
+            - name: places-key
+              mountPath: /places
+              readOnly: true
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -98,6 +103,13 @@ spec:
               memory: 64Mi
             limits:
               memory: 256Mi
+      volumes:
+        - name: places-key
+          secret:
+            secretName: agentome-places
+            items:
+              - key: places.key
+                path: places.key
 ---
 apiVersion: v1
 kind: Service
@@ -112,6 +124,18 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+---
+# The app, in its own namespace, by the name places and the proxy call it: `agentome`. If the app
+# is in another namespace than `agentome`, put its name here and in the policies below.
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentome
+  labels:
+    app.kubernetes.io/name: agentome
+spec:
+  type: ExternalName
+  externalName: agentome.agentome.svc.cluster.local
 ---
 # The places' only way out: it lets a place reach the server, the model vendors and the hosts an
 # admin opens on the run's project, asking the server which by the token each call comes with.
@@ -141,8 +165,16 @@ spec:
           type: RuntimeDefault
       containers:
         - name: place-egress
-          image: docker.io/agentome/agentome:0.3.0
+          image: docker.io/agentome/agentome:0.4.0
           command: ['agentome', 'place-egress']
+          # Its key, which the app takes its word by: `agentome egress-key` prints it, from the
+          # installation's secret, for the places' Secret (deploy/OPERATIONS.md, Kubernetes).
+          env:
+            - name: AGENTOME_EGRESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentome-places
+                  key: egress.key
           ports:
             - name: proxy
               containerPort: 3128
@@ -203,7 +235,10 @@ spec:
         - port: 7419
           protocol: TCP
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentome
+          podSelector:
             matchLabels:
               app.kubernetes.io/name: agentome
       ports:
@@ -229,7 +264,10 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentome
+          podSelector:
             matchLabels:
               app.kubernetes.io/name: agentome
       ports:

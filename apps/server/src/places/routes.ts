@@ -1,5 +1,16 @@
 import type { Duplex } from 'node:stream';
-import { agents, and, count, type Db, eq, pairingCodes, runs, seats, tasks } from '@agentome/db';
+import {
+  agents,
+  and,
+  count,
+  type Db,
+  eq,
+  installation,
+  pairingCodes,
+  runs,
+  seats,
+  tasks,
+} from '@agentome/db';
 import type { FastifyBaseLogger, FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -24,6 +35,8 @@ const Place = z.object({
   available: z.boolean(),
   /** Whether people's own computers may run agents here (AGENTOME_COMPUTERS). */
   computers: z.boolean(),
+  /** Whether an admin lets people's places here work while their people are away. */
+  awayAllowed: z.boolean(),
   place: z
     .object({
       seatId: z.uuid().nullable(),
@@ -31,6 +44,8 @@ const Place = z.object({
       /** The CLIs the place's worker says are not signed in yet. */
       signedOut: z.array(z.string()),
       lastSeenAt: z.iso.datetime().nullable(),
+      /** Whether its person lets it take runs while they are away. */
+      worksWhileAway: z.boolean(),
       /** The person's agents that work in the place, each with its own folders there. */
       agents: z.array(z.object({ id: z.uuid(), name: z.string() })),
       /** What the place holds on Docker and may hold; null where the launcher does not count. */
@@ -42,7 +57,12 @@ const Place = z.object({
 /** The person's place's seat, if they have one. */
 async function seatOf(db: Db, userId: string) {
   const [seat] = await db
-    .select({ id: seats.id, capabilities: seats.capabilities, lastSeenAt: seats.lastSeenAt })
+    .select({
+      id: seats.id,
+      capabilities: seats.capabilities,
+      lastSeenAt: seats.lastSeenAt,
+      worksWhileAway: seats.worksWhileAway,
+    })
     .from(seats)
     .where(
       and(
@@ -52,6 +72,15 @@ async function seatOf(db: Db, userId: string) {
       ),
     );
   return seat;
+}
+
+/** Whether an admin lets places here work while their people are away; allowed until one says no. */
+async function awayAllowed(db: Db) {
+  const [row] = await db
+    .select({ allowed: installation.placesAwayAllowed })
+    .from(installation)
+    .limit(1);
+  return row?.allowed ?? true;
 }
 
 /** What the terminal uses of a WebSocket (ws's, which has no types here). */
@@ -97,11 +126,13 @@ export const placeRoutes: FastifyPluginAsyncZod<{
   };
 
   async function view(userId: string): Promise<z.infer<typeof Place>> {
-    if (!launcher) return { available: false, computers, place: null };
+    const allowed = await awayAllowed(db);
+    if (!launcher) return { available: false, computers, awayAllowed: allowed, place: null };
     const seat = await seatOf(db, userId);
     const status = await launcher.status(userId).catch(() => undefined);
     const state: PlaceState | 'unknown' = status?.state ?? 'unknown';
-    if (state === 'none' && !seat) return { available: true, computers, place: null };
+    if (state === 'none' && !seat)
+      return { available: true, computers, awayAllowed: allowed, place: null };
     const own = await db
       .select({ id: agents.id, name: agents.name })
       .from(agents)
@@ -116,11 +147,13 @@ export const placeRoutes: FastifyPluginAsyncZod<{
     return {
       available: true,
       computers,
+      awayAllowed: allowed,
       place: {
         seatId: seat?.id ?? null,
         state,
         signedOut: seat?.capabilities.signedOut ?? [],
         lastSeenAt: seat?.lastSeenAt?.toISOString() ?? null,
+        worksWhileAway: seat?.worksWhileAway ?? false,
         agents: own,
         disk:
           status?.diskBytes === undefined
@@ -218,6 +251,68 @@ export const placeRoutes: FastifyPluginAsyncZod<{
       },
     );
   }
+
+  // The person's own choice for their own subscription: only they, in the browser, make it, as
+  // they made the place and signed in there. Text an assistant reads cannot turn it on.
+  app.put(
+    '/api/me/place/away',
+    {
+      onRequest: app.requireSession,
+      schema: {
+        summary: "Lets the signed-in person's place take runs while they are away, or stops that",
+        body: z.object({ on: z.boolean() }),
+        response: { 200: Place },
+      },
+    },
+    async (request) => {
+      browserOnly(request);
+      const me = request.user.id;
+      const seat = await seatOf(db, me);
+      if (!seat) throw new AppError('not_found', 'You have no place on the server');
+      const on = request.body.on;
+      if (on && !(await awayAllowed(db))) {
+        throw new AppError(
+          'forbidden',
+          'An admin has turned this off: places here take runs only while their people are here.',
+        );
+      }
+      await db.update(seats).set({ worksWhileAway: on }).where(eq(seats.id, seat.id));
+      request.log.info(
+        { userId: me, seatId: seat.id, on },
+        on
+          ? 'a place on the server works while its person is away: its person asked'
+          : 'a place on the server waits for its person again: its person asked',
+      );
+      return view(me);
+    },
+  );
+
+  // An admin's word for everyone here. Off, every place waits for its person again, whatever
+  // they chose; their choice is kept for when it is allowed again.
+  app.put(
+    '/api/admin/places/away',
+    {
+      onRequest: app.requireAdmin,
+      schema: {
+        summary:
+          "Lets people's places take runs while their people are away, or stops that for all",
+        body: z.object({ allowed: z.boolean() }),
+        response: { 200: Place },
+      },
+    },
+    async (request) => {
+      browserOnly(request);
+      const allowed = request.body.allowed;
+      await db.update(installation).set({ placesAwayAllowed: allowed });
+      request.log.info(
+        { userId: request.user.id, allowed },
+        allowed
+          ? 'places on the server may work while their people are away: an admin allowed it'
+          : 'places on the server wait for their people: an admin turned working away off',
+      );
+      return view(request.user.id);
+    },
+  );
 
   // The agent's folders in the person's place start fresh at its next run: its clone, its
   // dependencies, whatever it left. Its own agents only, and not while one of its runs goes.
@@ -341,9 +436,15 @@ export const placeRoutes: FastifyPluginAsyncZod<{
       : [];
     if (!seat) throw new AppError('unauthorized', 'Only a place asks for its runs');
     const [run] = await db
-      .select({ id: runs.id, agentId: runs.agentId, projectId: tasks.projectId })
+      .select({
+        id: runs.id,
+        agentId: runs.agentId,
+        projectId: tasks.projectId,
+        engine: agents.engine,
+      })
       .from(runs)
       .leftJoin(tasks, eq(tasks.id, runs.taskId))
+      .innerJoin(agents, eq(agents.id, runs.agentId))
       .where(and(eq(runs.id, runId), eq(runs.seatId, seat.id)));
     if (!run) throw new AppError('not_found', 'Run not found');
     return { seat, run };
@@ -384,6 +485,7 @@ export const placeRoutes: FastifyPluginAsyncZod<{
         shape.data.hash === wanted.hash;
       const addresses = await need().startRun(seat.ownerUserId, run.id, {
         ...(folder !== undefined && { folder }),
+        engine: run.engine,
         ...(ready &&
           run.projectId && {
             shape: { project: run.projectId, hash: wanted.hash, services: wanted.services },

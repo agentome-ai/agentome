@@ -44,7 +44,7 @@ export interface WorkerOptions {
   readonly backoff?: (attempt: number) => number;
   /** The SHA-256 of this worker's file, as the server names the bundle it hands out. */
   readonly build?: string;
-  readonly run?: Pick<RunDeps, 'cliPath' | 'codexPath' | 'env' | 'timing'>;
+  readonly run?: Pick<RunDeps, 'cliPath' | 'codexPath' | 'env' | 'timing' | 'self'>;
 }
 
 export async function runWorker(options: WorkerOptions): Promise<'stopped' | 'disconnected'> {

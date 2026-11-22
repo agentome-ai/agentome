@@ -229,7 +229,7 @@ function RowMenu(props: {
   onChanged: () => Promise<void>;
 }) {
   const { connection } = props;
-  const [open, setOpen] = useState<'token' | 'webhook' | 'delete'>();
+  const [open, setOpen] = useState<'edit' | 'token' | 'webhook' | 'delete'>();
   const close = () => setOpen(undefined);
   return (
     <>
@@ -240,6 +240,9 @@ function RowMenu(props: {
           </Button>
         </Menu.DropdownMenuTrigger>
         <Menu.DropdownMenuContent align="end">
+          <Menu.DropdownMenuItem onSelect={() => setOpen('edit')}>
+            Edit connection
+          </Menu.DropdownMenuItem>
           <Menu.DropdownMenuItem onSelect={props.onTest}>Check the token</Menu.DropdownMenuItem>
           {/* Jira is polled: there is nothing to paste into it, and no need to wait for it. */}
           {connection.kind === 'jira' && (
@@ -258,6 +261,9 @@ function RowMenu(props: {
           </Menu.DropdownMenuItem>
         </Menu.DropdownMenuContent>
       </Menu.DropdownMenu>
+      {open === 'edit' && (
+        <EditDialog connection={connection} onClose={close} onSaved={props.onChanged} />
+      )}
       {open === 'webhook' && <WebhookDialog connection={connection} onClose={close} />}
       {open === 'token' && (
         <ReplaceTokenDialog connection={connection} onClose={close} onSaved={props.onChanged} />
@@ -434,12 +440,7 @@ function NewConnectionDialog(props: {
       current = false;
     };
   }, [projectId]);
-  const [owner, setOwner] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [group, setGroup] = useState('');
-  const [projectKey, setProjectKey] = useState('');
-  const [jql, setJql] = useState('');
-  const [statuses, setStatuses] = useState(STATUSES);
+  const [where, setWhere] = useState(NOWHERE);
   const [token, setToken] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApiError>();
@@ -447,27 +448,13 @@ function NewConnectionDialog(props: {
 
   const jira = kind === 'jira';
   const ready =
-    projectId !== '' &&
-    token.trim() !== '' &&
-    (kind === 'github'
-      ? owner.trim() !== ''
-      : jira
-        ? baseUrl.trim() !== '' &&
-          projectKey.trim() !== '' &&
-          agentId !== '' &&
-          Object.values(statuses).every((status) => status.trim() !== '')
-        : baseUrl.trim() !== '' && group.trim() !== '');
+    projectId !== '' && token.trim() !== '' && (!jira || agentId !== '') && filled(kind, where);
 
   async function create(event: React.FormEvent) {
     event.preventDefault();
     setPending(true);
     setError(undefined);
-    const config =
-      kind === 'github'
-        ? { kind, owner }
-        : jira
-          ? { kind, baseUrl, projectKey, jql, ...statuses }
-          : { kind, baseUrl, group };
+    const config = configOf(kind, where);
     try {
       // "team": the project's team takes the issues, so the connection names no agent.
       const named = agentId && agentId !== TEAM ? { agentId } : {};
@@ -489,12 +476,7 @@ function NewConnectionDialog(props: {
         setOpen(next);
         if (next) {
           setKind('github');
-          setOwner('');
-          setBaseUrl('');
-          setGroup('');
-          setProjectKey('');
-          setJql('');
-          setStatuses(STATUSES);
+          setWhere(NOWHERE);
           setAgentId('');
           setToken('');
           setError(undefined);
@@ -579,120 +561,7 @@ function NewConnectionDialog(props: {
               )}
             </Field>
 
-            {jira ? (
-              <>
-                <Field
-                  label="Jira address"
-                  hint="Jira Data Center 10 or newer."
-                  error={fields.baseUrl}
-                >
-                  {(control) => (
-                    <Input
-                      {...control}
-                      value={baseUrl}
-                      placeholder="https://jira.acme.com"
-                      onChange={(event) => setBaseUrl(event.target.value)}
-                    />
-                  )}
-                </Field>
-                <div className="grid grid-cols-[8rem_1fr] gap-3 max-md:grid-cols-1">
-                  <Field label="Project key" error={fields.projectKey}>
-                    {(control) => (
-                      <Input
-                        {...control}
-                        className="font-mono uppercase"
-                        value={projectKey}
-                        placeholder="PAY"
-                        spellCheck={false}
-                        autoCapitalize="characters"
-                        autoComplete="off"
-                        onChange={(event) => setProjectKey(event.target.value)}
-                      />
-                    )}
-                  </Field>
-                  <Field
-                    label="Filter (optional)"
-                    hint="JQL that narrows the project's issues. Agentome looks for new and changed ones every 5 minutes."
-                    error={fields.jql}
-                  >
-                    {(control) => (
-                      <Input
-                        {...control}
-                        className="font-mono"
-                        value={jql}
-                        placeholder="labels = ai-team"
-                        spellCheck={false}
-                        autoComplete="off"
-                        onChange={(event) => setJql(event.target.value)}
-                      />
-                    )}
-                  </Field>
-                </div>
-                <fieldset className="grid gap-1.5">
-                  <legend className="mb-1.5 font-medium">Move the issue to</legend>
-                  <div className="grid grid-cols-3 gap-3 max-md:grid-cols-1">
-                    {STATUS_LABELS.map(([key, label]) => (
-                      <Field key={key} label={label} error={fields[key]}>
-                        {(control) => (
-                          <Input
-                            {...control}
-                            value={statuses[key]}
-                            onChange={(event) =>
-                              setStatuses((was) => ({ ...was, [key]: event.target.value }))
-                            }
-                          />
-                        )}
-                      </Field>
-                    ))}
-                  </div>
-                  <p className="text-small text-ink-3">
-                    Status names exactly as your workflow has them.
-                  </p>
-                </fieldset>
-              </>
-            ) : kind === 'github' ? (
-              <Field
-                label="Owner"
-                hint="The user or organization on github.com whose repositories this reaches."
-                error={fields.owner}
-              >
-                {(control) => (
-                  <Input
-                    {...control}
-                    value={owner}
-                    placeholder="acme"
-                    onChange={(event) => setOwner(event.target.value)}
-                  />
-                )}
-              </Field>
-            ) : (
-              <>
-                <Field label="GitLab address" error={fields.baseUrl}>
-                  {(control) => (
-                    <Input
-                      {...control}
-                      value={baseUrl}
-                      placeholder="https://gitlab.acme.com"
-                      onChange={(event) => setBaseUrl(event.target.value)}
-                    />
-                  )}
-                </Field>
-                <Field
-                  label="Group"
-                  hint="A group path; subgroups are reached too."
-                  error={fields.group}
-                >
-                  {(control) => (
-                    <Input
-                      {...control}
-                      value={group}
-                      placeholder="acme/platform"
-                      onChange={(event) => setGroup(event.target.value)}
-                    />
-                  )}
-                </Field>
-              </>
-            )}
+            <WhereFields kind={kind} where={where} onChange={setWhere} errors={fields} />
 
             <Field
               label="Token"
@@ -739,6 +608,237 @@ const STATUS_LABELS = [
   ['inReview', 'On review'],
   ['done', 'On merge'],
 ] as const;
+
+/** Where a connection reaches, as typed: every host's fields, so that switching hosts keeps them. */
+type Where = typeof NOWHERE;
+const NOWHERE = {
+  owner: '',
+  baseUrl: '',
+  group: '',
+  projectKey: '',
+  jql: '',
+  ...STATUSES,
+};
+
+/** A connection's place back in the fields: its config as the server answers it. */
+const whereOf = (connection: Connection): Where => ({ ...NOWHERE, ...connection.config });
+
+const filled = (kind: Host, where: Where) =>
+  kind === 'github'
+    ? where.owner.trim() !== ''
+    : kind === 'jira'
+      ? where.baseUrl.trim() !== '' &&
+        where.projectKey.trim() !== '' &&
+        STATUS_LABELS.every(([key]) => where[key].trim() !== '')
+      : where.baseUrl.trim() !== '' && where.group.trim() !== '';
+
+/** The config the server takes for a host, from the fields; Jira keeps a time zone it had. */
+function configOf(kind: Host, where: Where, kept: Record<string, string> = {}) {
+  if (kind === 'github') return { kind, owner: where.owner };
+  if (kind === 'gitlab') return { kind, baseUrl: where.baseUrl, group: where.group };
+  const { baseUrl, projectKey, jql, inProgress, inReview, done } = where;
+  const timeZone = kept.timeZone ? { timeZone: kept.timeZone } : {};
+  return { kind, baseUrl, projectKey, jql, inProgress, inReview, done, ...timeZone };
+}
+
+/** The fields of where a connection reaches: GitHub's owner, a GitLab group, a Jira project. */
+function WhereFields(props: {
+  kind: Host;
+  where: Where;
+  onChange: (where: Where) => void;
+  errors: Record<string, string | undefined>;
+}) {
+  const { where, errors } = props;
+  const set = (key: keyof Where, value: string) => props.onChange({ ...where, [key]: value });
+  return props.kind === 'jira' ? (
+    <>
+      <Field label="Jira address" hint="Jira Data Center 10 or newer." error={errors.baseUrl}>
+        {(control) => (
+          <Input
+            {...control}
+            value={where.baseUrl}
+            placeholder="https://jira.acme.com"
+            onChange={(event) => set('baseUrl', event.target.value)}
+          />
+        )}
+      </Field>
+      <div className="grid grid-cols-[8rem_1fr] gap-3 max-md:grid-cols-1">
+        <Field label="Project key" error={errors.projectKey}>
+          {(control) => (
+            <Input
+              {...control}
+              className="font-mono uppercase"
+              value={where.projectKey}
+              placeholder="PAY"
+              spellCheck={false}
+              autoCapitalize="characters"
+              autoComplete="off"
+              onChange={(event) => set('projectKey', event.target.value)}
+            />
+          )}
+        </Field>
+        <Field
+          label="Filter (optional)"
+          hint="JQL that narrows the project's issues. Agentome looks for new and changed ones every 5 minutes."
+          error={errors.jql}
+        >
+          {(control) => (
+            <Input
+              {...control}
+              className="font-mono"
+              value={where.jql}
+              placeholder="labels = ai-team"
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(event) => set('jql', event.target.value)}
+            />
+          )}
+        </Field>
+      </div>
+      <fieldset className="grid gap-1.5">
+        <legend className="mb-1.5 font-medium">Move the issue to</legend>
+        <div className="grid grid-cols-3 gap-3 max-md:grid-cols-1">
+          {STATUS_LABELS.map(([key, label]) => (
+            <Field key={key} label={label} error={errors[key]}>
+              {(control) => (
+                <Input
+                  {...control}
+                  value={where[key]}
+                  onChange={(event) => set(key, event.target.value)}
+                />
+              )}
+            </Field>
+          ))}
+        </div>
+        <p className="text-small text-ink-3">Status names exactly as your workflow has them.</p>
+      </fieldset>
+    </>
+  ) : props.kind === 'github' ? (
+    <Field
+      label="Owner"
+      hint="The user or organization on github.com whose repositories this reaches."
+      error={errors.owner}
+    >
+      {(control) => (
+        <Input
+          {...control}
+          value={where.owner}
+          placeholder="acme"
+          onChange={(event) => set('owner', event.target.value)}
+        />
+      )}
+    </Field>
+  ) : (
+    <>
+      <Field label="GitLab address" error={errors.baseUrl}>
+        {(control) => (
+          <Input
+            {...control}
+            value={where.baseUrl}
+            placeholder="https://gitlab.acme.com"
+            onChange={(event) => set('baseUrl', event.target.value)}
+          />
+        )}
+      </Field>
+      <Field label="Group" hint="A group path; subgroups are reached too." error={errors.group}>
+        {(control) => (
+          <Input
+            {...control}
+            value={where.group}
+            placeholder="acme/platform"
+            onChange={(event) => set('group', event.target.value)}
+          />
+        )}
+      </Field>
+    </>
+  );
+}
+
+/**
+ * Edit connection: where it reaches, for a group typed wrong or moved. The project, the agent and
+ * the token stay; a new address takes the token again, as the server sends a saved one only where
+ * it was entered for.
+ */
+function EditDialog(props: {
+  connection: Connection;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const { connection } = props;
+  const before = whereOf(connection);
+  const [where, setWhere] = useState(before);
+  const [token, setToken] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<ApiError>();
+  const fields = error ? fieldErrors(error) : {};
+  const moved = connection.kind !== 'github' && where.baseUrl.trim() !== before.baseUrl.trim();
+  const changed = (Object.keys(NOWHERE) as (keyof Where)[]).some(
+    (key) => where[key] !== before[key],
+  );
+  const ready = changed && filled(connection.kind, where) && (!moved || token.trim() !== '');
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setPending(true);
+    setError(undefined);
+    try {
+      const config = configOf(connection.kind, where, connection.config);
+      await api(`/api/connections/${connection.id}`, {
+        method: 'PATCH',
+        body: { config, ...(moved ? { token } : {}) },
+      });
+      await props.onSaved();
+      props.onClose();
+    } catch (caught) {
+      setError(asApiError(caught));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Shell
+      title="Edit connection"
+      onClose={props.onClose}
+      onSubmit={(event) => void save(event)}
+      submit={
+        <Button type="submit" disabled={pending || !ready}>
+          Save changes
+        </Button>
+      }
+    >
+      <D.DialogDescription>
+        {connection.project.name}
+        {connection.kind === 'jira'
+          ? `, issues to ${connection.agent?.name ?? "the project's team"}`
+          : connection.agent
+            ? `, ${connection.agent.name} only`
+            : ', every agent'}
+        . The token stays unless the address changes.
+      </D.DialogDescription>
+      <div className="grid gap-4 py-4">
+        <WhereFields kind={connection.kind} where={where} onChange={setWhere} errors={fields} />
+        {moved && (
+          <Field
+            label="Token"
+            hint={`A new address takes the token again: the saved one goes only to ${before.baseUrl}.`}
+            error={fields.token}
+          >
+            {(control) => (
+              <PasswordInput
+                {...control}
+                value={token}
+                autoComplete="off"
+                onChange={(event) => setToken(event.target.value)}
+              />
+            )}
+          </Field>
+        )}
+        {error && Object.keys(fields).length === 0 && <FormError>{error.message}</FormError>}
+      </div>
+    </Shell>
+  );
+}
 
 const Labelled = ({ label, children }: { label: string; children: ReactNode }) => (
   <div className="grid gap-1.5">

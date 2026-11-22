@@ -402,6 +402,21 @@ export const approvals = [
     },
     createdAt: ago(3),
   },
+  {
+    id: 'tc3',
+    tool: 'agent_propose_instructions',
+    input: {
+      instructions:
+        'Own the payments service: its API, its database migrations and its tests.\n\nBefore you push, run `pnpm lint` and `pnpm test` and fix what fails.\nWhen a migration changes a table, add a down step.\n\nAsk before you change a public endpoint.',
+      why: 'Three of my tasks came back this month: two for a failed lint job I never ran, one for a migration without a down step. Running the checks before I push would have kept all three.',
+      previous:
+        'Own the payments service: its API, its database migrations and its tests.\n\nAsk before you change a public endpoint.',
+    },
+    runId: 'r-k5',
+    agent: { id: 'a1', name: 'Payments backend' },
+    task: { id: 'k5', title: 'Review your work', repository: null },
+    createdAt: ago(1),
+  },
 ];
 
 // The memory of Payments backend: what its runs learned, and a note its owner added.

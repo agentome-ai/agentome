@@ -411,6 +411,11 @@ for (const theme of ['light', 'dark'] as const) {
         .click();
       await page.getByRole('dialog', { name: 'Deny this request?' }).waitFor();
       await shoot(page, `approvals-deny-${theme}-${size.width}`);
+      await page.keyboard.press('Escape');
+      // An agent's proposed instructions: why, and the change Approve makes.
+      await page.getByRole('button', { name: /Change its own instructions/ }).click();
+      await page.getByRole('article', { name: 'Request' }).getByLabel('Changes').waitFor();
+      await shoot(page, `approvals-instructions-${theme}-${size.width}`);
       if (size.width !== 1536) return;
       await page.goto('/agents/a1');
       await page.getByRole('group', { name: 'Code host' }).scrollIntoViewIfNeeded();
@@ -1167,5 +1172,38 @@ for (const theme of ['light', 'dark'] as const) {
     await page.waitForTimeout(300);
     await shoot(page, `phone-logs-${theme}`);
     await context.close();
+  });
+}
+
+// A person's place on the server: working while they are away, the warning before it, and an
+// admin's switch for everyone.
+for (const theme of ['light', 'dark'] as const) {
+  test(`place away ${theme}`, async ({ page }) => {
+    await page.addInitScript((value) => localStorage.setItem('agentome-theme', value), theme);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await mockApi(page, {
+      ...api,
+      'GET /api/me/place': {
+        available: true,
+        computers: true,
+        awayAllowed: true,
+        place: {
+          seatId: 's-place',
+          state: 'asleep',
+          signedOut: [],
+          lastSeenAt: null,
+          worksWhileAway: false,
+          agents: [{ id: 'a1', name: 'Backend developer' }],
+          disk: null,
+        },
+      },
+    });
+    await page.goto('/admin/computers');
+    await page.getByRole('switch', { name: "Work while I'm away" }).waitFor();
+    await shoot(page, `place-away-${theme}-1280`);
+    await page.getByRole('switch', { name: "Work while I'm away" }).click();
+    await page.getByRole('dialog', { name: 'Let your place work while you are away?' }).waitFor();
+    await settle(page);
+    await shoot(page, `place-away-confirm-${theme}-1280`);
   });
 }

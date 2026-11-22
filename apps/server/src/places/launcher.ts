@@ -64,6 +64,24 @@ export interface Places {
 /** Where a run's containers serve their worker and their CLI container (apps/worker/src/remote.ts). */
 export const RUN_PORTS = { cli: 7419, sandbox: 7420 } as const;
 
+/**
+ * The mark of a run's CLI container: a read-only mount it alone gets, which its bash and git look
+ * for to pass every command to the sandbox (deploy/sandbox-shim.sh). Read-only and a mount, so
+ * nothing in the container can remove it and have bash run beside the sign-in.
+ */
+export const CLI_MARK = '/run/agentome-cli';
+
+/**
+ * The runtime a place's containers get, or none for the container runtime's default: `runc`, the
+ * host's kernel, is asked for by that name and given as the default.
+ */
+export const placeRuntime = (runtime: string | undefined) =>
+  runtime === 'runc' ? undefined : runtime;
+
+/** Why a launcher makes no place: no runtime asked for, so none was chosen for the host's kernel. */
+export const NO_RUNTIME =
+  "Places need gVisor, a kernel of their own for each: install runsc, register it with Docker and set AGENTOME_PLACE_RUNTIME=runsc (on Kubernetes, the gVisor RuntimeClass's name). To run them on the host's kernel instead, set AGENTOME_PLACE_RUNTIME=runc.";
+
 /** A run container's key, made for the run. */
 export const newRunKey = () => randomBytes(32).toString('base64url');
 
@@ -99,6 +117,8 @@ export type Shape = z.infer<typeof Shape>;
 export const RunSpec = z.object({
   folder: z.string().regex(FOLDER).optional(),
   shape: Shape.optional(),
+  /** The agent's engine, as the server has it: a Codex run's CLI container gets no working folder. */
+  engine: z.enum(['claude-code', 'codex']).optional(),
 });
 export type RunSpec = z.infer<typeof RunSpec>;
 
@@ -124,6 +144,13 @@ export interface PlaceNetwork {
   };
 }
 
+/**
+ * The app's name on the places' networks. Not `app` nor `agentome`: a way around a proxy names a
+ * host there, and curl, git and Codex read the name as a domain's tail, so `app` also sent every
+ * host in `.app` around it. No public domain ends in `.internal`.
+ */
+export const SERVER_NAME = 'agentome.internal';
+
 /** The place's environment: a person's place, calling out through the egress proxy. */
 export function placeEnv(network: PlaceNetwork, id: string): [string, string][] {
   const proxy = `http://${id}:${network.egress.tokenOf(id)}@${network.egress.proxy}`;
@@ -133,6 +160,8 @@ export function placeEnv(network: PlaceNetwork, id: string): [string, string][] 
     ['AGENTOME_WORKER_SERVER', ''],
     ['AGENTOME_WORKER_PLACE', '1'],
     ['AGENTOME_PLACE_EGRESS', network.egress.proxy],
+    // Over the address the place was connected at, which may be an older name of the app.
+    ['AGENTOME_PLACE_SERVER', network.serverUrl],
     ...['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy'].map((name): [string, string] => [
       name,
       proxy,
@@ -164,6 +193,7 @@ export function runEnv(network: PlaceNetwork): [string, string][] {
     ['AGENTOME_WORKER_SERVER', ''],
     ['AGENTOME_WORKER_PLACE', '1'],
     ['AGENTOME_PLACE_EGRESS', network.egress.proxy],
+    ['AGENTOME_PLACE_SERVER', network.serverUrl],
     ['NO_PROXY', direct],
     ['no_proxy', direct],
     ['NODE_USE_ENV_PROXY', '1'],
@@ -192,6 +222,17 @@ export const sandboxMounts = (runId: string) =>
   }));
 
 /** The seat volume's paths a run's container mounts, at the same paths as in the place. */
+/**
+ * Where a Codex run's CLI container has its working folders as empty memory, not the agent's: its
+ * commands and edits run on its executor in the sandbox, and a repository's `.codex` (its hooks,
+ * its MCP servers) is never read beside the sign-in. The folders are there for Codex's own `-C`.
+ */
+export function codexCliFolders(runId: string, folder: string | undefined): string[] {
+  // The folder Codex works in must be there: the CLI is started in it, and a missing one is
+  // `spawn codex ENOENT`. Without a kept folder that is the run's own `repo`.
+  return [`/seat/runs/${runId}`, folder ? `/seat/${folder}` : `/seat/runs/${runId}/repo`];
+}
+
 export function runMounts(runId: string, folder: string | undefined) {
   return [
     { subPath: `runs/${runId}`, path: `/seat/runs/${runId}`, readOnly: false },

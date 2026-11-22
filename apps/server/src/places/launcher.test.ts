@@ -15,6 +15,8 @@ function fakeDocker() {
   const containers = new Map<string, { running: boolean; body: unknown }>();
   const networks = new Map<string, Set<string>>();
   const volumes = new Map<string, Record<string, string>>();
+  // What a one-off container (the pairing) exits with.
+  const exits = { code: 0 };
   const labelsOf = (body: unknown) => (body as { Labels?: Record<string, string> }).Labels ?? {};
   const docker: Docker = async (method, path, body) => {
     asked.push({ method, path, ...(body !== undefined && { body }) });
@@ -26,6 +28,20 @@ function fakeDocker() {
     });
     if (!passes.ok)
       throw new Error(`the docker guard would refuse ${method} ${path}: ${passes.why}`);
+    if (method === 'GET' && path === '/info') {
+      return {
+        status: 200,
+        body: {
+          Runtimes: {
+            runc: { path: 'runc' },
+            runsc: { path: '/usr/local/bin/runsc' },
+            'runsc-docker': { path: '/usr/local/bin/runsc' },
+            // A name that sounds right, run by runc.
+            gvisor: { path: '/usr/bin/runc' },
+          },
+        },
+      };
+    }
     if (method === 'GET' && path.startsWith('/containers/json?all=true')) {
       const wanted = JSON.parse(decodeURIComponent(path.split('filters=')[1] ?? '{}')) as {
         label: string[];
@@ -62,8 +78,17 @@ function fakeDocker() {
         if (members.has(container))
           return { status: 403, body: { message: 'endpoint already exists' } };
         members.add(container);
-      } else if (network[2] === 'disconnect') members.delete(container);
-      else if (method === 'DELETE') networks.delete(network[1]);
+      } else if (network[2] === 'disconnect') members.delete(container.replace(/^id-/, ''));
+      else if (method === 'DELETE') {
+        // As Docker: not a network anyone is still on.
+        if (members.size > 0)
+          return {
+            status: 403,
+            body: { message: 'error while removing network: has active endpoints' },
+          };
+        networks.delete(network[1]);
+        return { status: 204, body: undefined };
+      }
       // Who is on it, and at which address, as Docker says it; with the containers whose own
       // network it is.
       const on = [
@@ -149,13 +174,15 @@ function fakeDocker() {
       return { status: 204, body: undefined };
     }
     if (method === 'POST' && path.endsWith('/wait'))
-      return { status: 200, body: { StatusCode: 0 } };
+      return { status: 200, body: { StatusCode: exits.code } };
     if (method === 'POST' && path.includes('/stop')) {
       if (!found) return { status: 404, body: {} };
       found.running = false;
       return { status: 204, body: undefined };
     }
     if (method === 'DELETE' && name) {
+      // A container that goes leaves its networks, as with Docker.
+      for (const members of networks.values()) members.delete(name);
       return containers.delete(name) ? { status: 204, body: undefined } : { status: 404, body: {} };
     }
     if (method === 'DELETE' && path.startsWith('/volumes/')) {
@@ -164,7 +191,7 @@ function fakeDocker() {
     }
     return { status: 500, body: { message: `unexpected ${method} ${path}` } };
   };
-  return { docker, asked, containers, networks, volumes };
+  return { docker, asked, containers, networks, volumes, exits };
 }
 
 const settingsWith = (
@@ -172,20 +199,21 @@ const settingsWith = (
   attach: () => Promise<PassThrough> = async () => {
     throw new Error('no terminal here');
   },
-  runtime?: string,
+  // The host's kernel, asked for by name, unless a test gives gVisor or nothing.
+  runtime: string | null = 'runc',
   dockerRuntime?: string,
 ): LauncherSettings => ({
   key: 'the shared key',
   places: dockerPlaces({
     docker,
     image: 'docker.io/agentome/agentome-seat:0.1.0',
-    ...(runtime && { runtime }),
+    ...(runtime !== null && { runtime }),
     ...(dockerRuntime && { dockerRuntime }),
     peers: async () => [
       { container: 'the-app', alias: 'app' },
       { container: 'the-egress-proxy', alias: 'place-egress' },
     ],
-    serverUrl: 'http://app:3000',
+    serverUrl: 'http://agentome.internal:3000',
     egress: {
       proxy: 'place-egress:3128',
       tokenOf: (id) => `token-of-${id}`,
@@ -283,7 +311,12 @@ describe('the place launcher', () => {
       User: string;
       HostConfig: Record<string, unknown>;
     }[];
-    expect(pairing?.Cmd).toEqual(['connect', 'K7QX-M2PH', '--server', 'http://app:3000']);
+    expect(pairing?.Cmd).toEqual([
+      'connect',
+      'K7QX-M2PH',
+      '--server',
+      'http://agentome.internal:3000',
+    ]);
     expect(place?.Cmd).toEqual(['run']);
     expect(place?.Image).toBe('docker.io/agentome/agentome-seat:0.1.0');
     // Every call out goes through the egress proxy under the place's token; the app is direct.
@@ -292,12 +325,14 @@ describe('the place launcher', () => {
       'AGENTOME_WORKER_SERVER=',
       'AGENTOME_WORKER_PLACE=1',
       'AGENTOME_PLACE_EGRESS=place-egress:3128',
+      'AGENTOME_PLACE_SERVER=http://agentome.internal:3000',
       `HTTPS_PROXY=${proxy}`,
       `HTTP_PROXY=${proxy}`,
       `https_proxy=${proxy}`,
       `http_proxy=${proxy}`,
-      'NO_PROXY=app,localhost,127.0.0.1',
-      'no_proxy=app,localhost,127.0.0.1',
+      // Never a bare `app`: curl and Codex would take every host in `.app` around the proxy.
+      'NO_PROXY=agentome.internal,localhost,127.0.0.1',
+      'no_proxy=agentome.internal,localhost,127.0.0.1',
       'NODE_USE_ENV_PROXY=1',
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
       'DISABLE_AUTOUPDATER=1',
@@ -343,7 +378,7 @@ describe('the place launcher', () => {
   });
 
   it('puts a place to sleep and wakes it, keeping its volumes, and deletes it with them', async () => {
-    const { docker, asked } = fakeDocker();
+    const { docker, asked, networks } = fakeDocker();
     const settings = settingsWith(docker);
     await order(settings, 'POST', `/places/${ID}`, { code: 'K7QX-M2PH' });
     expect((await order(settings, 'POST', `/places/${ID}/sleep`)).body).toEqual({
@@ -381,7 +416,31 @@ describe('the place launcher', () => {
         `/volumes/agentome-place-${ID}-seat`,
       ]),
     );
+    // Its network goes too, the app and the proxy taken off it first.
+    expect([...networks.keys()].filter((name) => name.includes(ID))).toEqual([]);
     expect((await order(settings, 'GET', `/places/${ID}`)).body).toEqual({ state: 'none' });
+  });
+
+  it('leaves nothing of a new place whose pairing failed, and keeps the volumes of one made again', async () => {
+    const { docker, networks, volumes, exits } = fakeDocker();
+    const settings = settingsWith(docker);
+    exits.code = 1;
+    expect((await order(settings, 'POST', `/places/${ID}`, { code: 'K7QX-M2PH' })).status).toBe(
+      502,
+    );
+    expect([...volumes.keys()].filter((name) => name.includes(ID))).toEqual([]);
+    expect([...networks.keys()].filter((name) => name.includes(ID))).toEqual([]);
+    // A place whose container went: its sign-in stays, whatever the new pairing does.
+    exits.code = 0;
+    expect((await order(settings, 'POST', `/places/${ID}`, { code: 'K7QX-M2PH' })).status).toBe(
+      201,
+    );
+    await docker('DELETE', `/containers/agentome-place-${ID}?force=true`);
+    exits.code = 1;
+    expect((await order(settings, 'POST', `/places/${ID}`, { code: 'K7QX-M2PH' })).status).toBe(
+      502,
+    );
+    expect(volumes.has(`agentome-place-${ID}-home`)).toBe(true);
   });
 
   it('makes an awake place anew when the app came back at another address', async () => {
@@ -600,14 +659,21 @@ describe("a place's run", () => {
         Dns: ['127.0.0.1'],
       });
       // The rest of the home is its own memory: what a run leaves there goes with it.
-      expect(Object.keys(body.HostConfig.Tmpfs)).toEqual(['/tmp', '/home/node']);
+      // The CLI container alone has its mark, read-only, which its bash and git look for.
+      expect(body.HostConfig.Tmpfs).toEqual({
+        '/tmp': expect.any(String),
+        '/home/node': expect.any(String),
+        ...(role === 'cli' && { '/run/agentome-cli': 'ro,size=4k,mode=0555' }),
+      });
       // Each its own key, and never the place's egress token.
       expect(body.Env).toContain(`AGENTOME_RUN_KEY=${at[role].key}`);
       expect(body.Env.some((pair) => pair.includes(`token-of-${ID}`))).toBe(false);
       // The app and the proxy from /etc/hosts: under gVisor Docker's resolver does not answer.
       // The place too, which each knocks on as it starts.
       expect(body.HostConfig.ExtraHosts.map((host) => host.split(':')[0])).toEqual(
-        role === 'cli' ? ['app', 'place-egress', 'place'] : ['app', 'place-egress', 'place', 'db'],
+        role === 'cli'
+          ? ['app', 'agentome.internal', 'place-egress', 'place']
+          : ['app', 'agentome.internal', 'place-egress', 'place', 'db'],
       );
     }
     expect(mounts(cli?.body as Body)).toEqual([
@@ -650,7 +716,7 @@ describe("a place's run", () => {
   });
 
   it('gives a run a Docker of its own under gVisor, which its sandbox reaches, and which goes with it', async () => {
-    const { docker, containers, volumes } = fakeDocker();
+    const { docker, containers, volumes, networks } = fakeDocker();
     const settings = settingsWith(docker, undefined, undefined, 'runsc-docker');
     await order(settings, 'POST', `/places/${ID}`, { code: 'K7QX-M2PH' });
     const SHOP = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
@@ -669,11 +735,18 @@ describe("a place's run", () => {
       };
     };
     expect(own.Image).toMatch(/^docker\.io\/library\/docker:[\d.]+-dind$/);
+    // Not on the place's network, where the place's worker talks to the app: a network of the
+    // run's, with its sandbox and the egress proxy alone.
+    const net = `agentome-run-${RUN}-docker-net`;
     expect(own.HostConfig).toMatchObject({
       Runtime: 'runsc-docker',
       CapAdd: ['ALL'],
-      NetworkMode: `agentome-place-${ID}`,
+      NetworkMode: net,
     });
+    expect([...(networks.get(net) ?? [])].sort()).toEqual(
+      [`agentome-run-${RUN}-sandbox`, 'the-egress-proxy'].sort(),
+    );
+    expect(networks.get(`agentome-place-${ID}`)?.has(`agentome-run-${RUN}-docker`)).toBe(false);
     // Its pulls under its own token; the agent's folder at the same path, for what is bound.
     expect(own.Env).toContain(
       `HTTPS_PROXY=http://docker-${RUN}:docker-token-of-${RUN}@place-egress:3128`,
@@ -690,6 +763,7 @@ describe("a place's run", () => {
     await order(settings, 'DELETE', `/places/${ID}/runs/${RUN}`);
     expect(containers.has(`agentome-run-${RUN}-docker`)).toBe(false);
     expect(volumes.has(`agentome-run-${RUN}-docker`)).toBe(false);
+    expect(networks.has(net)).toBe(false);
     // Without the runtime, no Docker.
     const plain = fakeDocker();
     const without = settingsWith(plain.docker);
@@ -697,6 +771,81 @@ describe("a place's run", () => {
     const bare = await order(without, 'PUT', `/places/${ID}/runs/${RUN}`, { folder });
     expect((bare.body as { docker?: boolean }).docker).toBeUndefined();
     expect(plain.containers.has(`agentome-run-${RUN}-docker`)).toBe(false);
+    // A run's Docker has every capability inside its kernel: a name Docker runs with runc is refused.
+    const posing = fakeDocker();
+    const posed = settingsWith(posing.docker, undefined, 'runc', 'gvisor');
+    await order(posed, 'POST', `/places/${ID}`, { code: 'K7QX-M2PH' });
+    const refused = await order(posed, 'PUT', `/places/${ID}/runs/${RUN}`, { folder });
+    expect(refused.status).toBe(409);
+    expect(posing.containers.has(`agentome-run-${RUN}-docker`)).toBe(false);
+  });
+
+  it("gives a Codex run's CLI container the CLI and the sign-in, and its folders empty", async () => {
+    const { docker, containers } = fakeDocker();
+    const settings = settingsWith(docker);
+    await order(settings, 'POST', `/places/${ID}`, { code: 'K7QX-M2PH' });
+    const SHOP = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+    const RUN = '9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4';
+    const folder = `folders/${SHOP}/0123456789abcdef`;
+    await order(settings, 'PUT', `/places/${ID}/runs/${RUN}`, { folder, engine: 'codex' });
+    const cli = containers.get(`agentome-run-${RUN}`)?.body as {
+      HostConfig: { Mounts: { Target: string }[]; Tmpfs: Record<string, string> };
+    };
+    // No working folder of the agent's, so no repository's .codex beside the sign-in.
+    expect(cli.HostConfig.Mounts.map((mount) => mount.Target)).toEqual([
+      '/seat/cli',
+      '/home/node/.claude',
+      '/home/node/.codex',
+    ]);
+    expect(Object.keys(cli.HostConfig.Tmpfs)).toEqual(
+      expect.arrayContaining([`/seat/runs/${RUN}`, `/seat/${folder}`]),
+    );
+    // The sandbox, where its executor runs, has them as before.
+    const sandbox = containers.get(`agentome-run-${RUN}-sandbox`)?.body as {
+      HostConfig: { Mounts: { Target: string }[] };
+    };
+    expect(sandbox.HostConfig.Mounts.map((mount) => mount.Target)).toContain(`/seat/${folder}`);
+    // Without a kept folder Codex works in the run's own repo, which must be there to start in.
+    const LONE = '1f2e3d4c-5b6a-4987-a6b5-c4d3e2f1a0b9';
+    await order(settings, 'PUT', `/places/${ID}/runs/${LONE}`, { engine: 'codex' });
+    const lone = containers.get(`agentome-run-${LONE}`)?.body as {
+      HostConfig: { Tmpfs: Record<string, string> };
+    };
+    expect(Object.keys(lone.HostConfig.Tmpfs)).toEqual(
+      expect.arrayContaining([`/seat/runs/${LONE}`, `/seat/runs/${LONE}/repo`]),
+    );
+  });
+
+  it('makes no place without gVisor, unless runc is asked for by name', async () => {
+    // No runtime at all: refused, with what to do.
+    const none = fakeDocker();
+    const bare = await order(settingsWith(none.docker, undefined, null), 'POST', `/places/${ID}`, {
+      code: 'K7QX-M2PH',
+    });
+    expect(bare.status).toBe(409);
+    expect(JSON.stringify(bare.body)).toContain('AGENTOME_PLACE_RUNTIME=runsc');
+    expect(none.containers.size).toBe(0);
+    // A name Docker runs with runc is not gVisor, whatever it is called; one it has not, neither.
+    for (const name of ['gvisor', 'kata']) {
+      const posing = fakeDocker();
+      const refused = await order(
+        settingsWith(posing.docker, undefined, name),
+        'POST',
+        `/places/${ID}`,
+        {
+          code: 'K7QX-M2PH',
+        },
+      );
+      expect(refused.status).toBe(409);
+      expect(posing.containers.size).toBe(0);
+    }
+    // runc by name: the host's kernel, the admin's choice, with no Runtime of its own.
+    const host = fakeDocker();
+    await order(settingsWith(host.docker), 'POST', `/places/${ID}`, { code: 'K7QX-M2PH' });
+    const place = host.containers.get(`agentome-place-${ID}`)?.body as {
+      HostConfig: { Runtime?: string };
+    };
+    expect(place.HostConfig.Runtime).toBeUndefined();
   });
 
   it('gives places and runs the runtime it is set to', async () => {
@@ -714,6 +863,28 @@ describe("a place's run", () => {
         (containers.get(name)?.body as { HostConfig: { Runtime?: string } }).HostConfig.Runtime,
       ).toBe('runsc');
     }
+  });
+
+  it("gives a project's services the runtime too, and makes one made under another anew", async () => {
+    const { docker, containers } = fakeDocker();
+    const before = settingsWith(docker);
+    await order(before, 'POST', `/places/${ID}`, { code: 'K7QX-M2PH' });
+    const SHOP = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+    const db = `agentome-place-${ID}-${SHOP.replaceAll('-', '').slice(0, 12)}-db`;
+    const shape = {
+      project: SHOP,
+      hash: 'a'.repeat(64),
+      services: [{ name: 'db', image: 'postgres:16', environment: {}, volumes: [] }],
+    };
+    const runtime = () =>
+      (containers.get(db)?.body as { HostConfig: { Runtime?: string } }).HostConfig.Runtime;
+    await order(before, 'PUT', `/places/${ID}/services`, shape);
+    expect(runtime()).toBeUndefined();
+    // The server moved to gVisor: the service made on the host's kernel goes, and comes back under it.
+    const after = settingsWith(docker, undefined, 'runsc');
+    expect((await order(after, 'PUT', `/places/${ID}/services`, shape)).status).toBe(204);
+    expect(runtime()).toBe('runsc');
+    expect(containers.get(db)?.running).toBe(true);
   });
 });
 

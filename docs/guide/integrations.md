@@ -61,6 +61,8 @@ Give the account access only to what the agents need.
 The **Acts as** column shows the account the token belongs to once the token is checked. The row's
 menu has:
 
+- **Edit connection**, to change where it reaches: the owner, the address and group, or a Jira
+  project, filter and statuses. The token stays unless the address changes;
 - **Check the token**, to check it again and refresh the account;
 - **Webhook settings**, for pipelines and reviews (see below);
 - **Replace the token**, when it expires or is rotated;

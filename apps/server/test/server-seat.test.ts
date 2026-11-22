@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
-import { createServer, type IncomingHttpHeaders } from 'node:http';
+import { createServer, request, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,7 @@ import {
   agents,
   createDb,
   type Db,
+  installation,
   migrate,
   eq,
   costEvents,
@@ -31,14 +32,15 @@ import { buildApp } from '../src/app.js';
 import { type Config, loadConfig } from '../src/config.js';
 import { connectionsKey, encryptSecret } from '../src/connections/crypto.js';
 import { LaunchPackage } from '../src/protocol.js';
-import { enqueueRun } from '../src/runs/service.js';
+import { enqueueRun, reapOrphanedRuns } from '../src/runs/service.js';
 import type { Launcher } from '../src/places/client.js';
-import { tendPlaces } from '../src/places/tend.js';
+import { endClosedRuns, tendPlaces } from '../src/places/tend.js';
 import {
   cliEgressToken,
   dockerEgressToken,
   placeEgressToken,
   placesKey,
+  egressProxyKey,
 } from '../src/places/keys.js';
 import { VENDOR_HOSTS } from '../src/places/egress.js';
 import { servicesHash } from '../src/projects/environment.js';
@@ -536,6 +538,80 @@ describe('the model relay', () => {
     expect(codex.statusCode).toBe(200);
   });
 
+  it("refuses a call once the run's agent has spent its month", async () => {
+    const { token, runId } = await serverRun('gateway');
+    const [run] = await db.select({ agentId: runs.agentId }).from(runs).where(eq(runs.id, runId));
+    if (!run) throw new Error('no run');
+    await db
+      .update(agents)
+      .set({ budget: { usdPerMonth: 1 } })
+      .where(eq(agents.id, run.agentId));
+    await db.insert(costEvents).values({
+      runId,
+      agentId: run.agentId,
+      model: 'claude-sonnet-4.5',
+      provider: 'anthropic',
+      tokensIn: 0,
+      tokensOut: 0,
+      tokensCacheRead: 0,
+      tokensCacheWrite: 0,
+      tokensCacheWrite1h: 0,
+      usd: '2',
+      source: 'relay',
+    });
+    heard.length = 0;
+    const refused = await relayApp.inject({
+      method: 'POST',
+      url: '/model/v1/messages',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      payload: '{"model":"claude-sonnet-4.5"}',
+    });
+    expect(refused.statusCode).toBe(402);
+    expect(refused.json<{ error: { message: string } }>().error.message).toContain('this month');
+    expect(heard).toEqual([]);
+  });
+
+  it('counts a call whose caller hung up, and prices it once the server closes the run', async () => {
+    const { token, runId } = await serverRun('gateway');
+    const address = await relayApp.listen({ port: 0, host: '127.0.0.1' });
+    // The caller goes at the first bytes of a slow answer: the provider made the input whatever.
+    await new Promise<void>((resolve, reject) => {
+      const call = request(
+        `${address}/model/v1/messages`,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        },
+        (answer) => {
+          answer.once('data', () => {
+            call.destroy();
+            resolve();
+          });
+        },
+      );
+      call.on('error', (error) => (call.destroyed ? resolve() : reject(error)));
+      call.end('{"model":"claude-sonnet-4.5","stream":true,"slow":true}');
+    });
+    await vi.waitFor(async () => {
+      const [row] = await db
+        .select({ usage: runs.relayUsage })
+        .from(runs)
+        .where(eq(runs.id, runId));
+      expect(row?.usage?.['claude-sonnet-4.5']?.tokensIn).toBe(100);
+    });
+    // The seat falls silent: the reaper closes the run and prices what the relay counted.
+    await db
+      .update(runs)
+      .set({ lastHeartbeatAt: new Date(Date.now() - 60 * 60_000) })
+      .where(eq(runs.id, runId));
+    expect(await reapOrphanedRuns(db, 5)).toContain(runId);
+    const costs = await db
+      .select({ model: costEvents.model, tokensIn: costEvents.tokensIn, source: costEvents.source })
+      .from(costEvents)
+      .where(eq(costEvents.runId, runId));
+    expect(costs).toEqual([{ model: 'claude-sonnet-4.5', tokensIn: 100, source: 'relay' }]);
+  });
+
   it('opens nothing for a stopped run, a computer, no token, or a call an engine does not make', async () => {
     const { token, runId } = await serverRun('anthropic');
     heard.length = 0;
@@ -624,6 +700,32 @@ describe("a person's place on the server", () => {
     const stale = await claim(place.token);
     expect(stale.statusCode).toBe(204);
     expect(stale.headers['x-agentome-waiting']).toBe('presence');
+  });
+
+  it('takes runs while its owner is away when they let it, unless an admin turned that off', async () => {
+    const place = (await pair(memberCookie, 'subscription-server')).json<{ token: string }>();
+    await db
+      .update(runs)
+      .set({ status: 'cancelled', endedAt: new Date() })
+      .where(eq(runs.status, 'queued'));
+    const own = await agentWithRun(memberId);
+    await db.update(users).set({ presentAt: null }).where(eq(users.id, memberId));
+    const away = () =>
+      db
+        .update(seats)
+        .set({ worksWhileAway: true })
+        .where(and(eq(seats.tokenHash, hashSecret(place.token))));
+    await away();
+    await db.update(installation).set({ placesAwayAllowed: false });
+    const refused = await claim(place.token);
+    expect(refused.statusCode).toBe(204);
+    expect(refused.headers['x-agentome-waiting']).toBe('presence');
+
+    await db.update(installation).set({ placesAwayAllowed: true });
+    const taken = await claim(place.token);
+    expect(taken.statusCode).toBe(200);
+    expect(LaunchPackage.parse(taken.json()).run.id).toBe(own.run.id);
+    expect(taken.headers['x-agentome-waiting']).toBeUndefined();
   });
 });
 
@@ -716,7 +818,12 @@ describe("a person's place, made from Computers", () => {
 
   it('is not offered without a launcher', async () => {
     const none = await app.inject({ url: '/api/me/place', headers: { cookie: adminCookie } });
-    expect(none.json()).toEqual({ available: false, computers: true, place: null });
+    expect(none.json()).toEqual({
+      available: false,
+      computers: true,
+      awayAllowed: true,
+      place: null,
+    });
     const refused = await app.inject({
       method: 'POST',
       url: '/api/me/place',
@@ -729,6 +836,7 @@ describe("a person's place, made from Computers", () => {
     expect((await call('GET', '/api/me/place')).json()).toEqual({
       available: true,
       computers: true,
+      awayAllowed: true,
       place: null,
     });
     const made = await call('POST', '/api/me/place');
@@ -825,6 +933,64 @@ describe("a person's place, made from Computers", () => {
       .where(and(eq(seats.ownerUserId, adminId), eq(seats.kind, 'subscription-server')));
     await tendPlaces(db, launcher, log);
     expect(orders).toEqual([`sleep ${adminId}`]);
+  });
+
+  it('works while its person is away only by their own word in the browser, and as an admin allows', async () => {
+    const put = (url: string, payload: object, headers: Record<string, string>) =>
+      placesApp.inject({ method: 'PUT', url, payload, headers });
+    expect(
+      (await call('GET', '/api/me/place')).json<{ place: { worksWhileAway: boolean } }>().place
+        .worksWhileAway,
+    ).toBe(false);
+
+    // A token, an assistant's way in, cannot turn it on: only the person in the browser.
+    const made = await app.inject({
+      method: 'POST',
+      url: '/api/me/tokens',
+      headers: { cookie: adminCookie },
+      payload: { name: 'Away', scope: 'write', expiresInDays: 7 },
+    });
+    const token = made.json<{ token: string }>().token;
+    const bearer = { authorization: `Bearer ${token}` };
+    expect((await put('/api/me/place/away', { on: true }, bearer)).statusCode).toBe(403);
+    expect((await put('/api/admin/places/away', { allowed: false }, bearer)).statusCode).toBe(403);
+
+    const on = await put('/api/me/place/away', { on: true }, { cookie: adminCookie });
+    expect(on.statusCode).toBe(200);
+    expect(on.json()).toMatchObject({ awayAllowed: true, place: { worksWhileAway: true } });
+
+    // Asleep with a run queued and its person away: it wakes for the run.
+    orders.length = 0;
+    places.set(adminId, { state: 'asleep' });
+    await db.update(users).set({ presentAt: null }).where(eq(users.id, adminId));
+    await agentWithRun(adminId);
+    await tendPlaces(db, launcher, log);
+    expect(orders).toEqual([`wake ${adminId}`]);
+
+    // Only an admin decides for everyone; off, places wait for their people, the choice kept.
+    const member = { cookie: memberCookie };
+    expect((await put('/api/admin/places/away', { allowed: false }, member)).statusCode).toBe(403);
+    const off = await put('/api/admin/places/away', { allowed: false }, { cookie: adminCookie });
+    expect(off.json()).toMatchObject({ awayAllowed: false, place: { worksWhileAway: true } });
+    orders.length = 0;
+    places.set(adminId, { state: 'asleep' });
+    await tendPlaces(db, launcher, log);
+    expect(orders).toEqual([]);
+    const refused = await put('/api/me/place/away', { on: true }, { cookie: adminCookie });
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json<{ error: { message: string } }>().error.message).toContain(
+      'An admin has turned this off',
+    );
+    // Turning it off for oneself is always possible.
+    expect(
+      (await put('/api/me/place/away', { on: false }, { cookie: adminCookie })).statusCode,
+    ).toBe(200);
+
+    await put('/api/admin/places/away', { allowed: true }, { cookie: adminCookie });
+    await db
+      .update(runs)
+      .set({ status: 'cancelled', endedAt: new Date() })
+      .where(eq(runs.status, 'queued'));
   });
 
   it('opens a terminal for its person, from a page of this server only', async () => {
@@ -967,8 +1133,11 @@ describe("a person's place, made from Computers", () => {
     expect(launch.run.id).toBe(run.id);
     expect(launch.workspace.services).toEqual(['db']);
     expect(launch.workspace.profile.claudeMd).toContain('- `db`: postgres:16');
-    // In a place the workspace is kept and has no sandbox, and the agent is told so.
-    expect(launch.workspace.profile.claudeMd).toContain('Shell commands run without a sandbox');
+    // In a place the workspace is kept and commands run in a container without the sign-in, and
+    // the agent is told so.
+    expect(launch.workspace.profile.claudeMd).toContain(
+      'Shell commands run in a container of their own beside you',
+    );
     expect(launch.workspace.profile.claudeMd).not.toContain('It is deleted when the run ends');
 
     // Asleep, its services are stopped: the next run gets them ready again.
@@ -1212,6 +1381,31 @@ describe("a person's place, made from Computers", () => {
     expect((await container('PUT', byPlace)).statusCode).toBe(409);
   });
 
+  it("deletes the containers of a place's run the server closed, whose worker went silent", async () => {
+    orders.length = 0;
+    await db
+      .update(runs)
+      .set({ status: 'cancelled', endedAt: new Date() })
+      .where(eq(runs.status, 'queued'));
+    await db.update(users).set({ presentAt: new Date() }).where(eq(users.id, adminId));
+    const { run } = await agentWithRun(adminId);
+    const place = (await pair(adminCookie, 'subscription-server')).json<{ token: string }>();
+    const taken = await placesApp.inject({
+      url: '/api/seats/claim?wait=0',
+      headers: { authorization: `Bearer ${place.token}` },
+    });
+    expect(taken.statusCode).toBe(200);
+    // Its worker died: no heartbeat for an hour, and nobody asked for its containers to go.
+    await db
+      .update(runs)
+      .set({ lastHeartbeatAt: new Date(Date.now() - 3_600_000) })
+      .where(eq(runs.id, run.id));
+    const reaped = await reapOrphanedRuns(db, 3);
+    expect(reaped).toContain(run.id);
+    await endClosedRuns(db, launcher, reaped, log);
+    expect(orders).toContain(`end run ${run.id} of ${adminId}`);
+  });
+
   it('is deleted with its seat', async () => {
     orders.length = 0;
     const deleted = await call('DELETE', '/api/me/place');
@@ -1220,14 +1414,47 @@ describe("a person's place, made from Computers", () => {
     expect((await call('GET', '/api/me/place')).json()).toEqual({
       available: true,
       computers: true,
+      awayAllowed: true,
       place: null,
     });
   });
 });
 
 describe("the places' egress", () => {
+  // The proxy's key, which the egress routes take nobody else's word without.
+  const fromProxy = () => ({ 'x-agentome-egress': egressProxyKey(placesKey(config.secretKey)) });
   const hostsFor = (body: object) =>
-    app.inject({ method: 'POST', url: '/api/egress/hosts', payload: body });
+    app.inject({ method: 'POST', url: '/api/egress/hosts', payload: body, headers: fromProxy() });
+
+  it("answers the proxy alone: a run's token cannot ask, nor write the refused hosts", async () => {
+    const token = placeEgressToken(placesKey(config.secretKey), memberId);
+    const ask = { kind: 'place', id: memberId, token };
+    expect(
+      (await app.inject({ method: 'POST', url: '/api/egress/hosts', payload: ask })).statusCode,
+    ).toBe(401);
+    const wrong = { 'x-agentome-egress': 'x'.repeat(43) };
+    expect(
+      (await app.inject({ method: 'POST', url: '/api/egress/hosts', payload: ask, headers: wrong }))
+        .statusCode,
+    ).toBe(401);
+    const event = {
+      ...ask,
+      host: 'gitlab.corp.example.com.evil.tld',
+      port: 443,
+      allowed: false,
+      count: 1,
+    };
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/egress/events',
+          payload: { events: [event] },
+        })
+      ).statusCode,
+    ).toBe(401);
+    // With the key, the routes answer as before: the tests below.
+  });
 
   it("opens to a run Agentome and its project's hosts, which only an admin sets, and the vendors to its CLI container alone", async () => {
     const made = await app.inject({
@@ -1257,6 +1484,11 @@ describe("the places' egress", () => {
     for (const host of [
       'postgres',
       '*.com',
+      // A star over a domain strangers share.
+      '*.co.uk',
+      '*.amazonaws.com',
+      '*.s3.amazonaws.com',
+      '*.github.io',
       'localhost',
       '127.0.0.1',
       '169.254.169.254',
@@ -1430,6 +1662,7 @@ describe("the places' egress", () => {
     const told = await app.inject({
       method: 'POST',
       url: '/api/egress/events',
+      headers: fromProxy(),
       payload: {
         events: [
           {
@@ -1465,6 +1698,7 @@ describe("the places' egress", () => {
     const odd = await app.inject({
       method: 'POST',
       url: '/api/egress/events',
+      headers: fromProxy(),
       payload: {
         events: [{ kind: 'run', token: 'x', host: 'a', port: 0, allowed: true, count: 1 }],
       },
@@ -1474,6 +1708,7 @@ describe("the places' egress", () => {
     const forged = await app.inject({
       method: 'POST',
       url: '/api/egress/events',
+      headers: fromProxy(),
       payload: {
         events: [
           {

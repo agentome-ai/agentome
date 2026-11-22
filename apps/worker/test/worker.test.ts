@@ -640,6 +640,70 @@ describe("a person's place", () => {
     expect(readFileSync(join(signIn, '.claude', '.credentials.json'), 'utf8')).toBe('the sign-in');
     rmSync(seatHome, { recursive: true, force: true });
   }, 20_000);
+
+  it("runs a Codex agent with every command on its executor in the run's sandbox", async () => {
+    const seatHome = mkdtempSync('/tmp/agentome-seat-');
+    await fake.close();
+    fake = await startFakeServer({ placeHome: seatHome });
+    connection = { serverUrl: fake.url, seatId: 'seat', token: fake.seatToken };
+    const signIn = join(dir, 'person');
+    mkdirSync(join(signIn, '.codex'), { recursive: true });
+    const codexRecord = join(dir, 'codex-place.jsonl');
+    const fixture = fileURLToPath(new URL('../src/codex/fixtures/success.jsonl', import.meta.url));
+    const launch = launchPackage();
+    const run = fake.enqueue({ ...launch, agent: { ...launch.agent, engine: 'codex' } });
+    const worker = start(
+      { CODEX_FAKE_FIXTURE: fixture, CODEX_FAKE_RECORD: codexRecord },
+      {
+        run: {
+          // The worker's own CLI for its check before the run, from source here.
+          self: [
+            fileURLToPath(new URL('../node_modules/.bin/tsx', import.meta.url)),
+            fileURLToPath(new URL('../src/cli.ts', import.meta.url)),
+          ],
+          codexPath: fileURLToPath(
+            new URL('../src/codex/fixtures/fake-codex.mjs', import.meta.url),
+          ),
+          env: {
+            PATH: process.env.PATH,
+            HOME: dir,
+            CODEX_FAKE_FIXTURE: fixture,
+            CODEX_FAKE_RECORD: codexRecord,
+          },
+          timing: { flushMs: 20, heartbeatMs: 50, endMs: 2_000, backoff: () => 10 },
+        },
+        settings: {
+          home: seatHome,
+          idleMinutes: 15,
+          keepWorkspaces: false,
+          server: false,
+          place: true,
+          signInHome: signIn,
+        },
+      },
+    );
+    await vi
+      .waitFor(() => expect(run.finish?.status).toBe('done'), { timeout: 15_000 })
+      .catch((error: unknown) => {
+        const errors = [...run.events.values()].filter((event) => event.type === 'error');
+        throw new Error(`${String(error)}\n${worker.logs.join('\n')}\n${JSON.stringify(errors)}`);
+      });
+    worker.stop();
+    await worker.done;
+    // Codex was told where its executor is, on its own loopback, and reached it there: the
+    // sandbox's, through the tunnel.
+    const record = JSON.parse(
+      readFileSync(codexRecord, 'utf8').trim().split('\n').at(-1) ?? '{}',
+    ) as {
+      executor?: string;
+    };
+    expect(record.executor).toBe('ping');
+    expect(fake.containers).toEqual([
+      `start ${run.launch.run.id} no folder`,
+      `end ${run.launch.run.id}`,
+    ]);
+    rmSync(seatHome, { recursive: true, force: true });
+  }, 30_000);
 });
 
 describe('agentome-worker connect', () => {

@@ -28,6 +28,7 @@ import { TransferDialog } from './transfer-dialog';
 import { AgentTile, Tint } from '../ui/tint';
 import { Laptop } from 'lucide-react';
 import { useEnterprise } from '../admin/license-data';
+import { PROPOSE_INSTRUCTIONS } from '@agentome/shared';
 
 // The markdown renderer is a fifth of the app's code and only Preview needs it: it loads then.
 const Markdown = lazy(() =>
@@ -976,6 +977,7 @@ function PolicyMatrix(props: {
     (tool) =>
       tool.connector !== 'Workspace' &&
       tool.name !== 'team_step' &&
+      tool.name !== PROPOSE_INSTRUCTIONS &&
       (picked[tool.name] ?? tool.policy) !== 'deny',
   );
   const mode = switched.every((tool) => (picked[tool.name] ?? tool.policy) === 'allow')
@@ -1093,7 +1095,12 @@ function PolicyMatrix(props: {
                     <code className="text-small break-all text-ink-3">{tool.name}</code>
                   </span>
                   <span className="inline-flex rounded-md border border-line-strong p-0.5">
-                    <RadioSegment value="allow" aria-label="Allow">
+                    {/* New instructions wait for the owner every time: Allow is not theirs. */}
+                    <RadioSegment
+                      value="allow"
+                      aria-label="Allow"
+                      disabled={tool.name === PROPOSE_INSTRUCTIONS}
+                    >
                       Allow
                     </RadioSegment>
                     <RadioSegment value="ask" tone="ask" aria-label="Ask owner">

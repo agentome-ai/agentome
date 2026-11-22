@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, win32 } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 
 import { teamDir, type TeamHookConfig } from './claude/team-hook.js';
 import type { Artifact, LaunchPackage } from './client.js';
@@ -94,6 +94,100 @@ const REPO_SKILLS_LIMIT = 50;
  * profile's CLAUDE.md: plain files the agent reads, for the same reason as its owner's. A link
  * is skipped, so a description never comes from a file outside the clone.
  */
+/** In a place's run CLI container: its home, with the person's sign-in, and its own run folder. */
+const PLACE_CLOSED = ['//home/node', '//tmp/agentome'];
+
+/** How much of a repository's own instructions the profile takes, in all. */
+const REPO_MD_LIMIT = 256 * 1024;
+/** How deep an import of an import goes, as Claude Code's own. */
+const IMPORT_DEPTH = 5;
+const IMPORT = /(^|\s)@(\S+)/g;
+
+/**
+ * Markdown with its imports made plain text, outside code: the profile's CLAUDE.md is read by
+ * the CLI, which would follow an `@/home/node/.claude/.credentials.json` there past every rule on
+ * the file tools.
+ */
+function withoutImports(text: string, found: (path: string) => void = () => undefined): string {
+  return text
+    .split(/(^```[\s\S]*?^```)/m)
+    .map((part, i) =>
+      i % 2 === 1
+        ? part
+        : part
+            .split(/(`[^`\n]*`)/)
+            .map((piece, j) =>
+              j % 2 === 1
+                ? piece
+                : piece.replace(IMPORT, (_, before: string, path: string) => {
+                    found(path);
+                    return `${before}${path}`;
+                  }),
+            )
+            .join(''),
+    )
+    .join('');
+}
+
+/**
+ * The repository's own instructions, as Claude Code reads them for whoever works there
+ * (CLAUDE.md, .claude/CLAUDE.md, .claude/rules), for the profile's CLAUDE.md: the CLI no longer
+ * reads them itself. An import is followed only to a file inside the repository, a link
+ * included, and one to anywhere else (a sign-in, a key in the home folder) is dropped.
+ */
+export function repositoryInstructionsSection(repo: string): string {
+  let root: string;
+  try {
+    root = realpathSync(repo);
+  } catch {
+    return '';
+  }
+  const inside = (path: string) => path === root || path.startsWith(`${root}${sep}`);
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  let size = 0;
+  const visit = (path: string, depth: number) => {
+    let real: string;
+    let text: string;
+    try {
+      real = realpathSync(path);
+      if (!inside(real) || seen.has(real) || !statSync(real).isFile()) return;
+      seen.add(real);
+      text = readFileSync(real, 'utf8');
+    } catch {
+      return;
+    }
+    if (size + text.length > REPO_MD_LIMIT) return;
+    size += text.length;
+    const imports: string[] = [];
+    parts.push(
+      `### ${relative(root, real)}\n\n${withoutImports(text, (to) => imports.push(to)).trim()}`,
+    );
+    if (depth >= IMPORT_DEPTH) return;
+    for (const to of imports) {
+      if (to.startsWith('~') || isAbsolute(to)) continue;
+      visit(resolve(dirname(real), to), depth + 1);
+    }
+  };
+  const rules = join(root, '.claude', 'rules');
+  const ruleFiles = (() => {
+    try {
+      return readdirSync(rules, { recursive: true, encoding: 'utf8' })
+        .filter((name) => name.endsWith('.md'))
+        .sort()
+        .slice(0, 50)
+        .map((name) => join(rules, name));
+    } catch {
+      return [];
+    }
+  })();
+  for (const file of [join(root, 'CLAUDE.md'), join(root, '.claude', 'CLAUDE.md'), ...ruleFiles]) {
+    visit(file, 0);
+  }
+  if (parts.length === 0) return '';
+  return `\n## The repository's instructions\n\nThe repository you work in keeps these for whoever works in it. Follow them where they do not go against your own.\n\n${parts.join('\n\n')}\n`;
+}
+
 export function repositorySkillsSection(repo: string): string {
   const root = join(repo, '.claude', 'skills');
   const plainDir = (path: string) => {
@@ -289,7 +383,10 @@ export async function prepareWorkspace(
   }
 
   mkdirSync(profile, { mode: 0o700 });
-  const claudeMd = launch.workspace.profile.claudeMd + repositorySkillsSection(repo);
+  const claudeMd =
+    launch.workspace.profile.claudeMd +
+    repositoryInstructionsSection(repo) +
+    repositorySkillsSection(repo);
   writeFileSync(join(profile, 'CLAUDE.md'), claudeMd, { mode: 0o400 });
   writeMemory(profile, launch.agent.memoryDocuments ?? []);
   writeSkills(profile, launch.agent.skills ?? []);
@@ -302,7 +399,7 @@ export async function prepareWorkspace(
   const hooks = agents ? teamHooks(dir, options.timeout) : undefined;
   const laptop = options.server !== true;
   const settings = JSON.stringify(
-    profileSettings(launch, home, dir, mcpConfig, hooks, laptop),
+    profileSettings(launch, home, dir, mcpConfig, hooks, laptop, options.place === true),
     null,
     2,
   );
@@ -360,6 +457,9 @@ async function refreshFolder(
   if (!lstatSync(gitDir).isDirectory()) throw new Error('The folder’s .git is not a folder');
   rmSync(join(gitDir, 'hooks'), { recursive: true, force: true });
   mkdirSync(join(gitDir, 'hooks'), { mode: 0o700 });
+  // A new file, never through what the last run left there: a link to the place's token or
+  // sign-in would have the write land on that file.
+  rmSync(join(gitDir, 'config'), { force: true });
   writeFileSync(
     join(gitDir, 'config'),
     [
@@ -373,7 +473,7 @@ async function refreshFolder(
       '\tfetch = +refs/heads/*:refs/remotes/origin/*',
       '',
     ].join('\n'),
-    { mode: 0o600 },
+    { mode: 0o600, flag: 'wx' },
   );
   const proxied = { ...options, allow: 'http:https' };
   const helper = ['-c', `credential.helper=${remote.helper}`];
@@ -625,6 +725,7 @@ function profileSettings(
   mcpConfig: string | undefined,
   hooks: Record<string, unknown> | undefined,
   laptop: boolean,
+  place = false,
 ) {
   const profile = join(dir, 'profile');
   const secrets = [connectionFile(home), ...(mcpConfig ? [mcpConfig] : [])];
@@ -681,6 +782,16 @@ function profileSettings(
           `Read(${rulePath(path)}/**)`,
         ]),
         ...kept.map((folder) => `Edit(${rulePath(folder)}/**)`),
+        // In a place the file tools work in the run's CLI container, beside the sign-in: its home
+        // (~/.claude, ~/.codex, .claude.json) and the CLI's own run folder (where its sandbox
+        // is) are closed to them whole, whatever files a CLI version keeps there.
+        ...(place
+          ? PLACE_CLOSED.flatMap((path) => [
+              `Read(${path})`,
+              `Read(${path}/**)`,
+              `Edit(${path}/**)`,
+            ])
+          : []),
       ],
     },
     ...(hooks ? { hooks } : {}),

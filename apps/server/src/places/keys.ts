@@ -33,6 +33,16 @@ export const cliEgressToken = (places: string, runId: string) =>
 export const dockerEgressToken = (places: string, runId: string) =>
   deriveKey(places, `docker-egress:${runId}`);
 
+/**
+ * The key the places' egress proxy shows the app with each question and each account of what it
+ * did: the app's egress routes take nobody else's word, and the proxy's calls are not counted
+ * against an address's limit. Derived, so the proxy holds nothing that opens anything else.
+ */
+export const egressProxyKey = (places: string) => deriveKey(places, 'egress-proxy');
+
+/** Where the app puts the egress proxy's key, for the proxy to mount alone. */
+export const egressKeyFile = (dataDir: string) => join(dataDir, 'egress', 'egress.key');
+
 /** Where the app puts the places' key in its data folder, for the launcher to mount alone. */
 export const placesKeyFile = (dataDir: string) => join(dataDir, 'places', 'places.key');
 
@@ -41,4 +51,7 @@ export function writePlacesKey(dataDir: string, secretKey: string): void {
   const file = placesKeyFile(dataDir);
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   writeFileSync(file, placesKey(secretKey), { mode: 0o600 });
+  const proxy = egressKeyFile(dataDir);
+  mkdirSync(dirname(proxy), { recursive: true, mode: 0o700 });
+  writeFileSync(proxy, egressProxyKey(placesKey(secretKey)), { mode: 0o600 });
 }

@@ -21,6 +21,9 @@ export const RESERVED_NAMES = new Set([
   'place-launcher',
   'postgres',
   'localhost',
+  // A run's own Docker, and the place itself.
+  'docker',
+  'place',
 ]);
 /** Problems are read by people and by admins' assistants: a few, short, of names we checked. */
 const MAX_PROBLEMS = 50;
@@ -30,6 +33,16 @@ const IMAGE =
   /^(?:[a-z0-9.-]+(?::\d+)?\/)?[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[\w][\w.-]{0,127})?(?:@sha256:[a-f0-9]{64})?$/;
 
 export const MAX_SERVICES = 10;
+/**
+ * What the server reads of a repository's files, which anyone who may push writes: a parse of
+ * these holds no request up for long.
+ */
+const MAX_FILE = 256 * 1024;
+const MAX_COMPOSE_FILES = 5;
+/** Services of the compose files looked at, before MAX_SERVICES of them are taken. */
+const MAX_NAMED = 100;
+/** A service's variables and volumes. */
+const MAX_VALUES = 200;
 
 export const ServiceSpec = z.object({
   name: z.string().regex(NAME),
@@ -209,7 +222,10 @@ export function servicesOf(
     : Object.keys(composeServices);
   const problems: string[] = [];
   const services: ServiceSpec[] = [];
-  for (const name of wanted) {
+  if (wanted.length > MAX_NAMED) {
+    problems.push(`Only the first ${MAX_NAMED} of ${wanted.length} services are looked at`);
+  }
+  for (const name of wanted.slice(0, MAX_NAMED)) {
     if (name === main) continue;
     if (!NAME.test(name)) {
       problems.push(
@@ -242,18 +258,18 @@ export function servicesOf(
     const environment: Record<string, string> = {};
     const env = raw.environment;
     if (Array.isArray(env)) {
-      for (const line of env) {
+      for (const line of env.slice(0, MAX_VALUES)) {
         if (typeof line !== 'string') continue;
         const at = line.indexOf('=');
         if (at > 0) environment[line.slice(0, at)] = interpolate(line.slice(at + 1));
       }
     } else {
-      for (const [key, value] of Object.entries(record(env))) {
+      for (const [key, value] of Object.entries(record(env)).slice(0, MAX_VALUES)) {
         if (value !== null && value !== undefined) environment[key] = interpolate(String(value));
       }
     }
     const volumes: ServiceSpec['volumes'] = [];
-    for (const volume of Array.isArray(raw.volumes) ? raw.volumes : []) {
+    for (const volume of Array.isArray(raw.volumes) ? raw.volumes.slice(0, MAX_VALUES) : []) {
       const [source, target] =
         typeof volume === 'string'
           ? volume.split(':')
@@ -319,13 +335,17 @@ export async function readEnvironmentFrom(
   if (!found) return { ...none, devcontainer: null };
   let devcontainer: unknown;
   try {
-    devcontainer = parseJsonc(await host.file(repository.path, byPath.get(found) ?? ''));
+    devcontainer = parseJsonc(
+      within(found, await host.file(repository.path, byPath.get(found) ?? '')),
+    );
   } catch (error) {
     return {
       ...none,
       devcontainer: found,
       problems: bounded([
-        `${found} is not valid JSON: ${error instanceof Error ? error.message : ''}`,
+        error instanceof TooLarge
+          ? error.message
+          : `${found} is not valid JSON: ${error instanceof Error ? error.message : ''}`,
       ]),
     };
   }
@@ -336,7 +356,10 @@ export async function readEnvironmentFrom(
   if (composeFiles.length === 0) return { ...none, devcontainer: found };
   const merged: Record<string, Record<string, unknown>> = {};
   const problems: string[] = [];
-  for (const file of composeFiles) {
+  if (composeFiles.length > MAX_COMPOSE_FILES) {
+    problems.push(`Only the first ${MAX_COMPOSE_FILES} compose files are read`);
+  }
+  for (const file of composeFiles.slice(0, MAX_COMPOSE_FILES)) {
     const path = posix.normalize(posix.join(posix.dirname(found), file));
     const sha = byPath.get(path);
     if (!sha || path.startsWith('..')) {
@@ -344,8 +367,9 @@ export async function readEnvironmentFrom(
       continue;
     }
     try {
-      const compose = record(parseYaml(await host.file(repository.path, sha)));
-      for (const [name, service] of Object.entries(record(compose.services))) {
+      const compose = record(parseYaml(within(path, await host.file(repository.path, sha))));
+      const named = Object.entries(record(compose.services)).slice(0, MAX_NAMED);
+      for (const [name, service] of named) {
         const before = merged[name] ?? {};
         const next = record(service);
         merged[name] = {
@@ -358,7 +382,11 @@ export async function readEnvironmentFrom(
         };
       }
     } catch (error) {
-      problems.push(`${path} is not valid YAML: ${error instanceof Error ? error.message : ''}`);
+      problems.push(
+        error instanceof TooLarge
+          ? error.message
+          : `${path} is not valid YAML: ${error instanceof Error ? error.message : ''}`,
+      );
     }
   }
   const { services, problems: more } = servicesOf(devcontainer, merged);
@@ -368,6 +396,15 @@ export async function readEnvironmentFrom(
     services,
     problems: bounded([...problems, ...more]),
   };
+}
+
+class TooLarge extends Error {}
+
+/** A file's text, refused when it is larger than the server parses. */
+function within(path: string, text: string): string {
+  if (text.length > MAX_FILE)
+    throw new TooLarge(`${path} is larger than 256 KB, so it is not read`);
+  return text;
 }
 
 /** Compose's environment as a map, from either of its two forms. */

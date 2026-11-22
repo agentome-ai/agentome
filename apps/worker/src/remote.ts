@@ -3,7 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { lookup } from 'node:dns';
-import { createServer, connect, type Socket } from 'node:net';
+import { createServer, connect, type Server, type Socket } from 'node:net';
 import { createInterface } from 'node:readline';
 import { PassThrough, Writable } from 'node:stream';
 
@@ -22,17 +22,26 @@ export const RUN_PORT = 7419;
 /** Where a run's container serves, and its key. */
 export type RunServer = { host: string; port: number; key: string };
 
+/**
+ * Where a Codex run's executor listens in its sandbox, on the sandbox's own loopback: Codex's
+ * `codex exec-server`, which runs the commands and edits of Codex in the CLI container. Only this
+ * port is tunnelled to.
+ */
+export const EXEC_PORT = 7421;
+/** Where a Codex run's CLI container finds its executor, on its own loopback, tunnelled to the sandbox. */
+export const CLI_EXEC_PORT = 7422;
+
+/** In a CLI container: a port on its loopback whose connections are tunnelled to the sandbox's executor. */
+export type Tunnel = { port: number; to: RunServer; exec?: number };
+
 /** A run's sandbox, as its CLI container knows it: where, and the environment a command gets there. */
 export type Sandbox = { server: RunServer; env: Record<string, string> };
 
 /**
- * In a CLI container, the marker that it is one, and where its sandbox is: in its own /tmp, which nothing
- * of the agent's writes, read by the image's bash and git (deploy/sandbox-shim.sh) and sandbox.ts.
- * A file and not the environment: a CLI may strip its commands' environment (Codex does), and
- * then bash would run in the CLI container.
+ * Where a CLI container's server writes where its sandbox is, read by sandbox.ts: in its own /tmp,
+ * which the CLI's file tools may not touch (workspace.ts).
  */
 export const RUN_DIR = '/tmp/agentome';
-export const CLI_MARK = `${RUN_DIR}/cli`;
 export const SANDBOX_FILE = `${RUN_DIR}/sandbox.json`;
 
 type Request =
@@ -47,11 +56,15 @@ type Request =
       cwdFile?: string;
       /** For a run's CLI container: where its sandbox is, which its bash and git pass commands to. */
       sandbox?: Sandbox;
+      /** For a Codex run's CLI container: its loopback port to the sandbox's executor, while the CLI runs. */
+      tunnel?: Tunnel;
     }
+  | { t: 'tunnel'; port: number }
   | { t: 'in'; d: string }
   | { t: 'end' }
   | { t: 'kill'; signal: NodeJS.Signals };
 type Answer =
+  | { t: 'ok' }
   | { t: 'out' | 'err'; d: string }
   | { t: 'exit'; code: number | null; signal: NodeJS.Signals | null; cwd?: string }
   | { t: 'error'; message: string };
@@ -67,15 +80,16 @@ export function runServer(
   log: (text: string) => void,
   port = RUN_PORT,
   cli = false,
+  execPort = EXEC_PORT,
+  // Every address in a run's container; the tests' own, where another program may hold the port
+  // on 127.0.0.1 that the system gives the wildcard.
+  host?: string,
 ): Promise<{ close: () => void; port: number }> {
-  if (cli) {
-    mkdirSync(RUN_DIR, { recursive: true, mode: 0o700 });
-    writeFileSync(CLI_MARK, '');
-  }
+  if (cli) mkdirSync(RUN_DIR, { recursive: true, mode: 0o700 });
   return new Promise((resolve, reject) => {
-    const server = createServer((socket) => serve(socket, key, log, cli));
+    const server = createServer((socket) => serve(socket, key, log, cli, execPort));
     server.once('error', reject);
-    server.listen(port, () => {
+    server.listen(port, host, () => {
       const bound = server.address();
       const at = typeof bound === 'object' && bound ? bound.port : port;
       log(`run-server: listening on port ${String(at)}`);
@@ -134,8 +148,15 @@ function sameKey(given: unknown, key: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function serve(socket: Socket, key: string, log: (text: string) => void, cli: boolean) {
+function serve(
+  socket: Socket,
+  key: string,
+  log: (text: string) => void,
+  cli: boolean,
+  execPort: number,
+) {
   let child: ChildProcess | undefined;
+  let listening: Server | undefined;
   let heard = false;
   // A connection that does not open with its key soon, and short, goes.
   const hello = setTimeout(() => socket.destroy(), HELLO_MS);
@@ -166,7 +187,8 @@ function serve(socket: Socket, key: string, log: (text: string) => void, cli: bo
   };
   socket.on('error', orphan);
   socket.on('close', orphan);
-  createInterface({ input: socket, crlfDelay: Infinity }).on('line', (text) => {
+  const lines = createInterface({ input: socket, crlfDelay: Infinity });
+  lines.on('line', (text) => {
     let request: Request;
     try {
       request = JSON.parse(text) as Request;
@@ -184,12 +206,37 @@ function serve(socket: Socket, key: string, log: (text: string) => void, cli: bo
       clearTimeout(hello);
       return;
     }
+    // A sandbox's connection to its executor, for the CLI container's Codex: from here on the
+    // connection carries the executor's bytes both ways, nothing else.
+    if (request.t === 'tunnel' && !cli && !child) {
+      if (request.port !== execPort) {
+        socket.destroy();
+        return;
+      }
+      const target = connect(request.port, '127.0.0.1');
+      target.once('error', (error) => {
+        send({ t: 'error', message: error.message });
+        socket.end();
+      });
+      target.once('connect', () => {
+        lines.close();
+        socket.removeAllListeners('data');
+        send({ t: 'ok' });
+        socket.pipe(target);
+        target.pipe(socket);
+        socket.once('close', () => target.destroy());
+        target.once('close', () => socket.destroy());
+      });
+      return;
+    }
     if (request.t === 'spawn' && !child) {
       try {
         // A CLI container's CLI: where its commands go, for its bash and git, before it starts.
         if (cli && request.sandbox) {
           writeFileSync(SANDBOX_FILE, JSON.stringify(request.sandbox), { mode: 0o600 });
         }
+        // A Codex CLI's executor, in the sandbox, at a port of this container's loopback.
+        if (request.tunnel) listening = tunnelFrom(request.tunnel, log);
         child = spawn(request.file, request.args, {
           cwd: request.cwd,
           env: request.env,
@@ -211,6 +258,7 @@ function serve(socket: Socket, key: string, log: (text: string) => void, cli: bo
       started.on('error', (error) => send({ t: 'error', message: error.message }));
       const { cwdFile } = request;
       started.once('close', (code, signal) => {
+        listening?.close();
         const cwd = cwdFile === undefined ? undefined : leftCwd(cwdFile);
         send({ t: 'exit', code, signal, ...(cwd !== undefined && { cwd }) });
         socket.end();
@@ -229,6 +277,92 @@ function serve(socket: Socket, key: string, log: (text: string) => void, cli: bo
       }
     }
   });
+}
+
+/**
+ * Opens a connection to the sandbox's executor through its run server: the key, then the tunnel,
+ * then, once the server says it reached the executor, the executor's bytes both ways. Rejects when
+ * the executor is not listening.
+ */
+export function openTunnel(to: RunServer, port: number): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(to.port, to.host);
+    socket.write(line({ t: 'hello', key: to.key }));
+    socket.write(line({ t: 'tunnel', port }));
+    let heard = Buffer.alloc(0);
+    const onData = (chunk: Buffer) => {
+      heard = Buffer.concat([heard, chunk]);
+      const end = heard.indexOf(10);
+      if (end < 0) {
+        if (heard.length > HELLO_BYTES) socket.destroy(new Error('the sandbox answered at length'));
+        return;
+      }
+      socket.off('data', onData);
+      let answer: Answer | undefined;
+      try {
+        answer = JSON.parse(heard.subarray(0, end).toString('utf8')) as Answer;
+      } catch {
+        answer = undefined;
+      }
+      if (answer?.t !== 'ok') {
+        socket.destroy();
+        reject(
+          new Error(answer?.t === 'error' ? answer.message : 'the sandbox refused the tunnel'),
+        );
+        return;
+      }
+      const rest = heard.subarray(end + 1);
+      if (rest.length > 0) socket.unshift(rest);
+      resolve(socket);
+    };
+    socket.on('data', onData);
+    socket.once('error', reject);
+    socket.once('close', () => reject(new Error('the sandbox closed the tunnel')));
+  });
+}
+
+/** Waits until the sandbox's executor takes connections, or its time is up. */
+export async function tunnelReady(to: RunServer, port: number, timeoutMs = 30_000): Promise<void> {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      (await openTunnel(to, port)).destroy();
+      return;
+    } catch (error) {
+      if (Date.now() > until) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+}
+
+/**
+ * In a Codex run's CLI container: listens on the loopback, where its Codex finds its executor
+ * (CODEX_EXEC_SERVER_URL), and passes each connection to the executor in the sandbox. Codex sends
+ * nothing secret there: the bytes are the commands and edits it asks for and their output.
+ */
+function tunnelFrom(tunnel: Tunnel, log: (text: string) => void): Server {
+  const server = createServer((local) => {
+    local.pause();
+    openTunnel(tunnel.to, tunnel.exec ?? EXEC_PORT).then(
+      (remote) => {
+        local.pipe(remote);
+        remote.pipe(local);
+        local.resume();
+        local.once('close', () => remote.destroy());
+        remote.once('close', () => local.destroy());
+        local.on('error', () => remote.destroy());
+        remote.on('error', () => local.destroy());
+      },
+      (error: unknown) => {
+        log(
+          `run-server: no tunnel to the executor (${error instanceof Error ? error.message : String(error)})`,
+        );
+        local.destroy();
+      },
+    );
+  });
+  server.listen(tunnel.port, '127.0.0.1');
+  return server;
 }
 
 /**
@@ -277,7 +411,7 @@ export class RemoteChild extends EventEmitter {
 }
 
 /** A `spawn` that starts the program in a run's container, over its connection. */
-export function remoteSpawn(server: RunServer, sandbox?: Sandbox) {
+export function remoteSpawn(server: RunServer, sandbox?: Sandbox, tunnel?: Tunnel) {
   return (
     file: string,
     args: readonly string[],
@@ -301,6 +435,7 @@ export function remoteSpawn(server: RunServer, sandbox?: Sandbox) {
         env,
         ...(cwdFile !== undefined && { cwdFile }),
         ...(sandbox && { sandbox }),
+        ...(tunnel && { tunnel }),
       }),
     );
     let ended = false;

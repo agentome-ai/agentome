@@ -15,6 +15,7 @@ const TOOLS: Record<string, { name: string; readOnly: boolean }> = {
   'GET /api/agents': { name: 'list_agents', readOnly: true },
   'GET /api/agents/:id': { name: 'get_agent', readOnly: true },
   'GET /api/agents/:id/quality': { name: 'agent_quality', readOnly: true },
+  'POST /api/agents/:id/review': { name: 'start_agent_review', readOnly: false },
   'POST /api/agents': { name: 'create_agent', readOnly: false },
   'GET /api/agents/:id/export': { name: 'export_agent', readOnly: true },
   'POST /api/agents/import': { name: 'import_agent', readOnly: false },

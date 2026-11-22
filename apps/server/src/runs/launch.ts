@@ -164,11 +164,11 @@ function networkFor(publicUrl: string) {
   };
 }
 
-/** Where the agent works, as it is: a place keeps its folders and has no sandbox of the CLI. */
+/** Where the agent works, as it is: a place keeps its folders and runs commands in the run's sandbox container. */
 function workspaceLines(inPlace: boolean): string {
   return inPlace
     ? `- Work only inside this workspace. It is your working folder for this repository in your owner's place on the company's server, and it is kept for your next run there, with what git ignores: commit what should stay, and describe everything else in your final answer.
-- Shell commands run without a sandbox, in that place: the files outside this workspace (your owner's sign-in, other agents' folders) are not yours to read or change. The network goes out through a proxy that lets out only the Agentome server, the model's vendor and the hosts the project allows.`
+- Shell commands run in a container of their own beside you, with this workspace and the project's services (its database, say) but without your owner's sign-in: files outside this workspace are not yours to read or change, and the file tools refuse them. The network goes out through a proxy that lets out only the Agentome server and the hosts the project allows.`
     : `- Work only inside this workspace. It is deleted when the run ends: commit what should stay, and describe everything else in your final answer.
 - Shell commands run in a sandbox: the network is closed except for the Agentome server, and only this workspace is writable, not \`.git/\` or the temporary folder. Keep notes in your answer or in commits. Package registries are out of reach too: install offline, from this computer's caches.`;
 }

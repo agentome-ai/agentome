@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { type ApiError, api, asApiError } from '../api';
 import { formatDuration, formatUsd } from '../runs/run-data';
 import { ApiErrorState } from '../session';
+import { Button } from '../ui/button';
+import { FormError } from '../ui/field';
 import { textLink } from '../ui/properties';
 
 // How the agent does in the last 30 days, to change its instructions by what came of
@@ -183,6 +185,45 @@ function CameBack({ returns }: { returns: Quality['returns'] }) {
   );
 }
 
+/**
+ * The agent's look at its own work, started here: a task of its own, in which it writes what it
+ * learns into its memory and may propose new instructions, each waiting in Approvals.
+ */
+function Review({ agentId }: { agentId: string }) {
+  const navigate = useNavigate();
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string>();
+  async function start() {
+    setStarting(true);
+    setError(undefined);
+    try {
+      const { taskId } = await api<{ taskId: string }>(`/api/agents/${agentId}/review`, {
+        method: 'POST',
+      });
+      void navigate(`/tasks/${taskId}`);
+    } catch (caught) {
+      setError(`Couldn't start the review. ${asApiError(caught).message}`);
+      setStarting(false);
+    }
+  }
+  return (
+    <div className="grid gap-2 border-t border-line pt-5">
+      <h3 className="font-medium">Review its work</h3>
+      <p className="text-ink-2">
+        The agent reads what came back in these 30 days and why, writes the lessons into its memory,
+        and may propose new instructions, which wait for your approval. It runs as a task of its
+        own.
+      </p>
+      <div>
+        <Button disabled={starting} onClick={() => void start()}>
+          {starting ? 'Starting…' : 'Start a review'}
+        </Button>
+      </div>
+      {error && <FormError>{error}</FormError>}
+    </div>
+  );
+}
+
 export function QualitySection({ agentId }: { agentId: string }) {
   const [quality, setQuality] = useState<Quality>();
   const [error, setError] = useState<ApiError>();
@@ -247,6 +288,7 @@ export function QualitySection({ agentId }: { agentId: string }) {
           </p>
         </div>
       )}
+      <Review agentId={agentId} />
     </div>
   );
 }

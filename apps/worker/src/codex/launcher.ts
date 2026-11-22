@@ -84,6 +84,12 @@ export interface CodexRunOptions {
    * Codex there runs them with the person's own access, as on a server seat.
    */
   readonly unsandboxed?: boolean;
+  /**
+   * A person's place: where Codex's executor is (`ws://127.0.0.1:<port>`), the run's sandbox. Codex
+   * then has no environment of its own: every command, edit and image it reads goes there, none
+   * beside the sign-in in its own container, and without the executor it has none of those tools.
+   */
+  readonly execServer?: string;
   /** `waitedMs`: how long the run stood waiting for its owner, by which the time limit moves. */
   readonly limits: {
     readonly timeoutMs: number;
@@ -238,6 +244,7 @@ function inherited(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 function codexEnvironment(options: CodexRunOptions): NodeJS.ProcessEnv {
   const result = inherited(options.env ?? process.env);
+  if (options.execServer !== undefined) result.CODEX_EXEC_SERVER_URL = options.execServer;
   if (options.mcp !== undefined) result[RUN_TOKEN_VAR] = options.mcp.token;
   if (options.billing.mode === 'provider') result[MODEL_KEY_VAR] = options.billing.key;
   return result;
@@ -587,6 +594,9 @@ export async function runCodex(
   if (!options.server && !options.unsandboxed) {
     const refusal = await sandboxRefusal(options);
     if (refusal) return fail(refusal);
+    // A stop that came while the sandbox was checked: nothing has started yet to stop.
+    if (signal.aborted)
+      return fail({ code: RUN_CANCELLED_CODE, message: 'The run was cancelled.' });
   }
 
   const cliPath = options.cliPath ?? 'codex';
@@ -673,6 +683,8 @@ export async function runCodex(
   arm();
   const onAbort = () => end({ code: RUN_CANCELLED_CODE, message: 'The run was cancelled.' });
   signal.addEventListener('abort', onAbort, { once: true });
+  // One that came after the check but before this listener would never reach it.
+  if (signal.aborted) onAbort();
 
   const exit = await new Promise<{
     code: number | null;

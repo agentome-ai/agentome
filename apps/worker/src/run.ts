@@ -3,7 +3,7 @@ import { RUN_CANCELLED_CODE } from '@agentome/shared';
 import type { RunEvent } from '@agentome/shared';
 
 import type { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import { probe, runClaude } from './claude/launcher.js';
@@ -22,8 +22,8 @@ import {
   removeRun,
 } from './workspace.js';
 import type { Workspace } from './workspace.js';
-import { unsandboxed } from './platform.js';
-import { remoteSpawn, serverReady } from './remote.js';
+import { cliCommand, unsandboxed } from './platform.js';
+import { CLI_EXEC_PORT, EXEC_PORT, remoteSpawn, serverReady, tunnelReady } from './remote.js';
 import { readySignIn } from './sign-in.js';
 
 // One run, from the launch package to finish. However it ends, the server hears it twice and the
@@ -62,6 +62,10 @@ export interface RunDeps {
   spawn?: typeof spawn;
   /** Set for the run by `executeRun`: its CLI container's way out and where its sandbox is. */
   split?: Split;
+  /** A Codex run in a place: its executor's address, on its CLI container's loopback. */
+  execServer?: string;
+  /** How this worker's own CLI is started, for its check before a Codex run; the running one by default. */
+  self?: string[];
 }
 
 type Timing = Record<'flushMs' | 'heartbeatMs' | 'endMs', number> & { backoff: typeof backoff };
@@ -69,6 +73,9 @@ type Timing = Record<'flushMs' | 'heartbeatMs' | 'endMs', number> & { backoff: t
 type Task = NonNullable<LaunchPackage['task']>;
 type Failure = { code: string; message: string };
 type Outcome = Pick<ClaudeRunOutcome, 'status' | 'resultText'> & { error?: Failure };
+
+/** A Codex run in a place whose check before the run failed: it does not start. */
+class CanaryRefused extends Error {}
 
 export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<Outcome['status']> {
   const { client, log } = deps;
@@ -261,10 +268,57 @@ export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<
           server: at.sandbox,
           env: sandboxEnvOf(base, launch.run.token, launch.workspace.services, at.docker),
         };
+        // Codex starts any program by itself, past bash and git: in a place it has no environment
+        // of its own, and runs every command and edit on its executor in the sandbox, reached from
+        // its container's loopback through the sandbox's server.
+        let tunnel: { port: number; to: typeof at.sandbox } | undefined;
+        if (launch.agent.engine === 'codex') {
+          const [file, ...first] = cliCommand(deps.codexPath ?? 'codex', sandbox.env);
+          remoteSpawn(at.sandbox)(
+            file,
+            [...first, 'exec-server', '--listen', `ws://127.0.0.1:${EXEC_PORT}`],
+            { cwd: workspace.repo, env: sandbox.env },
+          );
+          await tunnelReady(at.sandbox, EXEC_PORT);
+          tunnel = { port: CLI_EXEC_PORT, to: at.sandbox };
+          // The unmodified Codex, against a model of the worker's own, before the agent's: it must
+          // run its one command on the executor and see no sign-in, or the run does not start.
+          const [program = process.execPath, ...own] = deps.self ?? [
+            process.execPath,
+            ...process.execArgv,
+            realpathSync(process.argv[1] ?? ''),
+          ];
+          const canary = remoteSpawn(at.cli, sandbox, tunnel)(
+            program,
+            [...own, 'codex-canary', `ws://127.0.0.1:${CLI_EXEC_PORT}`, deps.codexPath ?? 'codex'],
+            {
+              cwd: '/tmp',
+              env: {
+                PATH: base.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+                // The test's stand-in for Codex reads its own; the real one has none.
+                ...Object.fromEntries(
+                  Object.entries(base).filter(([name]) => name.startsWith('CODEX_FAKE_')),
+                ),
+              },
+            },
+          );
+          let said = '';
+          canary.stderr?.on('data', (chunk: Buffer) => (said += chunk.toString()));
+          const passed = await new Promise<boolean>((resolve) => {
+            canary.once('close', (code) => resolve(code === 0));
+            canary.once('error', () => resolve(false));
+          });
+          if (!passed) {
+            throw new CanaryRefused(
+              `Codex's check before the run failed: ${said.trim() || 'it did not run'}. The run did not start; Codex in this place may be a version the platform has not checked.`,
+            );
+          }
+        }
         engineDeps = {
           ...deps,
-          spawn: remoteSpawn(at.cli, sandbox) as unknown as typeof spawn,
+          spawn: remoteSpawn(at.cli, sandbox, tunnel) as unknown as typeof spawn,
           split: { runId: id, cliToken: at.cliToken },
+          ...(tunnel && { execServer: `ws://127.0.0.1:${tunnel.port}` }),
         };
       }
       outcome = await engine(
@@ -280,6 +334,7 @@ export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<
     }
   } catch (error) {
     if (signal.aborted) outcome = end(RUN_CANCELLED_CODE, 'The run was cancelled.');
+    else if (error instanceof CanaryRefused) outcome = end('sandbox_unavailable', error.message);
     else outcome = end(workspace ? 'worker_error' : 'workspace_failed', describe(error));
   }
   clearInterval(ticker);
@@ -290,6 +345,15 @@ export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<
       .catch((error: unknown) =>
         log('warn', `run ${id}: its container could not be deleted (${describe(error)})`),
       );
+    // What the run wrote into the sign-in folders goes before anything reads them again: the
+    // place's check of the sign-in, the person's CLI in its terminal, the next run.
+    if (deps.signInHome) {
+      try {
+        readySignIn(deps.signInHome, (text) => log('info', `run ${id}: after it, ${text}`));
+      } catch (error) {
+        log('warn', `run ${id}: the sign-in folders could not be cleared (${describe(error)})`);
+      }
+    }
   }
 
   try {
@@ -395,8 +459,15 @@ export function egressOf(
 ) {
   const proxy = env.AGENTOME_PLACE_EGRESS;
   if (!proxy) return env;
-  const url = split ? via(proxy, `cli-${split.runId}`, split.cliToken) : via(proxy, 'run', token);
-  return { ...env, ...proxied(url, [env.NO_PROXY, ...services]) };
+  if (split) {
+    // The CLI container reaches the server by its public name, through the proxy, and its own
+    // loopback for the executor; never the server's inner name. Codex's client and curl read a
+    // NO_PROXY entry as a domain's tail, so `app` there also sent a server at `<name>.app`, and
+    // every other name in `.app`, around the proxy, where nothing answers: Codex then dropped the
+    // gateway's MCP server without a word.
+    return { ...env, ...proxied(via(proxy, `cli-${split.runId}`, split.cliToken), LOOPBACK) };
+  }
+  return { ...env, ...proxied(via(proxy, 'run', token), [env.NO_PROXY, ...services]) };
 }
 
 /**
@@ -421,6 +492,8 @@ export function sandboxEnvOf(
     ...proxied(via(proxy, 'run', token), [env.NO_PROXY, ...services, ...own]),
   };
 }
+
+const LOOPBACK = ['localhost', '127.0.0.1'];
 
 const via = (proxy: string, user: string, secret: string) =>
   `http://${user}:${encodeURIComponent(secret)}@${proxy}`;
@@ -482,6 +555,7 @@ async function codex(
       shell: allowedTools.includes('Bash'),
       server,
       unsandboxed: !server && unsandboxed(),
+      ...(deps.execServer && { execServer: deps.execServer }),
       // What the agent's commands may read beside its clone, and where its git pushes.
       ...(!server && {
         sandbox: {

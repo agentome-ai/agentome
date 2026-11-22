@@ -2,7 +2,13 @@ import { timingSafeEqual } from 'node:crypto';
 import { and, type Db, eq, projects, runs, seats, tasks } from '@agentome/db';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { cliEgressToken, dockerEgressToken, placeEgressToken, placesKey } from './keys.js';
+import {
+  cliEgressToken,
+  dockerEgressToken,
+  egressProxyKey,
+  placeEgressToken,
+  placesKey,
+} from './keys.js';
 import { isWorking } from '../runs/service.js';
 import { hashSecret } from '../tokens.js';
 
@@ -194,7 +200,9 @@ const Events = z.object({
           .regex(/^[a-z0-9.-]+$/i),
         port: z.int().min(1).max(65_535),
         allowed: z.boolean(),
-        count: z.int().min(1),
+        // As often as a token can try in the proxy's few seconds between accounts, not more: a
+        // huge one would break the sums of the week's list.
+        count: z.int().min(1).max(100_000),
       }),
     )
     .max(500),
@@ -204,17 +212,32 @@ const Events = z.object({
 const LINES_A_MINUTE = 600;
 const budgets = new Map<string, { minute: number; lines: number }>();
 
-/** Whether one more line of this run's or place's fits in its minute. */
-export function withinBudget(who: string, now = Date.now()): boolean {
+/**
+ * Whether one more line of this run's or place's fits in its minute: 'yes', 'no', or 'first-no'
+ * for the first line that does not, which the log tells of once.
+ */
+export function withinBudget(who: string, now = Date.now()): 'yes' | 'no' | 'first-no' {
   const minute = Math.floor(now / 60_000);
   const kept = budgets.get(who);
   if (!kept || kept.minute !== minute) {
     if (budgets.size > 10_000) budgets.clear();
     budgets.set(who, { minute, lines: 1 });
-    return true;
+    return 'yes';
   }
   kept.lines += 1;
-  return kept.lines <= LINES_A_MINUTE;
+  if (kept.lines <= LINES_A_MINUTE) return 'yes';
+  return kept.lines === LINES_A_MINUTE + 1 ? 'first-no' : 'no';
+}
+
+/** The header the egress proxy shows its key in. */
+export const PROXY_KEY_HEADER = 'x-agentome-egress';
+
+/** Whether a request is the egress proxy's: its key, in constant time. */
+export function fromEgressProxy(given: unknown, secretKey: string): boolean {
+  if (typeof given !== 'string') return false;
+  const want = Buffer.from(egressProxyKey(placesKey(secretKey)));
+  const got = Buffer.from(given);
+  return got.length === want.length && timingSafeEqual(got, want);
 }
 
 export const egressRoutes: FastifyPluginAsyncZod<{
@@ -223,6 +246,13 @@ export const egressRoutes: FastifyPluginAsyncZod<{
   publicUrl: string;
 }> = async (app, { db, secretKey, publicUrl }) => {
   const own = ownHost(publicUrl);
+  // The proxy's routes, the proxy's alone: a run's token could otherwise ask what any token opens,
+  // or write the lines of refused hosts an admin may open with one click (review P9).
+  app.addHook('onRequest', async (request, reply) => {
+    if (!fromEgressProxy(request.headers[PROXY_KEY_HEADER], secretKey)) {
+      return reply.code(401).send({ who: '', hosts: [] });
+    }
+  });
   app.post(
     '/api/egress/hosts',
     {
@@ -253,15 +283,21 @@ export const egressRoutes: FastifyPluginAsyncZod<{
         // A token that opens nothing now: a run that ended, say. Its lines go unsaid.
         if (!found) continue;
         // The proxy tells of a host once a minute a token, and of what it refused as it goes: a
-        // run that holds its token and writes more than this is filling the log, not the proxy.
-        if (!withinBudget(found.who)) continue;
-        const where = {
+        // run that makes more than this is filling the log. What it reached and what it was
+        // refused count apart, so a flood of refused names cannot hide where it got through.
+        const fits = withinBudget(`${found.who}\n${event.allowed ? 'reached' : 'refused'}`);
+        const by = {
           ...(found.runId && { runId: found.runId }),
           ...(found.seatId && { seatId: found.seatId }),
-          host: event.host,
-          port: event.port,
-          count: event.count,
         };
+        if (fits === 'first-no') {
+          request.log.warn(
+            by,
+            `a place's ${event.allowed ? 'reached' : 'refused'} hosts went past ${LINES_A_MINUTE} lines this minute; the rest of the minute's are not logged`,
+          );
+        }
+        if (fits !== 'yes') continue;
+        const where = { ...by, host: event.host, port: event.port, count: event.count };
         if (event.allowed) request.log.info(where, `a place reached ${event.host}`);
         else request.log.warn(where, `a place was refused ${event.host}: not an allowed host`);
       }

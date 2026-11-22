@@ -77,7 +77,7 @@ export function LicensePage() {
   return (
     <>
       <PageHeader title="License" crumbs={[{ label: 'Admin', to: '/admin' }]} />
-      <div className={cn(frame.read, 'grid gap-10 pt-8 pb-24')}>
+      <div className={cn(frame.wide, 'grid gap-10 pt-8 pb-24')}>
         {!license ? (
           <LoadingState label="Loading the license" />
         ) : (
@@ -142,7 +142,12 @@ export function LicensePage() {
           </section>
         )}
 
-        <form noValidate onSubmit={apply} className="grid gap-3" aria-labelledby="license-key">
+        <form
+          noValidate
+          onSubmit={apply}
+          className="grid max-w-170 gap-3"
+          aria-labelledby="license-key"
+        >
           <h2 id="license-key" className="text-section">
             New license key
           </h2>

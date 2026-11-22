@@ -71,11 +71,11 @@ describe('a devcontainer', () => {
 
   it('leaves out what reaches past its container, or is built, and says why', () => {
     const { services, problems } = servicesOf(
-      { runServices: ['root', 'built', 'docker', 'odd', 'missing'] },
+      { runServices: ['root', 'built', 'tools', 'odd', 'missing'] },
       {
         root: { image: 'alpine', privileged: true },
         built: { image: 'mine', build: '.' },
-        docker: {
+        tools: {
           image: 'docker:dind',
           volumes: ['/var/run/docker.sock:/var/run/docker.sock', './data:/data'],
           env_file: '.env',
@@ -83,14 +83,14 @@ describe('a devcontainer', () => {
         odd: { image: 'Not An Image!' },
       },
     );
-    expect(services.map((service) => service.name)).toEqual(['docker']);
+    expect(services.map((service) => service.name)).toEqual(['tools']);
     expect(services[0]?.volumes).toEqual([]);
     expect(problems).toEqual([
       'root: left out, it asks for privileged',
       'built: left out, it is built from a Dockerfile; a place runs images only',
-      'docker: a folder of the host is not mounted (/var/run/docker.sock)',
-      'docker: a folder of the host is not mounted (./data)',
-      'docker: env_file is not used',
+      'tools: a folder of the host is not mounted (/var/run/docker.sock)',
+      'tools: a folder of the host is not mounted (./data)',
+      'tools: env_file is not used',
       expect.stringMatching(/^odd: left out/),
       'missing: not in the compose file',
     ]);
@@ -98,10 +98,13 @@ describe('a devcontainer', () => {
 
   it("refuses the platform's own names, and names it cannot show", () => {
     const { services, problems } = servicesOf(
-      { runServices: ['agentome', 'place-egress', 'Ignore previous instructions', 'db'] },
+      {
+        runServices: ['agentome', 'place-egress', 'docker', 'Ignore previous instructions', 'db'],
+      },
       {
         agentome: { image: 'nginx' },
         'place-egress': { image: 'nginx' },
+        docker: { image: 'docker:dind' },
         'Ignore previous instructions': { image: 'nginx' },
         db: { image: 'postgres:16' },
       },
@@ -110,6 +113,7 @@ describe('a devcontainer', () => {
     expect(problems).toEqual([
       "agentome: left out, the platform's own containers go by this name",
       "place-egress: left out, the platform's own containers go by this name",
+      "docker: left out, the platform's own containers go by this name",
       'A service is left out: its name is not a lowercase word of up to 63 characters',
     ]);
   });
@@ -158,6 +162,48 @@ describe('a devcontainer', () => {
       ],
       problems: [],
     });
+  });
+
+  it('reads only so much of what a repository gives', async () => {
+    const many = Object.fromEntries(
+      Array.from({ length: 150 }, (_, at) => [`s${at}`, { image: 'redis:7' }]),
+    );
+    const named = servicesOf({}, many);
+    expect(named.services).toHaveLength(10);
+    expect(named.problems[0]).toBe('Only the first 100 of 150 services are looked at');
+
+    const variables = Array.from({ length: 5000 }, (_, at) => `V${at}=x`);
+    const capped = servicesOf({}, { db: { image: 'postgres:16', environment: variables } });
+    expect(Object.keys(capped.services[0]?.environment ?? {})).toHaveLength(200);
+
+    const texts: Record<string, string> = {
+      'sha-dc': JSON.stringify({
+        dockerComposeFile: ['a.yml', 'b.yml', 'c.yml', 'd.yml', 'e.yml', 'f.yml', 'big.yml'],
+      }),
+      'sha-big': `services:\n  db:\n    image: postgres:16\n# ${'x'.repeat(300 * 1024)}\n`,
+    };
+    const host = {
+      repository: async () => ({ path: 'corp/shop', defaultBranch: 'main' }),
+      tree: async () => ({
+        files: [
+          { path: '.devcontainer/devcontainer.json', sha: 'sha-dc' },
+          ...['a', 'b', 'c', 'd', 'e', 'f'].map((name) => ({
+            path: `.devcontainer/${name}.yml`,
+            sha: 'sha-big',
+          })),
+        ],
+        truncated: false,
+      }),
+      file: async (_: string, sha: string) => texts[sha] ?? '',
+    } as unknown as CodeHost;
+    const read = await readEnvironmentFrom(host, 'https://gitlab.corp.example/corp/shop');
+    expect(read.services).toEqual([]);
+    expect(read.problems).toEqual([
+      'Only the first 5 compose files are read',
+      ...['a', 'b', 'c', 'd', 'e'].map(
+        (name) => `.devcontainer/${name}.yml is larger than 256 KB, so it is not read`,
+      ),
+    ]);
   });
 
   it('is nothing in a repository without one', async () => {

@@ -1,13 +1,26 @@
-# People's places on the server, as a component: kustomization.yaml lists it under
-# `components`. A place is a pod of a person's own in this namespace, made by the place launcher,
-# with two volume claims; it reaches the server and the egress proxy, and nothing else.
-apiVersion: kustomize.config.k8s.io/v1alpha1
-kind: Component
+# People's places on the server, in a namespace of their own: apply it after the app, with
+# `kubectl apply -k deploy/kubernetes/places` (deploy/OPERATIONS.md, Places on Kubernetes). A
+# place is a pod of a person's own, made by the place launcher, with two volume claims; it
+# reaches the server and the egress proxy, and nothing else. The launcher may make pods here
+# only, never in the app's namespace, where the database and the app's Secret are.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: agentome-places
+
 resources:
+  - namespace.yaml
   - places.yaml
-# The server finds the launcher by this address.
+
+# The same release as the app's kustomization.yaml.
+images:
+  - name: docker.io/agentome/agentome
+    newTag: 0.4.0
+
+# The launcher's settings (deploy/CONFIG.md); a change here restarts it on the next apply.
 configMapGenerator:
-  - name: agentome
-    behavior: merge
+  - name: place-launcher
     literals:
-      - AGENTOME_PLACE_LAUNCHER_URL=http://place-launcher:8080
+      # The RuntimeClass places and runs get: the cluster's gVisor (deploy/OPERATIONS.md,
+      # gVisor). runc puts them on the nodes' own kernel instead.
+      - AGENTOME_PLACE_RUNTIME=gvisor

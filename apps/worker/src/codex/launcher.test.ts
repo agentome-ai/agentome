@@ -291,6 +291,21 @@ describe('runCodex', () => {
     expect(outcome.status).toBe('cancelled');
   });
 
+  it('stops a run cancelled before Codex started, while its sandbox was checked', async () => {
+    const stop = new AbortController();
+    const running = runCodex(
+      options({
+        CODEX_FAKE_FIXTURE: join(fixtures, 'failed.jsonl'),
+        CODEX_FAKE_HANG: '1',
+        CODEX_FAKE_SANDBOX_MS: '800',
+      }),
+      () => undefined,
+      stop.signal,
+    );
+    setTimeout(() => stop.abort(), 100);
+    expect((await running).status).toBe('cancelled');
+  }, 10_000);
+
   it('stops the commands of a cancelled run with it', async () => {
     // Codex starts a command in a process group of its own: a signal to Codex's group alone
     // would leave it running on the person's computer.

@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { agentGrants, agents, and, type Db, eq, inArray, runs, sql, toolCalls } from '@agentome/db';
 import { grantInForce } from '../agents/grants.js';
-import type { ToolDecision } from '@agentome/shared';
+import { PROPOSE_INSTRUCTIONS, type ToolDecision } from '@agentome/shared';
 import { z } from 'zod';
 import { AppError } from '../errors.js';
 import { isWorking, LIVE_RUN_STATUSES } from '../runs/service.js';
@@ -31,7 +31,11 @@ const Override = z.array(
  * library server's tool (`<server>__<tool>`) asks first: nobody has read what it does.
  */
 export function policyFor(agentTools: unknown, tool: string): Policy {
-  return ownPolicy(agentTools, tool) ?? DEFAULTS[tool] ?? (tool.includes('__') ? 'ask' : 'allow');
+  const own = ownPolicy(agentTools, tool);
+  // An agent rewriting its own instructions is asked about every time: its owner may turn it
+  // off, never let it through unseen, as what it read could steer what it writes there.
+  if (tool === PROPOSE_INSTRUCTIONS) return own === 'deny' ? 'deny' : 'ask';
+  return own ?? DEFAULTS[tool] ?? (tool.includes('__') ? 'ask' : 'allow');
 }
 
 /** The agent's own entry for a tool, if its owner set one. */
@@ -216,6 +220,12 @@ export async function approveForGood(db: Db, input: { id: string; userId: string
     .where(eq(toolCalls.id, input.id));
   if (call?.tool === 'ask_owner') {
     throw new AppError('validation_failed', 'A question is asked each time: answer this one');
+  }
+  if (call?.tool === PROPOSE_INSTRUCTIONS) {
+    throw new AppError(
+      'validation_failed',
+      'New instructions are approved each time: approve this proposal on its own',
+    );
   }
   const decided = await decideToolCall(db, { ...input, decision: 'approved' });
   // The first decision wins: after someone's Deny the policy stays as it was.

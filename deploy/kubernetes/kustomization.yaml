@@ -14,14 +14,11 @@ resources:
 # lines and put its address into the Secret (secret.example.yaml).
 components:
   - postgres
-  # People's places on the server, each a pod of their own (deploy/OPERATIONS.md, Places on
-  # the server). Their NetworkPolicies need a network plugin that enforces them.
-  # - places
 
 # The release: an update or a rollback changes newTag.
 images:
   - name: docker.io/agentome/agentome
-    newTag: 0.3.0
+    newTag: 0.4.0
 
 # The server's settings (deploy/CONFIG.md); add any other one as NAME=value. Secrets go into
 # the Secret instead. A change here restarts the server on the next apply.
@@ -30,10 +27,13 @@ configMapGenerator:
     literals:
       # The address people open and computers connect to. The Ingress takes its host from it.
       - AGENTOME_PUBLIC_URL=https://agentome.example.com
-      # Behind the Ingress the client's address comes in X-Forwarded-For. Name the ingress
-      # controller's pods' network (10.42.0.0/16, say) instead of true: with true a place, which
-      # reaches the app directly, could claim another address.
-      - AGENTOME_TRUST_PROXY=true
+      # Behind the Ingress the client's address comes in X-Forwarded-For, taken from the ingress
+      # controller's pods only, by the name ingress-proxy.yaml gives them: from anyone, a place,
+      # which reaches the app directly, could claim another address.
+      - AGENTOME_TRUST_PROXY=agentome-ingress.ingress-nginx
+      # People's places on the server, applied on their own from places/ (deploy/OPERATIONS.md,
+      # Places on Kubernetes): take the # off to let the server find their launcher.
+      # - AGENTOME_PLACE_LAUNCHER_URL=http://place-launcher.agentome-places:8080
       - AGENTOME_LOG_LEVEL=info
 
 # The host of AGENTOME_PUBLIC_URL, the part after https://, into the Ingress.

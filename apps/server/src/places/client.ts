@@ -96,7 +96,11 @@ export function placeLauncher(url: string, secretKey: string, fetchImpl: typeof 
     startRun: async (
       id: string,
       runId: string,
-      run: { folder?: string; shape?: { project: string; hash: string; services: ServiceSpec[] } },
+      run: {
+        folder?: string;
+        shape?: { project: string; hash: string; services: ServiceSpec[] };
+        engine?: 'claude-code' | 'codex';
+      },
     ) => {
       const said = RunAddresses.safeParse(
         await order('PUT', `/places/${id}/runs/${runId}`, run, 15 * 60_000),

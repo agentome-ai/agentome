@@ -9,7 +9,7 @@ describe("a run's way out", () => {
       AGENTOME_PLACE_EGRESS: 'place-egress:3128',
       HTTPS_PROXY: 'http://p1:the-place-token@place-egress:3128',
       https_proxy: 'http://p1:the-place-token@place-egress:3128',
-      NO_PROXY: 'app,localhost,127.0.0.1',
+      NO_PROXY: 'agentome.internal,localhost,127.0.0.1',
     };
     const env = egressOf(place, 'run/token+1');
     const expected = 'http://run:run%2Ftoken%2B1@place-egress:3128';
@@ -19,17 +19,17 @@ describe("a run's way out", () => {
       expected,
       expected,
     ]);
-    expect(env.NO_PROXY).toBe('app,localhost,127.0.0.1');
+    expect(env.NO_PROXY).toBe('agentome.internal,localhost,127.0.0.1');
     expect(JSON.stringify(env)).not.toContain('the-place-token');
   });
 
   it("reaches the project's services beside the agent directly, by their names", () => {
     const env = egressOf(
-      { AGENTOME_PLACE_EGRESS: 'place-egress:3128', NO_PROXY: 'app,localhost,127.0.0.1' },
+      { AGENTOME_PLACE_EGRESS: 'place-egress:3128', NO_PROXY: 'agentome.internal,localhost,127.0.0.1' },
       'token',
       ['db', 'cache'],
     );
-    expect(env.NO_PROXY).toBe('app,localhost,127.0.0.1,db,cache');
+    expect(env.NO_PROXY).toBe('agentome.internal,localhost,127.0.0.1,db,cache');
     expect(env.no_proxy).toBe(env.NO_PROXY);
   });
 
@@ -39,26 +39,29 @@ describe("a run's way out", () => {
   });
 
   it('sends the CLI out as its CLI container and its commands as the run, in two containers', () => {
-    const place = { AGENTOME_PLACE_EGRESS: 'place-egress:3128', PATH: '/usr/bin', NO_PROXY: 'app' };
+    const place = { AGENTOME_PLACE_EGRESS: 'place-egress:3128', PATH: '/usr/bin', NO_PROXY: 'agentome.internal' };
     const cli = egressOf(place, 'run token', ['db'], {
       runId: 'r1',
       cliToken: 'cli token',
     });
     expect(cli.HTTPS_PROXY).toBe('http://cli-r1:cli%20token@place-egress:3128');
+    // Not even the server's name on the places' networks: the CLI reaches it by its public one.
+    expect([cli.NO_PROXY, cli.no_proxy]).toEqual(['localhost,127.0.0.1', 'localhost,127.0.0.1']);
     const commands = sandboxEnvOf(place, 'run token', ['db']);
     expect(commands.HTTPS_PROXY).toBe('http://run:run%20token@place-egress:3128');
-    expect(commands.NO_PROXY).toBe('app,db');
+    // Git reaches the server there, by a name no public domain ends in.
+    expect(commands.NO_PROXY).toBe('agentome.internal,db');
     expect(JSON.stringify(commands)).not.toContain('cli');
   });
 
   it("gives the sandbox the run's own Docker when it has one", () => {
-    const place = { AGENTOME_PLACE_EGRESS: 'place-egress:3128', NO_PROXY: 'app' };
+    const place = { AGENTOME_PLACE_EGRESS: 'place-egress:3128', NO_PROXY: 'agentome.internal' };
     expect(sandboxEnvOf(place, 't', ['db'])).not.toHaveProperty('DOCKER_HOST');
     const commands = sandboxEnvOf(place, 't', ['db'], true);
     expect(commands).toMatchObject({
       DOCKER_HOST: 'tcp://docker:2375',
       TESTCONTAINERS_HOST_OVERRIDE: 'docker',
-      NO_PROXY: 'app,db,docker',
+      NO_PROXY: 'agentome.internal,db,docker',
     });
   });
 });

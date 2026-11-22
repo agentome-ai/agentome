@@ -179,8 +179,8 @@ export async function startFakeServer(
           `start ${id} ${(body as { folder?: string }).folder ?? 'no folder'}`,
         );
         // The CLI container and the sandbox, both in this process, each on a port of its own.
-        const cli = await runServer('b'.repeat(43), () => {}, 0);
-        const sandbox = await runServer('h'.repeat(43), () => {}, 0);
+        const cli = await runServer('b'.repeat(43), () => {}, 0, false, undefined, '127.0.0.1');
+        const sandbox = await runServer('h'.repeat(43), () => {}, 0, false, undefined, '127.0.0.1');
         listening.set(id, [cli, sandbox]);
         return send(response, 200, {
           cli: { host: '127.0.0.1', port: cli.port, key: 'b'.repeat(43) },

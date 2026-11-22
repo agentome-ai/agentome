@@ -1,3 +1,4 @@
+import { PROPOSE_INSTRUCTIONS } from '@agentome/shared';
 import {
   ArrowLeft,
   ChevronDown,
@@ -292,6 +293,8 @@ function Detail(props: {
   const { call } = props;
   const words = describe(call);
   const question = call.tool === 'ask_owner';
+  // New instructions are approved one by one: there is no "stop asking" for them.
+  const always = call.tool !== PROPOSE_INSTRUCTIONS;
   const kind = kindOf(call);
   return (
     <article aria-label="Request" className={split.body}>
@@ -373,37 +376,39 @@ function Detail(props: {
               <div className="flex">
                 <Button
                   variant="decision"
-                  className="rounded-r-none"
+                  className={always ? 'rounded-r-none' : undefined}
                   disabled={props.pending}
                   onClick={props.onApprove}
                 >
                   {props.pending ? 'Approving…' : 'Approve'}
                 </Button>
-                <M.DropdownMenu>
-                  <M.DropdownMenuTrigger asChild>
-                    <Button
-                      variant="decision"
-                      aria-label="More ways to approve"
-                      className="rounded-l-none border-l-accent-text/20 px-1.5"
-                      disabled={props.pending}
-                    >
-                      <ChevronDown aria-hidden="true" className="size-4" />
-                    </Button>
-                  </M.DropdownMenuTrigger>
-                  <M.DropdownMenuContent align="start" className="w-80">
-                    <M.DropdownMenuItem
-                      className="grid h-auto gap-0.5 py-2"
-                      onSelect={props.onApproveAlways}
-                    >
-                      <span>Approve and stop asking</span>
-                      <span className="text-small whitespace-normal text-ink-3">
-                        {call.agent.name} uses <span className="font-mono">{call.tool}</span>{' '}
-                        without your approval from now on. Change it back in the agent’s Tools &amp;
-                        policies.
-                      </span>
-                    </M.DropdownMenuItem>
-                  </M.DropdownMenuContent>
-                </M.DropdownMenu>
+                {always && (
+                  <M.DropdownMenu>
+                    <M.DropdownMenuTrigger asChild>
+                      <Button
+                        variant="decision"
+                        aria-label="More ways to approve"
+                        className="rounded-l-none border-l-accent-text/20 px-1.5"
+                        disabled={props.pending}
+                      >
+                        <ChevronDown aria-hidden="true" className="size-4" />
+                      </Button>
+                    </M.DropdownMenuTrigger>
+                    <M.DropdownMenuContent align="start" className="w-80">
+                      <M.DropdownMenuItem
+                        className="grid h-auto gap-0.5 py-2"
+                        onSelect={props.onApproveAlways}
+                      >
+                        <span>Approve and stop asking</span>
+                        <span className="text-small whitespace-normal text-ink-3">
+                          {call.agent.name} uses <span className="font-mono">{call.tool}</span>{' '}
+                          without your approval from now on. Change it back in the agent’s Tools
+                          &amp; policies.
+                        </span>
+                      </M.DropdownMenuItem>
+                    </M.DropdownMenuContent>
+                  </M.DropdownMenu>
+                )}
               </div>
               <Button onClick={props.onDeny}>Deny</Button>
               <p className="ml-auto flex items-center gap-1 text-small text-ink-3 max-md:hidden">

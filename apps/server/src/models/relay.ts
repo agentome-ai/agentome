@@ -1,4 +1,4 @@
-import { Readable } from 'node:stream';
+import { pipeline, Readable } from 'node:stream';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { agents, and, eq, modelConnections, type RelayTokens, runs, type Db } from '@agentome/db';
 import { Meter, type Metered, metering } from './meter.js';
@@ -8,6 +8,8 @@ import { connectionsKey, decryptSecret } from '../connections/crypto.js';
 import { guardedFetch, type FetchLike } from '../mcp/remote.js';
 import { RELAY_PATH } from '../runs/launch.js';
 import { isWorking } from '../runs/service.js';
+import { requireBudget } from '../budgets/service.js';
+import { AppError } from '../errors.js';
 import { hashSecret } from '../tokens.js';
 
 // The model key stays here. A server seat's run calls /model/v1/... with its own
@@ -40,6 +42,8 @@ const HELD_BACK = new Set([
 
 type Upstream = {
   runId: string;
+  /** The run's task, whose agent's and project's month a call is checked against. */
+  taskId: string | null;
   kind: 'anthropic' | 'openai' | 'gateway';
   baseUrl: string;
   key: string;
@@ -55,6 +59,10 @@ type Upstream = {
 const MAX_BODY = 32 * 1024 * 1024;
 /** Calls of one run at once: an engine's own and its helpers', not a flood. */
 const MAX_AT_ONCE = 4;
+/** Bodies the relay reads at once, of every run: each up to MAX_BODY, in one process's memory. */
+const MAX_READING = 16;
+/** How long a run's month is taken as checked: a call is not a query of the budgets each time. */
+const BUDGET_CHECKED_MS = 30_000;
 
 /** The run's own token, as Claude Code sends it (bearer) or as some clients do (x-api-key). */
 function tokenOf(request: FastifyRequest): string | undefined {
@@ -68,6 +76,7 @@ async function upstreamOf(db: Db, secretKey: string, token: string): Promise<Ups
   const [row] = await db
     .select({
       runId: runs.id,
+      taskId: runs.taskId,
       kind: modelConnections.kind,
       baseUrl: modelConnections.baseUrl,
       keyCiphertext: modelConnections.keyCiphertext,
@@ -83,6 +92,7 @@ async function upstreamOf(db: Db, secretKey: string, token: string): Promise<Ups
   const models = row.modelPref ? new Set([row.modelPref, ...row.models]) : undefined;
   return {
     runId: row.runId,
+    taskId: row.taskId,
     kind: row.kind,
     baseUrl: row.baseUrl.replace(/\/+$/, ''),
     key,
@@ -119,6 +129,14 @@ async function recordUsage(db: Db, runId: string, metered: Metered): Promise<voi
       : add;
     await tx.update(runs).set({ relayUsage: usage }).where(eq(runs.id, runId));
   });
+}
+
+/** Drops the oldest entries of a map past a thousand: the runs going now are the newest. */
+function makeRoom(map: Map<string, number>) {
+  for (const key of map.keys()) {
+    if (map.size < 1000) return;
+    map.delete(key);
+  }
 }
 
 /** The request's body, whole, or undefined when it is longer than the relay reads. */
@@ -167,6 +185,10 @@ export const relayRoutes: FastifyPluginAsync<{
   app.addContentTypeParser('*', (_request, payload, done) => done(null, payload));
   /** Calls going now, by run token. */
   const going = new Map<string, number>();
+  /** Bodies being read now, of every run. */
+  let reading = 0;
+  /** When each run's month was last found not spent. */
+  const budgetSeen = new Map<string, number>();
 
   app.route({
     method: ['GET', 'POST'],
@@ -192,23 +214,6 @@ export const relayRoutes: FastifyPluginAsync<{
           'This token opens no working server run with a model connection',
         );
       }
-      let body: Buffer | undefined;
-      if (request.method === 'POST') {
-        body = await bodyOf(request.body as Readable);
-        if (!body) {
-          return refuse(reply, 413, 'request_too_large', 'The request is larger than 32 MB');
-        }
-        const model = modelOf(body);
-        // A call that names no model is the provider's to refuse; one that names another is ours.
-        if (upstream.models && model !== undefined && !upstream.models.has(model)) {
-          return refuse(
-            reply,
-            403,
-            'permission_error',
-            `This run may call ${[...upstream.models].join(', ')}, not ${model}`,
-          );
-        }
-      }
       const key = token ?? '';
       if ((going.get(key) ?? 0) >= MAX_AT_ONCE) {
         return refuse(
@@ -232,6 +237,61 @@ export const relayRoutes: FastifyPluginAsync<{
         }
       };
       reply.raw.once('close', release);
+      // The run's own month, before its call costs anything more: a spent budget refuses the
+      // call, as it refuses a new run (budgets/service.ts).
+      if (
+        upstream.taskId &&
+        Date.now() - (budgetSeen.get(upstream.runId) ?? 0) > BUDGET_CHECKED_MS
+      ) {
+        try {
+          await requireBudget(db, upstream.taskId);
+          budgetSeen.delete(upstream.runId);
+          makeRoom(budgetSeen);
+          budgetSeen.set(upstream.runId, Date.now());
+        } catch (error) {
+          release();
+          if (error instanceof AppError && error.code === 'budget_reached') {
+            // 402, not 429: a spent month is not worth the CLI's retries.
+            return refuse(reply, 402, 'billing_error', error.message);
+          }
+          throw error;
+        }
+      }
+      // The body after the limit of calls at once, never before: a run that sends many large
+      // bodies at once is refused before they are read.
+      let body: Buffer | undefined;
+      if (request.method === 'POST') {
+        if (reading >= MAX_READING) {
+          release();
+          return refuse(
+            reply,
+            429,
+            'rate_limit_error',
+            'The relay is reading many calls: try again',
+          );
+        }
+        reading += 1;
+        try {
+          body = await bodyOf(request.body as Readable);
+        } finally {
+          reading -= 1;
+        }
+        if (!body) {
+          release();
+          return refuse(reply, 413, 'request_too_large', 'The request is larger than 32 MB');
+        }
+        const model = modelOf(body);
+        // A call that names no model is the provider's to refuse; one that names another is ours.
+        if (upstream.models && model !== undefined && !upstream.models.has(model)) {
+          release();
+          return refuse(
+            reply,
+            403,
+            'permission_error',
+            `This run may call ${[...upstream.models].join(', ')}, not ${model}`,
+          );
+        }
+      }
       const headers: Record<string, string> = {};
       for (const name of PASSED_ON) {
         const value = request.headers[name];
@@ -272,7 +332,10 @@ export const relayRoutes: FastifyPluginAsync<{
       const meter = new Meter(provider);
       const stream = (response.headers.get('content-type') ?? '').includes('text/event-stream');
       const asked = body ? modelOf(body) : undefined;
-      const counted = metering(meter, stream, () => {
+      let counted_ = false;
+      const count = () => {
+        if (counted_) return;
+        counted_ = true;
         const metered = meter.done(asked);
         if (metered) {
           void recordUsage(db, upstream.runId, metered).catch((error: unknown) =>
@@ -282,8 +345,15 @@ export const relayRoutes: FastifyPluginAsync<{
             ),
           );
         }
-      });
-      return reply.send(answer.pipe(counted));
+      };
+      const counted = metering(meter, stream, count);
+      // A caller that hangs up before the answer ends is still charged by the provider for what it
+      // made: what the relay saw of the answer is counted too, the input at least.
+      reply.raw.once('close', count);
+      // pipeline, not pipe: a hang-up aborts the provider's answer, whose error pipe leaves
+      // unheard, an uncaught exception. Fastify hears the counted stream's own.
+      pipeline(answer, counted, () => undefined);
+      return reply.send(counted);
     },
   });
 };

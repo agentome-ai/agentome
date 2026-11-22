@@ -114,7 +114,7 @@ async function startTriggers(
   if (touched.length > 0) {
     const reason =
       update.pipeline === 'failed' && project.onPipelineFailed
-        ? `The pipeline of your change request ${url} failed. Read its failures with code_host_get_pipeline_failures, fix them on the same branch and push.`
+        ? `The pipeline of your change request ${url} failed. Read its failures with code_host_get_pipeline_failures, fix them on the same branch and push. When a failure is not in your change (the runner, the infrastructure, a missing secret, a test your change does not touch), do not try to fix it: tell your owner with task_comment which job failed, why, and what a person must do.`
         : (update.review === 'changes_requested' || update.review === 'commented') &&
             project.onReview &&
             !byAgent

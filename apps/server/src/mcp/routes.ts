@@ -15,6 +15,7 @@ import {
   tasks,
   toolCalls,
 } from '@agentome/db';
+import { PROPOSE_INSTRUCTIONS } from '@agentome/shared';
 import type { FastifyReply } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import packageJson from '../../package.json' with { type: 'json' };
@@ -204,7 +205,13 @@ export const mcpRoutes: FastifyPluginAsyncZod<{
 
   /** One call: recorded first, then decided by the policy, then run if it may. */
   function callOf(run: Run, tool: Tool, policy: Policy) {
-    return async (args: Record<string, unknown>, extra: Extra) => {
+    return async (given: Record<string, unknown>, extra: Extra) => {
+      // Proposed instructions carry the text they replace, from here and not from the agent:
+      // the owner approves the change against it, and only while it still stands.
+      const args =
+        tool.name === PROPOSE_INSTRUCTIONS
+          ? { ...given, previous: await instructionsOf(run.agentId) }
+          : given;
       const decision = policy === 'allow' ? 'allowed' : policy === 'ask' ? 'pending' : 'denied';
       const reason = policy === 'deny' ? "This agent's policy does not allow this tool." : null;
       const [call] = await db
@@ -318,6 +325,14 @@ export const mcpRoutes: FastifyPluginAsyncZod<{
         return refusal(`${hostFailure(error.kind)}:\n${untrusted('the code host', error.message)}`);
       }
     };
+  }
+
+  async function instructionsOf(agentId: string): Promise<string> {
+    const [agent] = await db
+      .select({ instructions: agents.instructions })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    return agent?.instructions ?? '';
   }
 
   const summarize = (id: string, summary: string) =>

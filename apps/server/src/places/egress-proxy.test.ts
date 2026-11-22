@@ -147,9 +147,17 @@ describe('the egress rules', () => {
       '0.0.0.0',
       'fe80::1',
       '::ffff:127.0.0.1',
+      // The clouds' metadata, by whatever name, and inside NAT64's prefix.
+      'fd00:ec2::254',
+      '100.100.100.200',
+      '168.63.129.16',
+      '64:ff9b::a9fe:a9fe',
+      '64:ff9b::7f00:1',
     ]) {
       expect(addressAllowed(address, exact)).toBe(false);
     }
+    // A public address behind NAT64 is the public one.
+    expect(addressAllowed('64:ff9b::6812:202f', wild)).toBe(true);
     for (const address of [
       '10.1.2.3',
       '192.168.10.20',
@@ -165,12 +173,14 @@ describe('the egress rules', () => {
 
   it("keep a run's lines of the log to 600 a minute, so a run that holds its token cannot flood it", () => {
     const at = Date.UTC(2026, 10, 13, 12, 0, 0);
-    let kept = 0;
-    for (let n = 0; n < 700; n++) if (withinBudget('run flood', at + n)) kept++;
-    expect(kept).toBe(600);
+    const said: string[] = [];
+    for (let n = 0; n < 700; n++) said.push(withinBudget('run flood', at + n));
+    expect(said.filter((fits) => fits === 'yes')).toHaveLength(600);
+    // The first line past the budget is told of once.
+    expect(said.filter((fits) => fits === 'first-no')).toHaveLength(1);
     // Another run, and the next minute, have their own.
-    expect(withinBudget('run quiet', at)).toBe(true);
-    expect(withinBudget('run flood', at + 60_000)).toBe(true);
+    expect(withinBudget('run quiet', at)).toBe('yes');
+    expect(withinBudget('run flood', at + 60_000)).toBe('yes');
   });
 
   it('read the server name of a ClientHello, and nothing from what is not one', async () => {
@@ -274,6 +284,48 @@ describe('the egress proxy', () => {
       expect(status).toBe('HTTP/1.1 400 Bad Request');
     }
   });
+
+  it("keeps a token's last answer while the app does not answer, and asks little of random tokens", async () => {
+    let clock = 0;
+    let asks = 0;
+    let down = false;
+    const steady = egressProxy({
+      hostsOf: async (kind, id, token) => {
+        asks += 1;
+        if (down) throw new Error('the app answered 429');
+        return hostsOf(kind, id, token);
+      },
+      report: async () => {},
+      log: () => {},
+      now: () => clock,
+      lookup,
+      reachable: () => true,
+    });
+    await listen(steady);
+    const port = (steady.address() as AddressInfo).port;
+    const status = async (token: string) => {
+      const { socket, status: line } = await tunnel(
+        `opened.test:${tcpPort}`,
+        basic('run', token),
+        port,
+      );
+      socket.destroy();
+      return line.split(' ')[1];
+    };
+    expect(await status('the run token')).toBe('200');
+    // The app stops answering: the run that was let out a moment ago still is.
+    down = true;
+    clock += 16_000;
+    expect(await status('the run token')).toBe('200');
+    // Random tokens from one address: the app is asked of 30 new ones a minute, then not at all.
+    down = false;
+    asks = 0;
+    for (let i = 0; i < 40; i += 1) await status(`random ${i}`);
+    // 30 new tokens a minute from this address, the run's own the first of them.
+    expect(asks).toBe(29);
+    steady.closeAllConnections();
+    await new Promise((resolve) => steady.close(resolve));
+  }, 20_000);
 
   it('keeps an answer of the app 15 seconds, so a run does not ask it on every call', async () => {
     let clock = 0;

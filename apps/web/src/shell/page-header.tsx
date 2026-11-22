@@ -15,7 +15,7 @@ const column = 'grid-cols-[minmax(0,1fr)]';
 /**
  * The column a page lives in, centered once the screen is wider than it, with its header's
  * title and actions on the same edges as its content: tables, a task, a project, a team and the
- * editor get 1440 px, a page read as a document (admin, account) 992 px. Below that the column
+ * editor get 1440 px, a page read as a document (account, notifications) 992 px. Below that the column
  * is the screen, as before; on a 2560 px screen nothing is pinned left with half of it empty.
  */
 export const frame = {

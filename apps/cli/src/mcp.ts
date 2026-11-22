@@ -27,7 +27,10 @@ export function manageUrl(address: string): string {
   } catch {
     throw new Refusal(`AGENTOME_URL is not an address: ${address}`);
   }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+  // The token goes with every message: in the clear only to this machine.
+  const here =
+    ['localhost', '[::1]'].includes(url.hostname) || /^127\.\d+\.\d+\.\d+$/.test(url.hostname);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && here)) {
     throw new Refusal('AGENTOME_URL starts with https:// (or http:// on this machine)');
   }
   const path = url.pathname.replace(/\/+$/, '');

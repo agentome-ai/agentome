@@ -36,6 +36,22 @@ export const PUBLIC_REGISTRIES = [
   'production.cloudfront.docker.com',
 ];
 
+/**
+ * A host's name with its last two labels apart: who owns a name is read from its end, and a long
+ * name made to start like the company's (gitlab.corp.example.com.x.attacker.tld) shows its owner.
+ */
+function HostName({ host }: { host: string }) {
+  const labels = host.split('.');
+  const owner = labels.length > 2 ? labels.slice(-2).join('.') : host;
+  const before = labels.length > 2 ? `${labels.slice(0, -2).join('.')}.` : '';
+  return (
+    <span className="font-mono break-all">
+      <span className="text-ink-2">{before}</span>
+      <span className="font-medium text-ink">{owner}</span>
+    </span>
+  );
+}
+
 /** A refused host as the list writes it: its port only when it is not 443. */
 const patternOf = (refused: Refused) =>
   refused.port === 443 ? refused.host : `${refused.host}:${String(refused.port)}`;
@@ -49,6 +65,8 @@ export function NetworkSection(props: {
   const hosts = project.allowedHosts;
   const [refused, setRefused] = useState<Refused[]>([]);
   const [busy, setBusy] = useState(false);
+  // The refused host an admin is about to allow: asked first, its whole name shown.
+  const [allowing, setAllowing] = useState<Refused>();
 
   const loadRefused = useCallback(async () => {
     if (!isAdmin) return;
@@ -136,7 +154,12 @@ export function NetworkSection(props: {
               <Row
                 key={patternOf(one)}
                 lead={<Globe aria-hidden className="size-4 text-ink-3" strokeWidth={1.75} />}
-                name={<span className="truncate font-mono">{patternOf(one)}</span>}
+                name={
+                  <span>
+                    <HostName host={one.host} />
+                    {one.port !== 443 && <span className="font-mono text-ink-2">:{one.port}</span>}
+                  </span>
+                }
                 detail={`${String(one.count)} ${one.count === 1 ? 'time' : 'times'}, last ${timeAgo(one.lastAt)}`}
                 what={patternOf(one)}
                 action={
@@ -145,9 +168,7 @@ export function NetworkSection(props: {
                     variant="quiet"
                     disabled={busy}
                     aria-label={`Allow ${patternOf(one)}`}
-                    onClick={() =>
-                      void save([...hosts, patternOf(one)], `Couldn’t allow ${patternOf(one)}`)
-                    }
+                    onClick={() => setAllowing(one)}
                   >
                     Allow
                   </Button>
@@ -157,6 +178,44 @@ export function NetworkSection(props: {
           </ul>
         </div>
       )}
+      <D.Dialog
+        open={allowing !== undefined}
+        onOpenChange={(open) => !open && setAllowing(undefined)}
+      >
+        <D.DialogContent>
+          <D.DialogTitle>Allow this host?</D.DialogTitle>
+          <D.DialogDescription>
+            Runs of this project will reach it through the egress proxy. A run asked for it, and a
+            run may ask for anything: check whose name it is, which its last part says.
+          </D.DialogDescription>
+          {allowing && (
+            <p className="rounded-md border border-line bg-sunken px-3 py-2">
+              <HostName host={allowing.host} />
+              <span className="font-mono text-ink-2">:{allowing.port}</span>
+            </p>
+          )}
+          <D.DialogFooter>
+            <D.DialogClose asChild>
+              <Button type="button" variant="quiet">
+                Cancel
+              </Button>
+            </D.DialogClose>
+            <Button
+              variant="primary"
+              disabled={busy}
+              onClick={() => {
+                const one = allowing;
+                if (!one) return;
+                void save([...hosts, patternOf(one)], `Couldn’t allow ${patternOf(one)}`).then(() =>
+                  setAllowing(undefined),
+                );
+              }}
+            >
+              Allow host
+            </Button>
+          </D.DialogFooter>
+        </D.DialogContent>
+      </D.Dialog>
     </Section>
   );
 }
@@ -230,6 +289,14 @@ function AddHostDialog(props: { hosts: string[]; onAdd: (hosts: string[]) => Pro
               )}
             </Field>
             {problem && <FormError>{problem}</FormError>}
+            {missing.length > 0 && (
+              <p className="text-small text-ink-2">
+                Public package registries also take uploads: npm, Docker Hub and the Gradle plugin
+                portal publish what a token sends, and the Go proxy fetches what it is asked for.
+                With them, an agent that holds a token of its own could send out what it read. A
+                read-only mirror of your own, added by its name, is the safer way.
+              </p>
+            )}
           </div>
           <D.DialogFooter>
             {missing.length > 0 && (

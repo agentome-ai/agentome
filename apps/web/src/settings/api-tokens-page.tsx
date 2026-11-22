@@ -224,16 +224,22 @@ function NewTokenForm(props: { onMade: (token: Made) => void }) {
   const [scope, setScope] = useState<Scope>('write');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  const [unnamed, setUnnamed] = useState(false);
   const [made, setMade] = useState<Made>();
   const form = useRef<HTMLFormElement>(null);
 
   const days =
     expiry === 'never' ? null : expiry === 'custom' ? customDays(custom) : Number(expiry);
-  const ready = name.trim() !== '' && days !== undefined;
-
   async function create(event: FormEvent) {
     event.preventDefault();
-    if (pending || !ready) return;
+    if (pending || days === undefined) return;
+    // The name reads as the dialog's heading: Create says what is missing rather than staying
+    // grey without a reason.
+    if (name.trim() === '') {
+      setUnnamed(true);
+      form.current?.querySelector<HTMLElement>('[data-field="name"]')?.focus();
+      return;
+    }
     setPending(true);
     setError(undefined);
     try {
@@ -323,8 +329,13 @@ function NewTokenForm(props: { onMade: (token: Made) => void }) {
           placeholder="Token name"
           maxLength={100}
           value={name}
+          aria-invalid={unnamed || undefined}
+          aria-describedby={unnamed ? 'token-name-missing' : undefined}
           className="bg-transparent text-title text-ink outline-none placeholder:text-ink-3"
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) => {
+            setName(event.target.value);
+            setUnnamed(false);
+          }}
         />
         <p className="text-read text-ink-3">
           Name it after what will hold it: Claude Code on my MacBook, the weekly report script.
@@ -378,6 +389,11 @@ function NewTokenForm(props: { onMade: (token: Made) => void }) {
         {expiry === 'custom' && days === undefined && (
           <p className="text-small text-failed">A custom expiry is from 1 to 365 days.</p>
         )}
+        {unnamed && (
+          <p id="token-name-missing" className="text-small text-failed">
+            Name the token first.
+          </p>
+        )}
         {error && <p className="text-small text-failed">{error}</p>}
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line py-3 pr-4 pl-5 max-md:px-4">
@@ -388,7 +404,7 @@ function NewTokenForm(props: { onMade: (token: Made) => void }) {
         <Button
           variant="primary"
           type="submit"
-          disabled={pending || !ready}
+          disabled={pending || days === undefined}
           title="⌘↵"
           className="ml-auto"
         >
