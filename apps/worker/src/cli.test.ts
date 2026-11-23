@@ -10,7 +10,13 @@ describe("the server's address", () => {
     expect(serverUrlOf('http://[::1]:3000')).toBe('http://[::1]:3000');
     expect(serverUrlOf('http://app:3000')).toBe('http://app:3000');
     expect(serverUrlOf('http://agentome:3000')).toBe('http://agentome:3000');
-    for (const across of ['http://192.168.10.20:4440', 'http://agentome.example.com']) {
+    // The address a launcher gives a new place to connect at.
+    expect(serverUrlOf('http://agentome.internal:3000')).toBe('http://agentome.internal:3000');
+    for (const across of [
+      'http://192.168.10.20:4440',
+      'http://agentome.example.com',
+      'http://other.internal:3000',
+    ]) {
       expect(() => serverUrlOf(across)).toThrow(/plain HTTP across a network/);
     }
     expect(() => serverUrlOf('ftp://x')).toThrow(/not a server address/);

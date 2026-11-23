@@ -71,7 +71,9 @@ import { webhookRoutes } from './webhooks/routes.js';
  */
 export const loggerOptions = (level: Config['logLevel'], sink?: LogSink) => ({
   level,
-  mixin: () => logContext() ?? {},
+  // A copy: pino writes each line's own fields into the object the mixin returns, which would
+  // otherwise be the request's context and carry them into every later line of the request.
+  mixin: () => ({ ...logContext() }),
   ...(sink && {
     stream: {
       write(line: string) {

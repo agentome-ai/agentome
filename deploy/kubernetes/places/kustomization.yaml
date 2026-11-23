@@ -15,7 +15,7 @@ resources:
 # The same release as the app's kustomization.yaml.
 images:
   - name: docker.io/agentome/agentome
-    newTag: 0.4.1
+    newTag: 0.4.2
 
 # The launcher's settings (deploy/CONFIG.md); a change here restarts it on the next apply.
 configMapGenerator:

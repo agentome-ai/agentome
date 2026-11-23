@@ -144,12 +144,7 @@ export interface PlaceNetwork {
   };
 }
 
-/**
- * The app's name on the places' networks. Not `app` nor `agentome`: a way around a proxy names a
- * host there, and curl, git and Codex read the name as a domain's tail, so `app` also sent every
- * host in `.app` around it. No public domain ends in `.internal`.
- */
-export const SERVER_NAME = 'agentome.internal';
+export { SERVER_NAME } from '@agentome/shared';
 
 /** The place's environment: a person's place, calling out through the egress proxy. */
 export function placeEnv(network: PlaceNetwork, id: string): [string, string][] {

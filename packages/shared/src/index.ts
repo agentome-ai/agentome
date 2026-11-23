@@ -3,6 +3,14 @@ import { z } from 'zod';
 // Values shared by the database schema, the server and the worker. The database
 // enums are generated from these lists, so adding a value here needs a migration.
 
+/**
+ * The app's name on the places' networks. Not `app` nor `agentome`: a way around a proxy names a
+ * host there, and curl, git and Codex read the name as a domain's tail, so `app` also sent every
+ * host in `.app` around it. No public domain ends in `.internal`. A place connects to the app by
+ * it, over plain HTTP inside the installation.
+ */
+export const SERVER_NAME = 'agentome.internal';
+
 export const RunStatus = z.enum([
   'queued',
   'running',

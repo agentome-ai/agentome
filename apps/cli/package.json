@@ -1,6 +1,6 @@
 {
   "name": "agentome",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Install the Agentome server, connect this computer to one, or reach it as an MCP server.",
   "mcpName": "io.github.agentome-ai/agentome",
   "license": "Elastic-2.0",

@@ -154,7 +154,7 @@ public repository: sigstore's certificate names it and the tag. Check an image b
 it into a place the company trusts, with [cosign](https://docs.sigstore.dev/cosign/):
 
 ```sh
-cosign verify docker.io/agentome/agentome:0.2.1 \
+cosign verify docker.io/agentome/agentome:<version> \
   --certificate-identity-regexp '^https://github.com/agentome-ai/agentome/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -961,11 +961,23 @@ there, or from a backup made before 0.2.1, `tar -xzOf agentome-2026-10-21.tar.gz
 
 ### Updating on Kubernetes
 
-Take a backup, set `newTag` in `kustomization.yaml` and `kubectl apply -k deploy/kubernetes`.
+Take the release's `deploy/kubernetes/` and carry your changes over to it: the namespace, the
+address, the settings and the Ingress, and the same `newTag` in both kustomizations. A release
+may change the manifests too, such as the places' policies and roles, so apply the files, not
+the tag alone. Then, with a backup taken (below):
+
+```sh
+kubectl apply -k deploy/kubernetes
+kubectl -n agentome rollout status deploy/agentome
+kubectl apply -k deploy/kubernetes/places
+kubectl -n agentome-places rollout status deploy/place-launcher deploy/place-egress
+```
+
 The old pod stops before the new one starts, and the new one applies its migrations before it
-reports ready; `kubectl -n agentome logs -f deploy/agentome` shows the progress. Rolling back
-is the same with the earlier tag, under the conditions of [Rolling back](#rolling-back). A
-change to the Secret reaches the server only when it starts again:
+reports ready; `kubectl -n agentome logs -f deploy/agentome` shows the progress. A place gets
+the new image when it next wakes; one that is awake keeps the old one until it sleeps. Rolling
+back is the same with the earlier release's files, under the conditions of [Rolling
+back](#rolling-back). A change to the Secret reaches the server only when it starts again:
 `kubectl -n agentome rollout restart deploy/agentome`.
 
 ### Backing up and restoring on Kubernetes
@@ -982,7 +994,7 @@ volume, then the server starts again:
 ```sh
 kubectl -n agentome scale deploy/agentome --replicas=0
 kubectl -n agentome run agentome-restore --rm -i --restart=Never \
-  --image=docker.io/agentome/agentome:0.4.1 --override-type=strategic --overrides='
+  --image=docker.io/agentome/agentome:0.4.2 --override-type=strategic --overrides='
 {"spec": {"securityContext": {"runAsNonRoot": true, "runAsUser": 1000, "runAsGroup": 1000,
     "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
   "containers": [{"name": "agentome-restore", "envFrom": [{"secretRef": {"name": "agentome"}}],

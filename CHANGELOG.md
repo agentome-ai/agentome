@@ -6,6 +6,21 @@ What changed in each release of Agentome. The format follows
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-23
+
+A fix release: since 0.4.0 a new place on the server could not start. **Update before you make
+places**; places made before 0.4.0 were not affected. On Kubernetes, apply both
+`deploy/kubernetes` and `deploy/kubernetes/places` (OPERATIONS, Updating on Kubernetes).
+
+### Fixed
+
+- A new place on the server connects to the server again. Since 0.4.0 the launcher gave it the app's address inside the installation, which the place refused as plain HTTP across a network, so making a place failed, with compose and on Kubernetes. Places connected before 0.4.0 kept working.
+- A request's log lines no longer carry the fields of its earlier lines: a refused host's egress line showed the list entry and the bytes of the connection logged before it.
+
+### Changed
+
+- OPERATIONS, Updating on Kubernetes: take the release's manifests and apply the places' too, then wait for both rollouts; before, the section changed the app's tag alone and left the places' launcher, proxy, policies and roles on the old release. The image check names `<version>` instead of an old release.
+
 ## [0.4.1] - 2026-11-23
 
 A security release: the fourth review's fixes that need no change in how you run Agentome. Every
@@ -224,7 +239,8 @@ to install, configure and update it in [deploy/OPERATIONS.md](deploy/OPERATIONS.
   server, monthly budgets, quality reports, Keycloak sign-in and more agents need a key.
 - Images for amd64 and arm64 on Docker Hub: `agentome/agentome` and `agentome/agentome-seat`.
 
-[Unreleased]: https://github.com/agentome-ai/agentome/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/agentome-ai/agentome/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/agentome-ai/agentome/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/agentome-ai/agentome/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/agentome-ai/agentome/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/agentome-ai/agentome/compare/v0.2.0...v0.3.0

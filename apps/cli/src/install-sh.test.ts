@@ -103,7 +103,7 @@ describe('deploy/install.sh', () => {
       runtimes: 'runc runsc runsc-docker ',
     });
     expect(done.code, done.out).toBe(0);
-    expect(value(done.env, 'AGENTOME_VERSION')).toBe('0.4.1');
+    expect(value(done.env, 'AGENTOME_VERSION')).toBe('0.4.2');
     expect(value(done.env, 'AGENTOME_PROXY_HOST')).toBe('agentome.example.com');
     expect(value(done.env, 'AGENTOME_PUBLIC_URL')).toBe('https://agentome.example.com');
     expect(value(done.env, 'COMPOSE_PROFILES')).toBe('proxy,places');
@@ -193,7 +193,7 @@ describe('deploy/install.sh', () => {
       });
     const status = run('status');
     expect(status.status, status.stderr).toBe(0);
-    expect(status.stdout).toContain('Version: 0.4.1');
+    expect(status.stdout).toContain('Version: 0.4.2');
     expect(status.stdout).toContain('Address: https://agentome.example.com');
     expect(run('setup-code').stdout).toContain('CODE-1234');
     // A backup lands where the admin is, not in the server's folder, and only they may read it.

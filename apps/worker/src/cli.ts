@@ -2,11 +2,18 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { banner } from '@agentome/shared';
+import { banner, SERVER_NAME } from '@agentome/shared';
 
 import { teamHookMain } from './claude/team-hook.js';
 import { pair, ServerError } from './client.js';
-import { alive, describe, placeConnection, readConnection, readSettings, readState } from './config.js';
+import {
+  alive,
+  describe,
+  placeConnection,
+  readConnection,
+  readSettings,
+  readState,
+} from './config.js';
 import { stderrLog, UserError, writeConnection } from './config.js';
 import type { Settings } from './config.js';
 import { ENGINES, runWorker, WAITS_FOR_SANDBOX } from './loop.js';
@@ -197,8 +204,8 @@ function ago(iso: string): string {
 
 /**
  * The address as typed, without credentials, query or a trailing slash; a path is kept. Plain
- * HTTP only to this machine or to a service by its one-word name (`app`, `agentome` beside it in
- * compose or a cluster): across a network, whoever sits on it would read the seat's token and
+ * HTTP only to this machine, to a service by its one-word name (`app`, `agentome` beside it in
+ * compose or a cluster) or to the app by the name its launcher gives places: across a network, whoever sits on it would read the seat's token and
  * could hand the worker runs of their own.
  */
 export function serverUrlOf(input: string): string {
@@ -212,7 +219,8 @@ export function serverUrlOf(input: string): string {
     host.endsWith('.localhost') ||
     /^127\.\d+\.\d+\.\d+$/.test(host) ||
     host === '::1' ||
-    /^[a-z0-9-]+$/i.test(host);
+    /^[a-z0-9-]+$/i.test(host) ||
+    host === SERVER_NAME;
   if (url.protocol === 'http:' && !near) {
     throw new UserError(
       `${input} is plain HTTP across a network: connect to the server's https:// address.`,
