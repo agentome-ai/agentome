@@ -7,6 +7,7 @@ import {
   eq,
   inArray,
   isNotNull,
+  isNull,
   runArtifacts,
   runs,
   sql,
@@ -156,14 +157,14 @@ export async function wakeParents(db: Db): Promise<string[]> {
           .select({ id: tasks.id, status: agents.status })
           .from(tasks)
           .innerJoin(agents, eq(agents.id, tasks.agentId))
-          .where(eq(tasks.id, id))
+          .where(and(eq(tasks.id, id), isNull(tasks.deletedAt)))
           .for('update', { of: tasks });
         if (parent?.status !== 'active') return null;
         const children = await tx
           .select({ id: tasks.id, title: tasks.title, agent: agents.name })
           .from(tasks)
           .innerJoin(agents, eq(agents.id, tasks.agentId))
-          .where(eq(tasks.parentTaskId, id))
+          .where(and(eq(tasks.parentTaskId, id), isNull(tasks.deletedAt)))
           .orderBy(asc(tasks.createdAt));
         const all = await tx
           .select()
@@ -218,13 +219,13 @@ export async function treeOf(db: Db, task: { id: string; parentTaskId: string | 
         .select({ id: tasks.id, title: tasks.title, agent: agents.name })
         .from(tasks)
         .innerJoin(agents, eq(agents.id, tasks.agentId))
-        .where(eq(tasks.id, task.parentTaskId))
+        .where(and(eq(tasks.id, task.parentTaskId), isNull(tasks.deletedAt)))
     : [];
   const children = await db
     .select({ id: tasks.id, title: tasks.title, status: tasks.status, agent: agents.name })
     .from(tasks)
     .innerJoin(agents, eq(agents.id, tasks.agentId))
-    .where(eq(tasks.parentTaskId, task.id))
+    .where(and(eq(tasks.parentTaskId, task.id), isNull(tasks.deletedAt)))
     .orderBy(asc(tasks.createdAt));
   const lastRuns = children.length
     ? await db

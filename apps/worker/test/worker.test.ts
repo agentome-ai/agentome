@@ -607,7 +607,7 @@ describe("a person's place", () => {
     writeFileSync(join(signIn, '.claude', '.credentials.json'), 'the sign-in');
     const run = fake.enqueue(launchPackage());
     const worker = start(
-      { CLAUDE_FAKE_FIXTURE: fixture('success-text.jsonl') },
+      { CLAUDE_FAKE_FIXTURE: fixture('success-text.jsonl'), CLAUDE_FAKE_VERSION: '2.1.280' },
       {
         settings: {
           home: seatHome,
@@ -638,6 +638,39 @@ describe("a person's place", () => {
     // What a run could leave for the next is gone; the sign-in stays.
     expect(existsSync(join(signIn, '.claude', 'skills'))).toBe(false);
     expect(readFileSync(join(signIn, '.claude', '.credentials.json'), 'utf8')).toBe('the sign-in');
+    rmSync(seatHome, { recursive: true, force: true });
+  }, 20_000);
+
+  it('starts no run of a Claude Code older than the one its file tools were checked at', async () => {
+    const seatHome = mkdtempSync('/tmp/agentome-seat-');
+    await fake.close();
+    fake = await startFakeServer({ placeHome: seatHome });
+    connection = { serverUrl: fake.url, seatId: 'seat', token: fake.seatToken };
+    const signIn = join(dir, 'person');
+    mkdirSync(join(signIn, '.claude'), { recursive: true });
+    const run = fake.enqueue(launchPackage());
+    const worker = start(
+      { CLAUDE_FAKE_FIXTURE: fixture('success-text.jsonl'), CLAUDE_FAKE_VERSION: '2.1.90' },
+      {
+        settings: {
+          home: seatHome,
+          idleMinutes: 15,
+          keepWorkspaces: false,
+          server: false,
+          place: true,
+          signInHome: signIn,
+        },
+      },
+    );
+    await vi.waitFor(() => expect(run.finish?.status).toBe('failed'), { timeout: 10_000 });
+    worker.stop();
+    await worker.done;
+    const errors = [...run.events.values()].filter((event) => event.type === 'error');
+    expect(
+      errors.map((event) => (event as { payload?: { code?: string } }).payload?.code),
+    ).toContain('sandbox_unavailable');
+    // No container was made for it: the check comes first.
+    expect(fake.containers).toEqual([]);
     rmSync(seatHome, { recursive: true, force: true });
   }, 20_000);
 

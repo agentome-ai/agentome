@@ -6,6 +6,7 @@ import {
   type Db,
   desc,
   eq,
+  isNull,
   notifications,
   runs,
   taskComments,
@@ -69,7 +70,7 @@ export async function commentAsPerson(
   const [task] = await db
     .select({ id: tasks.id })
     .from(tasks)
-    .where(and(eq(tasks.id, taskId), grantedTo(userId, tasks.agentId)));
+    .where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt), grantedTo(userId, tasks.agentId)));
   if (!task) throw new AppError('not_found', 'Task not found');
   return db.transaction(async (tx) => {
     const [comment] = await tx

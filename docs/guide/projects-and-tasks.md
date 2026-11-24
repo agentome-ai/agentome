@@ -22,6 +22,8 @@ task is recorded with its plan, transcript, report and cost.
   - [The task page](#the-task-page)
   - [The thread](#the-thread)
   - [Status and review](#status-and-review)
+  - [Delete a task](#delete-a-task)
+  - [Change or delete several tasks](#change-or-delete-several-tasks)
   - [Tasks from Jira](#tasks-from-jira)
   - [Scheduled tasks](#scheduled-tasks)
 - [Runs](#runs)
@@ -197,7 +199,7 @@ address and secret under Admin → Connections, in the connection's **Webhook se
 
 ### Delete a project
 
-1. On the project's page, open **More actions** and choose **Delete project…**.
+1. On the project's page, select **Delete project**.
 2. Confirm with **Delete project**.
 
 Its connections and their tokens, its knowledge and its agents' assignments go. Its tasks and runs
@@ -348,6 +350,26 @@ On the change request cards under **Changes**, the review state comes from the c
 **Approved** or **Changes requested**, together with the pipeline (**CI passed**, **CI failed** or
 **CI running**) and the state (**Draft**, **Merged** or **Closed**). Agentome learns the review from
 the code host's webhooks, and asks the code host for the pipeline and the state when the page opens.
+
+### Delete a task
+
+1. On the task's page, select **Delete task**.
+2. Confirm with **Delete task**.
+
+The task leaves the Tasks list, its project and its agent's pages, and takes no more runs. Its runs
+and what they cost stay in the agent's and the project's history and budgets. A task from Jira does
+not come back when its issue changes. Whoever may change and run a task may delete it, but not while
+a run of it is queued or going: cancel the run first. Deleting cannot be undone from the page.
+
+### Change or delete several tasks
+
+1. On **Tasks**, select the box before each task, or the box in the header for every task shown.
+   With a row in focus, **X** selects it too.
+2. Above the list, choose **Mark as done**, **Move to review**, **Reopen** or **Delete**. Delete asks
+   first.
+
+Each task is changed on its own. A task that cannot be, such as one whose run is going, stays
+selected, with the reason under the buttons. **Clear** or **Esc** lets go of the selection.
 
 ### Tasks from Jira
 

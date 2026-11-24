@@ -552,6 +552,22 @@ export async function runClaude(
   return settle((await attempt(undefined)).outcome);
 }
 
+/**
+ * The oldest Claude Code a person's place runs. There its file tools work beside the person's
+ * sign-in, kept from it by the deny rules alone; this version resolves a link before it checks
+ * them, refuses a file whose link changes under it, and has no Grep or Glob, whose search would
+ * not run in the sandbox. scripts/check-claude-files.sh shows it against the pinned CLI.
+ */
+export const PLACE_MIN = [2, 1, 280] as const;
+
+/** Why a place may not run this Claude Code, or nothing. */
+export function placeRefusal(version: string | undefined): string | undefined {
+  const parts = (version ?? '0.0.0').split('.').map(Number);
+  const differs = PLACE_MIN.findIndex((part, i) => (parts[i] ?? 0) !== part);
+  if (differs === -1 || (parts[differs] ?? 0) > (PLACE_MIN[differs] ?? 0)) return undefined;
+  return `Claude Code ${version ?? 'of an unknown version'} is older than ${PLACE_MIN.join('.')}, the oldest whose file tools a place keeps from the sign-in beside them. The run did not start; the place installs the platform's version when it next wakes.`;
+}
+
 export interface ClaudeProbe {
   readonly installed: boolean;
   readonly version?: string;

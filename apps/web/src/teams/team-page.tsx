@@ -1,4 +1,4 @@
-import { Copy, Ellipsis, UsersRound } from 'lucide-react';
+import { Copy, UsersRound } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { type ApiError, api, asApiError } from '../api';
@@ -10,12 +10,6 @@ import { Button } from '../ui/button';
 import { cn } from '../ui/cn';
 import { Combobox } from '../ui/combobox';
 import * as D from '../ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '../ui/dropdown-menu';
 import { FormError } from '../ui/field';
 import { InPlace } from '../ui/in-place';
 import { AgentTile, tintOf } from '../ui/tint';
@@ -171,7 +165,7 @@ export function TeamPage() {
             <Copy aria-hidden="true" className="size-3.5" />
             {busy ? 'Copying…' : 'Duplicate'}
           </Button>
-          <TeamMenu team={team} />
+          <DeleteTeam team={team} />
         </>,
         heading,
       )}
@@ -197,8 +191,8 @@ export function TeamPage() {
   );
 }
 
-/** The team's other actions: Delete, asked first; the agents stay, the team and its order go. */
-function TeamMenu({ team }: { team: TeamSummary }) {
+/** Delete, asked first: the agents stay, the team and its order go. */
+function DeleteTeam({ team }: { team: TeamSummary }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string>();
@@ -220,18 +214,11 @@ function TeamMenu({ team }: { team: TeamSummary }) {
 
   return (
     <D.Dialog open={open} onOpenChange={setOpen}>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="quiet" size="icon" aria-label="More actions">
-            <Ellipsis aria-hidden="true" className="size-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem variant="danger" onSelect={() => setOpen(true)}>
-            Delete team…
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <D.DialogTrigger asChild>
+        <Button variant="quiet" className="hover:text-failed">
+          Delete team
+        </Button>
+      </D.DialogTrigger>
       <D.DialogContent>
         <D.DialogTitle>Delete {team.name}?</D.DialogTitle>
         <D.DialogDescription>

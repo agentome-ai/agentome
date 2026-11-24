@@ -431,6 +431,29 @@ describe('a task', () => {
     ]);
   });
 
+  it('is deleted once asked, and the tasks list opens', async () => {
+    const { calls, user } = renderTask({
+      [`GET ${url}`]: task,
+      [`DELETE ${url}`]: () => ({ status: 204 }),
+      'GET /api/tasks?limit=50': { tasks: [], nextBefore: null },
+    });
+    await user.click(await screen.findByRole('button', { name: 'Delete task' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete Add a README?' });
+    expect(within(dialog).getByText(/Its runs and what they cost stay/)).toBeTruthy();
+    await user.click(within(dialog).getByRole('button', { name: 'Delete task' }));
+    await waitFor(() => expect(calls.some((call) => call.route === `DELETE ${url}`)).toBe(true));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('cannot be deleted while a run of it goes', async () => {
+    renderTask({
+      [`GET ${url}`]: { ...task, runs: [run('r3', 'running', { endedAt: null })] },
+    });
+    const button = await screen.findByRole('button', { name: 'Delete task' });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.getAttribute('aria-describedby')).toBeTruthy();
+  });
+
   it('changes its title and description where they are read', async () => {
     const { calls, user } = renderTask({
       [`GET ${url}`]: task,

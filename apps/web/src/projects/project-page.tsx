@@ -1,4 +1,4 @@
-import { Ellipsis, Folder } from 'lucide-react';
+import { Folder } from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
@@ -11,12 +11,7 @@ import { Button } from '../ui/button';
 import { cn } from '../ui/cn';
 import { Combobox } from '../ui/combobox';
 import * as D from '../ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '../ui/dropdown-menu';
+import { DropdownMenuItem } from '../ui/dropdown-menu';
 import { FormError } from '../ui/field';
 import { InPlace } from '../ui/in-place';
 import { Section } from '../ui/section';
@@ -146,7 +141,7 @@ export function ProjectPage() {
         actions={
           <>
             {project.team && <NewProjectTask project={project} />}
-            {canEdit && <ProjectMenu project={project} />}
+            {canEdit && <DeleteProject project={project} />}
           </>
         }
       />
@@ -342,8 +337,8 @@ function AddAgent({
   );
 }
 
-/** The project's other actions: Delete, asked first; the project and its connections go, its tasks stay. */
-function ProjectMenu({ project }: { project: ProjectView }) {
+/** Delete, asked first: the project and its connections go, its tasks stay. */
+function DeleteProject({ project }: { project: ProjectView }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string>();
@@ -366,18 +361,11 @@ function ProjectMenu({ project }: { project: ProjectView }) {
 
   return (
     <D.Dialog open={open} onOpenChange={setOpen}>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="quiet" size="icon" aria-label="More actions">
-            <Ellipsis aria-hidden="true" className="size-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem variant="danger" onSelect={() => setOpen(true)}>
-            Delete project…
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <D.DialogTrigger asChild>
+        <Button variant="quiet" className="hover:text-failed">
+          Delete project
+        </Button>
+      </D.DialogTrigger>
       <D.DialogContent>
         <D.DialogTitle>Delete {project.name}?</D.DialogTitle>
         <D.DialogDescription>

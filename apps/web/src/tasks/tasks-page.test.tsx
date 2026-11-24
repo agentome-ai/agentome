@@ -139,6 +139,54 @@ describe('Tasks', () => {
       ),
     ).toBeTruthy();
   });
+
+  it('moves the picked tasks at once, and keeps the one refused picked with its reason', async () => {
+    const tasks = [summary('k1', 'Add a README'), summary('k2', 'Fix the flaky test')];
+    const { calls, user } = renderTasks({
+      'GET /api/tasks?status=open': page(tasks),
+      'PATCH /api/tasks/k1': { ...tasks[0], status: 'done' },
+      'PATCH /api/tasks/k2': failure(409, 'run_in_progress', 'Its run goes on.'),
+    });
+    const table = within(await screen.findByRole('table'));
+    await user.click(table.getByRole('checkbox', { name: 'Select Add a README' }));
+    // X on a focused row picks it, as the box does.
+    table.getByRole('link', { name: 'Fix the flaky test' }).focus();
+    await user.keyboard('x');
+    const bar = within(screen.getByRole('toolbar', { name: 'Selected tasks' }));
+    expect(bar.getByText('2 selected')).toBeTruthy();
+    // The filters give their place to the bar while tasks are picked.
+    expect(screen.queryByRole('tablist')).toBeNull();
+
+    await user.click(bar.getByRole('button', { name: 'Mark as done' }));
+    expect(calls.filter((call) => call.route.startsWith('PATCH')).map((call) => call.body)).toEqual(
+      [{ status: 'done' }, { status: 'done' }],
+    );
+    expect(
+      await screen.findByText('Not changed: Fix the flaky test: Its run goes on.'),
+    ).toBeTruthy();
+    expect(screen.getByText('1 selected')).toBeTruthy();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('toolbar')).toBeNull();
+    expect(screen.getByRole('tablist')).toBeTruthy();
+  });
+
+  it('deletes every task shown after one question', async () => {
+    const tasks = [summary('k1', 'Add a README'), summary('k2', 'Fix the flaky test')];
+    const { calls, user } = renderTasks({
+      'GET /api/tasks?status=open': page(tasks),
+      'DELETE /api/tasks/k1': () => ({ status: 204 }),
+      'DELETE /api/tasks/k2': () => ({ status: 204 }),
+    });
+    await user.click(await screen.findByRole('checkbox', { name: 'Select all tasks shown' }));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Delete 2 tasks?' }));
+    await user.click(dialog.getByRole('button', { name: 'Delete 2 tasks' }));
+    await vi.waitFor(() =>
+      expect(calls.filter((call) => call.route.startsWith('DELETE')).length).toBe(2),
+    );
+    await vi.waitFor(() => expect(screen.queryByRole('toolbar')).toBeNull());
+  });
 });
 
 /** Opens New task from the page's button, once the dialog has the person's agents. */

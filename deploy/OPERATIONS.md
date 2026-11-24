@@ -628,6 +628,14 @@ own token, which its worker and terminal use, opens Agentome, the vendors and
 the place is deleted. Claude Code's telemetry and updater are off in a place. When a new CLI
 release calls a host the list lacks, the proxy's refusals in the log name it.
 
+In a run's CLI container Claude Code's file tools work beside the sign-in, kept from it by their
+deny rules. A place runs no Claude Code older than 2.1.280: older ones end the run with
+`sandbox_unavailable`. `scripts/check-claude-files.sh` installs the version the seat image pins
+and runs it, with no network and no model, against links to a stand-in sign-in and a file that
+turns into one while it is read and written; it fails if any of it comes back or changes. CI runs
+it with the image; run it yourself before you build a seat image with another
+`CLAUDE_CODE_VERSION`.
+
 An admin lists a project's hosts in `allowedHosts`, in the browser (`PATCH /api/projects/:id` with
 the session; an API token is refused, as for the services): a full host name, `*.example.com` for every name under it, or an IPv4 address,
 with `:port` when not 443, such as the company's GitLab, Jira and package mirror. A single-label
@@ -994,7 +1002,7 @@ volume, then the server starts again:
 ```sh
 kubectl -n agentome scale deploy/agentome --replicas=0
 kubectl -n agentome run agentome-restore --rm -i --restart=Never \
-  --image=docker.io/agentome/agentome:0.4.2 --override-type=strategic --overrides='
+  --image=docker.io/agentome/agentome:0.4.3 --override-type=strategic --overrides='
 {"spec": {"securityContext": {"runAsNonRoot": true, "runAsUser": 1000, "runAsGroup": 1000,
     "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
   "containers": [{"name": "agentome-restore", "envFrom": [{"secretRef": {"name": "agentome"}}],

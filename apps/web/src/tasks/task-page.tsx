@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { useAgents } from '../agents/agents-data';
 import { type ApiError, api, asApiError } from '../api';
@@ -9,6 +9,8 @@ import { frame, PageHeader } from '../shell/page-header';
 import { EmptyState, LoadingState } from '../shell/states';
 import { Button } from '../ui/button';
 import { cn } from '../ui/cn';
+import * as D from '../ui/dialog';
+import { FormError } from '../ui/field';
 import { Properties, Property, textLink } from '../ui/properties';
 import { formatWhen } from '../runs/run-data';
 import { TaskActivity } from './task-activity';
@@ -188,6 +190,7 @@ function TaskView({ id }: { id: string }) {
       {header(
         task.title,
         <>
+          <DeleteTask task={task} going={going} describedBy={going ? `${ids}-reason` : undefined} />
           {/* Not disabled while it saves: focus would drop out of the page. */}
           <Button onClick={() => void change(done ? 'open' : 'done')}>
             {done ? 'Reopen' : 'Mark as done'}
@@ -342,4 +345,60 @@ function TaskView({ id }: { id: string }) {
 function Description({ body }: { body: string }) {
   if (!body.trim()) return <p className="text-ink-3">No description.</p>;
   return <Prose>{body}</Prose>;
+}
+
+/** Delete, asked first: the task goes from the lists, its runs stay. */
+function DeleteTask(props: { task: Task; going: boolean; describedBy: string | undefined }) {
+  const { task } = props;
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string>();
+  const [pending, setPending] = useState(false);
+
+  async function remove() {
+    setPending(true);
+    setError(undefined);
+    try {
+      await api(`/api/tasks/${task.id}`, { method: 'DELETE' });
+      setOpen(false);
+      await navigate('/tasks');
+    } catch (caught) {
+      setError(asApiError(caught).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <D.Dialog open={open} onOpenChange={setOpen}>
+      {/* A run that goes on would write to a task nobody sees: it is cancelled first. */}
+      <D.DialogTrigger asChild>
+        <Button
+          variant="quiet"
+          className="hover:text-failed"
+          disabled={props.going}
+          aria-describedby={props.describedBy}
+        >
+          Delete task
+        </Button>
+      </D.DialogTrigger>
+      <D.DialogContent>
+        <D.DialogTitle>Delete {task.title}?</D.DialogTitle>
+        <D.DialogDescription>
+          It leaves the task lists and takes no more runs. Its runs and what they cost stay in the
+          agent&apos;s and the project&apos;s history.
+          {task.source === 'jira' && ' Its Jira issue stays in Jira and does not bring it back.'}
+        </D.DialogDescription>
+        {error && <FormError>{error}</FormError>}
+        <D.DialogFooter>
+          <D.DialogClose asChild>
+            <Button variant="secondary">Cancel</Button>
+          </D.DialogClose>
+          <Button variant="danger" disabled={pending} onClick={() => void remove()}>
+            Delete task
+          </Button>
+        </D.DialogFooter>
+      </D.DialogContent>
+    </D.Dialog>
+  );
 }

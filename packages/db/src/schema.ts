@@ -556,6 +556,9 @@ export const tasks = pgTable(
     status: taskStatusEnum('status').notNull().default('open'),
     createdBy: fk('created_by', () => users.id).notNull(),
     createdAt: createdAt(),
+    // When someone deleted it: it leaves every list and takes no run, while its runs, their spend
+    // and its thread stay, and its Jira issue finds it here instead of making it again.
+    deletedAt: at('deleted_at'),
   },
   (t) => [
     index('tasks_agent_id_idx').on(t.agentId),

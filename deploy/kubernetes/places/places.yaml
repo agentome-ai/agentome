@@ -103,7 +103,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: place-launcher
-          image: docker.io/agentome/agentome:0.4.2
+          image: docker.io/agentome/agentome:0.4.3
           command: ['agentome', 'place-launcher']
           envFrom:
             - configMapRef:
@@ -196,7 +196,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: place-egress
-          image: docker.io/agentome/agentome:0.4.2
+          image: docker.io/agentome/agentome:0.4.3
           command: ['agentome', 'place-egress']
           # Its key, which the app takes its word by: `agentome egress-key` prints it, from the
           # installation's secret, for the places' Secret (deploy/OPERATIONS.md, Kubernetes).

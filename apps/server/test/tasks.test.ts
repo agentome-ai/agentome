@@ -79,7 +79,7 @@ function cookieOf(response: LightMyRequestResponse): string {
 
 const call = (
   who: Person,
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   url: string,
   payload?: object,
 ) => app.inject({ method, url, payload, headers: { cookie: who.cookie } });
@@ -477,6 +477,39 @@ describe('changing a task', () => {
       const refused = await call(maria, 'PATCH', url, body);
       expect(refused.statusCode, JSON.stringify(body)).toBe(400);
     }
+  });
+});
+
+describe('deleting a task', () => {
+  it('takes it out of every list and from new runs, and keeps its runs', async () => {
+    const maria = await person();
+    const stranger = await person();
+    const { task, run } = await create(maria, {
+      agentId: (await agentOf(maria)).id,
+      title: 'Throwaway',
+    });
+    const url = `/api/tasks/${task.id}`;
+    // Its run is queued: a run must not go on writing to a task nobody sees.
+    const busy = await call(maria, 'DELETE', url);
+    expect(busy.statusCode).toBe(409);
+    expect(busy.json()).toMatchObject({ error: { code: 'run_in_progress' } });
+    await finish(run?.id ?? '', 'done');
+    // Only whoever may change it.
+    expect((await call(stranger, 'DELETE', url)).statusCode).toBe(404);
+
+    const deleted = await call(maria, 'DELETE', url);
+    expect(deleted.statusCode, deleted.body).toBe(204);
+    expect((await list(maria)).tasks.map((item) => item.id)).not.toContain(task.id);
+    expect((await call(maria, 'GET', url)).statusCode).toBe(404);
+    expect((await call(maria, 'PATCH', url, { title: 'Back' })).statusCode).toBe(404);
+    expect((await call(maria, 'POST', `${url}/run`)).statusCode).toBe(404);
+    expect(
+      (await call(maria, 'POST', `${url}/comments`, { body: 'Still there?' })).statusCode,
+    ).toBe(404);
+    expect((await call(maria, 'DELETE', url)).statusCode).toBe(404);
+    // Its run, and so its spend, stay.
+    const kept = await db.select({ id: runs.id }).from(runs).where(eq(runs.taskId, task.id));
+    expect(kept.map((row) => row.id)).toEqual([run?.id]);
   });
 });
 

@@ -8,7 +8,9 @@ import { ApiErrorState } from '../session';
 import { frame, PageHeader } from '../shell/page-header';
 import { EmptyState, LoadingState } from '../shell/states';
 import { Button } from '../ui/button';
+import { Checkbox } from '../ui/checkbox';
 import { cn } from '../ui/cn';
+import * as D from '../ui/dialog';
 import { FormError } from '../ui/field';
 import { Status, statusInCell, statusLabel } from '../ui/status';
 import { Table, TableCell, TableHead, TableRow } from '../ui/table';
@@ -16,7 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { AgentCell, AgentTile, leadTile } from '../ui/tint';
 import { NewTaskDialog } from './new-task-dialog';
 import { TaskStatusMark } from './task-status';
-import { isInWork, type TaskPage, type TaskSummary } from './tasks-data';
+import { isInWork, type TaskPage, type TaskStatus, type TaskSummary } from './tasks-data';
 
 // [label, <col> width, cell classes]: narrow screens drop Created first, then Agent. A phone keeps
 // the task's own status, which the filter is about, its agent after it, and of the last run
@@ -70,6 +72,19 @@ export function TasksPage() {
   const [error, setError] = useState<ApiError>();
   const [more, setMore] = useState<'loading' | ApiError>();
   const [attempt, setAttempt] = useState(0);
+  // The tasks picked for an action at once. New filters pick nothing: a task out of sight is
+  // never changed by an action on what is in sight.
+  const [selected, setSelected] = useState<Picked>(new Map());
+  // Why the tasks an action left picked were refused; kept while the list loads again.
+  const [failures, setFailures] = useState<string[]>([]);
+  useEffect(() => {
+    setSelected(new Map());
+    setFailures([]);
+  }, [filters]);
+  const pick = (next: Picked) => {
+    setSelected(next);
+    if (next.size === 0) setFailures([]);
+  };
   // Only the answer for the filters on screen counts: a slow one for others is dropped.
   useEffect(() => {
     let current = true;
@@ -143,20 +158,33 @@ export function TasksPage() {
           value={view}
           onValueChange={(value) => filter('status', value === 'open' ? '' : value)}
         >
-          <div className="flex flex-wrap items-center gap-3">
-            <TabsList aria-label="Tasks to show">
-              {Object.entries(views).map(([value, label]) => (
-                <TabsTrigger key={value} value={value}>
-                  {label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-            <AgentFilter
-              value={agent || 'all'}
-              onChange={(value) => filter('agent', value === 'all' ? '' : value)}
-              options={options}
+          {selected.size > 0 ? (
+            <SelectionBar
+              tasks={[...selected.values()]}
+              failures={failures}
+              onClear={() => pick(new Map())}
+              onDone={(failed) => {
+                setSelected(new Map(failed.map(({ task }) => [task.id, task])));
+                setFailures(failed.map(({ task, message }) => `${task.title}: ${message}`));
+                setAttempt((n) => n + 1);
+              }}
             />
-          </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <TabsList aria-label="Tasks to show">
+                {Object.entries(views).map(([value, label]) => (
+                  <TabsTrigger key={value} value={value}>
+                    {label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              <AgentFilter
+                value={agent || 'all'}
+                onChange={(value) => filter('agent', value === 'all' ? '' : value)}
+                options={options}
+              />
+            </div>
+          )}
           <TabsContent value={view} className="mt-4">
             {error ? (
               <ApiErrorState
@@ -179,7 +207,7 @@ export function TasksPage() {
               </EmptyState>
             ) : (
               <div ref={rows}>
-                <TasksTable tasks={list.tasks} />
+                <TasksTable tasks={list.tasks} selected={selected} onSelect={pick} />
                 {list.nextBefore && (
                   <div className="mt-4 flex items-center gap-3">
                     {/* Not disabled while it loads: focus would drop out of the page. */}
@@ -196,16 +224,40 @@ export function TasksPage() {
   );
 }
 
-function TasksTable({ tasks }: { tasks: TaskSummary[] }) {
+/** The picked tasks by ID, as they were when picked: the bar names them while the list loads. */
+type Picked = ReadonlyMap<string, TaskSummary>;
+
+function TasksTable(props: {
+  tasks: TaskSummary[];
+  selected: Picked;
+  onSelect: (selected: Picked) => void;
+}) {
+  const { tasks, selected, onSelect } = props;
+  const toggle = (task: TaskSummary) => {
+    const next = new Map(selected);
+    if (!next.delete(task.id)) next.set(task.id, task);
+    onSelect(next);
+  };
+  const all = tasks.length > 0 && tasks.every((task) => selected.has(task.id));
   return (
     <Table phoneList className="-mx-3 w-[calc(100%+24px)] table-fixed">
       <colgroup>
+        <col className="w-9" />
         {columns.map(([label, width]) => (
           <col key={label} className={width} />
         ))}
       </colgroup>
       <thead>
         <TableRow>
+          <TableHead className="pr-0">
+            <Checkbox
+              aria-label="Select all tasks shown"
+              checked={all ? true : selected.size > 0 ? 'indeterminate' : false}
+              onCheckedChange={() =>
+                onSelect(all ? new Map() : new Map(tasks.map((task) => [task.id, task])))
+              }
+            />
+          </TableHead>
           {columns.map(([label, , className]) => (
             <TableHead key={label} className={className}>
               {label === 'Last run' ? (
@@ -225,7 +277,24 @@ function TasksTable({ tasks }: { tasks: TaskSummary[] }) {
       <tbody>
         {tasks.map((task) => (
           // The title is the link; its ::after covers the row, so the whole row opens the task.
-          <TableRow key={task.id} className="relative hover:bg-hover">
+          // X on a focused row picks it, as in a mail client.
+          <TableRow
+            key={task.id}
+            className={cn('relative hover:bg-hover', selected.has(task.id) && 'bg-selected')}
+            onKeyDown={(event) => {
+              if (event.key !== 'x' || event.metaKey || event.ctrlKey || event.altKey) return;
+              event.preventDefault();
+              toggle(task);
+            }}
+          >
+            {/* Above the link's cover, so a click on the box picks instead of opening. */}
+            <TableCell className="relative z-10 pr-0 max-md:hidden">
+              <Checkbox
+                aria-label={`Select ${task.title}`}
+                checked={selected.has(task.id)}
+                onCheckedChange={() => toggle(task)}
+              />
+            </TableCell>
             <TableCell data-lead className="md:hidden">
               <AgentTile id={task.agent.id} name={task.agent.name} className={leadTile} />
             </TableCell>
@@ -269,5 +338,101 @@ function TasksTable({ tasks }: { tasks: TaskSummary[] }) {
         ))}
       </tbody>
     </Table>
+  );
+}
+
+// What a picked task can be moved to; each is the status a person sets on the task's own page.
+const moves: [TaskStatus, string][] = [
+  ['done', 'Mark as done'],
+  ['review', 'Move to review'],
+  ['open', 'Reopen'],
+];
+
+/**
+ * The picked tasks' actions, in place of the filters. One request per task: a task that is
+ * refused, such as one whose run goes, stays picked and is named with the reason.
+ */
+function SelectionBar(props: {
+  tasks: TaskSummary[];
+  failures: string[];
+  onClear: () => void;
+  onDone: (failed: { task: TaskSummary; message: string }[]) => void;
+}) {
+  const { tasks, failures } = props;
+  const [pending, setPending] = useState(false);
+  const [asking, setAsking] = useState(false);
+
+  // Esc lets go of the picked tasks, unless the delete dialog takes it first.
+  const { onClear } = props;
+  useEffect(() => {
+    if (asking) return;
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && onClear();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [asking, onClear]);
+
+  async function each(request: (task: TaskSummary) => Promise<unknown>) {
+    setPending(true);
+    const results = await Promise.allSettled(tasks.map(request));
+    const failed = tasks.flatMap((task, i) => {
+      const result = results[i];
+      return result?.status === 'rejected'
+        ? [{ task, message: asApiError(result.reason).message }]
+        : [];
+    });
+    setPending(false);
+    setAsking(false);
+    props.onDone(failed);
+  }
+
+  const move = (status: TaskStatus) =>
+    each((task) => api(`/api/tasks/${task.id}`, { method: 'PATCH', body: { status } }));
+  const remove = () => each((task) => api(`/api/tasks/${task.id}`, { method: 'DELETE' }));
+  const count = tasks.length === 1 ? '1 task' : `${tasks.length} tasks`;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div role="toolbar" aria-label="Selected tasks" className="flex flex-wrap items-center gap-2">
+        <span className="mr-2 text-ink-2" aria-live="polite">
+          {tasks.length} selected
+        </span>
+        {moves.map(([status, label]) => (
+          <Button key={status} disabled={pending} onClick={() => void move(status)}>
+            {label}
+          </Button>
+        ))}
+        <D.Dialog open={asking} onOpenChange={setAsking}>
+          <D.DialogTrigger asChild>
+            <Button variant="quiet" className="hover:text-failed" disabled={pending}>
+              Delete
+            </Button>
+          </D.DialogTrigger>
+          <D.DialogContent>
+            <D.DialogTitle>Delete {count}?</D.DialogTitle>
+            <D.DialogDescription>
+              They leave the task lists and take no more runs. Their runs and what they cost stay in
+              the agents&apos; and the projects&apos; history. A task whose run goes is not deleted.
+            </D.DialogDescription>
+            <D.DialogFooter>
+              <D.DialogClose asChild>
+                <Button variant="secondary">Cancel</Button>
+              </D.DialogClose>
+              <Button variant="danger" disabled={pending} onClick={() => void remove()}>
+                Delete {count}
+              </Button>
+            </D.DialogFooter>
+          </D.DialogContent>
+        </D.Dialog>
+        <Button variant="quiet" onClick={onClear}>
+          Clear
+        </Button>
+      </div>
+      {failures.length > 0 && (
+        <FormError>
+          {failures.length === 1 ? 'Not changed: ' : `${failures.length} not changed: `}
+          {failures.join('; ')}
+        </FormError>
+      )}
+    </div>
   );
 }

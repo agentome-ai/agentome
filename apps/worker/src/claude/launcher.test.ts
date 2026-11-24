@@ -17,7 +17,7 @@ import { normalizeUsage } from '@agentome/costs';
 import { RunEvent, foldRunStatus } from '@agentome/shared';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { claudeSignedOut, KILL_GRACE_MS, probe, runClaude } from './launcher.js';
+import { claudeSignedOut, KILL_GRACE_MS, placeRefusal, probe, runClaude } from './launcher.js';
 import type { ClaudeRunOptions, UsageTotals } from './launcher.js';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
@@ -660,5 +660,17 @@ describe('claudeSignedOut', () => {
     expect(await claudeSignedOut({ cliPath: FAKE, env: token })).toBe(false);
     // A CLI that is not there says nothing: the run it cannot start tells that.
     expect(await claudeSignedOut({ cliPath: join(dir, 'no-claude-here'), env })).toBe(false);
+  });
+});
+
+describe('placeRefusal', () => {
+  it('runs in a place only a Claude Code whose file tools were checked against links', () => {
+    expect(placeRefusal('2.1.280')).toBeUndefined();
+    expect(placeRefusal('2.1.281')).toBeUndefined();
+    expect(placeRefusal('2.2.0')).toBeUndefined();
+    expect(placeRefusal('3.0.0')).toBeUndefined();
+    for (const old of ['2.1.279', '2.1.90', '1.9.999', undefined]) {
+      expect(placeRefusal(old)).toMatch(/older than 2\.1\.280/);
+    }
   });
 });

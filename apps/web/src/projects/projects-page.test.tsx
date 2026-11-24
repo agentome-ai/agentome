@@ -358,8 +358,7 @@ describe('a project', () => {
       'DELETE /api/projects/p1': () => ({ status: 204 }),
       'GET /api/projects': { projects: [empty] },
     });
-    await user.click(await screen.findByRole('button', { name: 'More actions' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Delete project…' }));
+    await user.click(await screen.findByRole('button', { name: 'Delete project' }));
     const dialog = screen.getByRole('dialog', { name: 'Delete Payments?' });
     expect(within(dialog).getByText(/Its tasks and runs stay/)).toBeTruthy();
     expect(within(dialog).getByText(/Webhooks that GitHub or GitLab sends/)).toBeTruthy();
@@ -374,7 +373,7 @@ describe('a project', () => {
     expect(screen.queryByRole('button', { name: /^Actions for/ })).toBeNull();
     expect(screen.queryByRole('combobox')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit name' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete project' })).toBeNull();
     // The hosts are still there to read: a member needs to know where the work goes.
     expect(screen.getByText('acme-bot')).toBeTruthy();
   });

@@ -40,6 +40,7 @@ const task: typeof tasks.$inferSelect = {
   status: 'open',
   createdBy: agent.ownerUserId,
   createdAt: new Date('2026-10-21T10:05:00Z'),
+  deletedAt: null,
 };
 
 const build = (overrides: Partial<typeof agent> = {}) =>

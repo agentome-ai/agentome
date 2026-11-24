@@ -18,7 +18,10 @@ Each run in it gets two containers of its own, made when it starts and deleted w
 
 - The **CLI container** runs the official Claude Code or Codex, unmodified, with the person's
   sign-in to their subscription. Claude Code's file tools are kept out of its home folder, where
-  the sign-in is. Codex has no way to run anything there at all: every command and edit it makes
+  the sign-in is, by its own deny rules: a link in the working folder that leads there is refused,
+  and so is a file that turns into such a link while the tool reads or writes it. A place runs no
+  Claude Code older than the version this was checked on, and every change to Agentome checks it
+  again against the version the image pins. Codex has no way to run anything there at all: every command and edit it makes
   goes to Codex's own executor, `codex exec-server`, in the sandbox, and the CLI container has no
   working folder of the agent's, so a repository's `.codex` is never read beside the sign-in.
 - The **sandbox** runs every command the agent runs: builds, tests, `git`, scripts. It has the

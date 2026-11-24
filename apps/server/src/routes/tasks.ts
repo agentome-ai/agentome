@@ -12,6 +12,7 @@ import {
   runTask,
   taskView,
   updateTask,
+  deleteTask,
 } from '../tasks/service.js';
 import type { Config } from '../config.js';
 import { connectionsKey } from '../connections/crypto.js';
@@ -258,6 +259,22 @@ export const taskRoutes: FastifyPluginAsyncZod<{ db: Db; config: Config }> = asy
       },
     },
     async (request) => updateTask(db, request.params.id, request.user.id, request.body),
+  );
+
+  app.delete(
+    '/api/tasks/:id',
+    {
+      schema: {
+        summary:
+          'Deletes a task: it leaves every list and takes no run; its runs, their spend and its thread stay. Refused while a run of it is queued or going',
+        params: IdParams,
+        response: { 204: z.null() },
+      },
+    },
+    async (request, reply) => {
+      await deleteTask(db, request.params.id, request.user.id);
+      return reply.code(204).send(null);
+    },
   );
 
   app.post(

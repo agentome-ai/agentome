@@ -36,6 +36,7 @@ const TOOLS: Record<string, { name: string; readOnly: boolean }> = {
   'GET /api/tasks/:id': { name: 'get_task', readOnly: true },
   'POST /api/tasks': { name: 'create_task', readOnly: false },
   'PATCH /api/tasks/:id': { name: 'update_task', readOnly: false },
+  'DELETE /api/tasks/:id': { name: 'delete_task', readOnly: false },
   'POST /api/tasks/:id/run': { name: 'run_task', readOnly: false },
   'POST /api/tasks/:id/comments': { name: 'comment_on_task', readOnly: false },
   'GET /api/runs': { name: 'list_runs', readOnly: true },

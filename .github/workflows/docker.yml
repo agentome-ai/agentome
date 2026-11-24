@@ -1,6 +1,7 @@
 name: docker
 
-# Builds the image and runs deploy/smoke.sh against it, compose with PostgreSQL included, for
+# Builds the image and runs deploy/smoke.sh against it, compose with PostgreSQL included, and
+# scripts/check-claude-files.sh against the seat image's Claude Code, for
 # every change that is more than documents, and on pull requests with the docker label. Like
 # checks, it is a required check of main. Nothing is pushed: release.yml
 # publishes the images.
@@ -40,6 +41,7 @@ jobs:
           if [ "$HAS_LABEL" = true ] || git diff --name-only HEAD^1 HEAD | grep -qvE '^docs/|\.md$'; then
             deploy/smoke.sh
             docker image ls agentome:smoke
+            scripts/check-claude-files.sh
           else
             echo "Only documents changed and there is no docker label: skipping."
           fi

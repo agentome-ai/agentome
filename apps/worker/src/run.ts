@@ -6,7 +6,7 @@ import type { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
-import { probe, runClaude } from './claude/launcher.js';
+import { placeRefusal, probe, runClaude } from './claude/launcher.js';
 import { type CodexBilling, probeCodex, runCodex } from './codex/launcher.js';
 import type { ClaudeBilling, ClaudeRunOutcome, RunEventSink } from './claude/launcher.js';
 import { backoff, isRetryable, sleep, Unauthorized } from './client.js';
@@ -76,7 +76,7 @@ type Task = NonNullable<LaunchPackage['task']>;
 type Failure = { code: string; message: string };
 type Outcome = Pick<ClaudeRunOutcome, 'status' | 'resultText'> & { error?: Failure };
 
-/** A Codex run in a place whose check before the run failed: it does not start. */
+/** A run in a place whose check before the run failed: it does not start. */
 class CanaryRefused extends Error {}
 
 export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<Outcome['status']> {
@@ -257,6 +257,14 @@ export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<
         // folder of its agent's, too: a mount needs its folder.
         for (const name of ['git', 'repo'])
           mkdirSync(join(workspace.dir, name), { recursive: true });
+        // Claude Code's file tools work beside the sign-in, kept from it by their own rules: only
+        // a version whose rules were checked against links runs here.
+        if (launch.agent.engine !== 'codex') {
+          const found = await probe({ cliPath: deps.cliPath, env: deps.env ?? process.env });
+          // A missing CLI is told as such when the run starts it.
+          const refused = found.installed ? placeRefusal(found.version) : undefined;
+          if (refused) throw new CanaryRefused(refused);
+        }
         const at = await client.startContainer(
           id,
           folder.startsWith('folders/') ? folder : undefined,

@@ -7,6 +7,7 @@ import {
   desc,
   eq,
   inArray,
+  isNull,
   projectAgents,
   projects,
   runArtifacts,
@@ -74,43 +75,46 @@ function selectTasks(db: Db, where: SQL | undefined, limit: number) {
     .limit(1)
     .as('latest_change');
   // Not the description: a list does not show it, and it may be long.
-  return db
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      agentId: tasks.agentId,
-      status: tasks.status,
-      source: tasks.source,
-      repository: taskRepository,
-      // Whether the repository is the project's: the task page says so instead of offering it.
-      repositoryFromProject: sql<boolean>`"tasks"."repository" is null and "tasks"."project_id" is not null`,
-      createdById: tasks.createdBy,
-      // With microseconds: with the id, it is where the next page starts, and toISOString keeps
-      // only milliseconds.
-      createdAt: sql<string>`to_char(${tasks.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
-      agentName: agents.name,
-      agentStatus: agents.status,
-      creatorName: users.name,
-      projectId: tasks.projectId,
-      projectName: projects.name,
-      // Flat: Drizzle would turn a nested object of a left join's columns into null itself.
-      runId: latest.id,
-      runStatus: latest.status,
-      runEndedAt: latest.endedAt,
-      runStartedAt: latest.startedAt,
-      runQueuedAt: latest.queuedAt,
-      changeUrl: change.url,
-      changeMeta: change.meta,
-    })
-    .from(tasks)
-    .innerJoin(agents, eq(agents.id, tasks.agentId))
-    .innerJoin(users, eq(users.id, tasks.createdBy))
-    .leftJoin(projects, eq(projects.id, tasks.projectId))
-    .leftJoinLateral(latest, sql`true`)
-    .leftJoinLateral(change, sql`true`)
-    .where(where)
-    .orderBy(desc(tasks.createdAt), desc(tasks.id))
-    .limit(limit);
+  return (
+    db
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        agentId: tasks.agentId,
+        status: tasks.status,
+        source: tasks.source,
+        repository: taskRepository,
+        // Whether the repository is the project's: the task page says so instead of offering it.
+        repositoryFromProject: sql<boolean>`"tasks"."repository" is null and "tasks"."project_id" is not null`,
+        createdById: tasks.createdBy,
+        // With microseconds: with the id, it is where the next page starts, and toISOString keeps
+        // only milliseconds.
+        createdAt: sql<string>`to_char(${tasks.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+        agentName: agents.name,
+        agentStatus: agents.status,
+        creatorName: users.name,
+        projectId: tasks.projectId,
+        projectName: projects.name,
+        // Flat: Drizzle would turn a nested object of a left join's columns into null itself.
+        runId: latest.id,
+        runStatus: latest.status,
+        runEndedAt: latest.endedAt,
+        runStartedAt: latest.startedAt,
+        runQueuedAt: latest.queuedAt,
+        changeUrl: change.url,
+        changeMeta: change.meta,
+      })
+      .from(tasks)
+      .innerJoin(agents, eq(agents.id, tasks.agentId))
+      .innerJoin(users, eq(users.id, tasks.createdBy))
+      .leftJoin(projects, eq(projects.id, tasks.projectId))
+      .leftJoinLateral(latest, sql`true`)
+      .leftJoinLateral(change, sql`true`)
+      // A deleted task is in no list and opens no page.
+      .where(and(isNull(tasks.deletedAt), where))
+      .orderBy(desc(tasks.createdAt), desc(tasks.id))
+      .limit(limit)
+  );
 }
 
 type TaskRow = Awaited<ReturnType<typeof selectTasks>>[number];
@@ -445,11 +449,40 @@ export async function updateTask(
     const [task] = await db
       .update(tasks)
       .set(changes)
-      .where(and(eq(tasks.id, taskId), grantedTo(userId, tasks.agentId)))
+      .where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt), grantedTo(userId, tasks.agentId)))
       .returning({ id: tasks.id });
     if (!task) throw notFound();
   }
   return taskView(db, taskId, userId);
+}
+
+/**
+ * Deletes a task for whoever may change and run it: it leaves every list and takes no run, while
+ * its runs, their spend, its thread and its Jira issue's hold on it stay. Not while a run of it is
+ * queued or going: that run would write to a task nobody sees.
+ */
+export async function deleteTask(db: Db, taskId: string, userId: string) {
+  await db.transaction(async (tx) => {
+    // Locked, so that a run cannot be queued between the check and the deletion.
+    const [task] = await tx
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt), grantedTo(userId, tasks.agentId)))
+      .for('update');
+    if (!task) throw notFound();
+    const [going] = await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(and(eq(runs.taskId, taskId), inArray(runs.status, LIVE)))
+      .limit(1);
+    if (going) {
+      throw new AppError(
+        'run_in_progress',
+        'A run of this task is queued or in progress. Cancel it, then delete the task.',
+      );
+    }
+    await tx.update(tasks).set({ deletedAt: new Date() }).where(eq(tasks.id, taskId));
+  });
 }
 
 /** Queues another run of the task, unless its agent is archived or a run of it is going. */
@@ -459,7 +492,7 @@ export async function runTask(db: Db | Tx, taskId: string, userId: string) {
     const [task] = await tx
       .select({ agentId: tasks.agentId })
       .from(tasks)
-      .where(and(eq(tasks.id, taskId), grantedTo(userId, tasks.agentId)))
+      .where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt), grantedTo(userId, tasks.agentId)))
       .for('update');
     if (!task) throw notFound();
     await assertActive(tx, task.agentId, userId);

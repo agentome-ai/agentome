@@ -268,6 +268,9 @@ for (const theme of ['light', 'dark'] as const) {
       await page.goto('/tasks');
       await page.getByRole('row', { name: /Add a README/ }).waitFor();
       await shoot(page, `tasks-${theme}-${size.width}`);
+      await page.getByRole('checkbox', { name: /^Select / }).nth(1).click();
+      await page.getByRole('checkbox', { name: /^Select / }).nth(2).click();
+      await shoot(page, `tasks-selected-${theme}-${size.width}`);
       await page.goto('/tasks/k1');
       await page.getByRole('heading', { name: 'Done when' }).waitFor();
       await shoot(page, `task-${theme}-${size.width}`);

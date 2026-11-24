@@ -225,6 +225,7 @@ describe('the management MCP', () => {
         'export_agent',
         'import_agent',
         'create_task',
+        'delete_task',
         'update_task',
         'deny_tool_call',
         'get_agent',

@@ -68,7 +68,8 @@ async function importIssue(
         target: [tasks.agentId, tasks.externalRef],
         targetWhere: sql`${tasks.source} = 'jira'`,
         set: { title, body },
-        setWhere: sql`(${tasks.title}, ${tasks.body}) is distinct from (${title}, ${body})`,
+        // A deleted task stays as it was deleted: its issue only keeps it from coming back.
+        setWhere: sql`${tasks.deletedAt} is null and (${tasks.title}, ${tasks.body}) is distinct from (${title}, ${body})`,
       })
       // xmax is 0 on a row this statement inserted, and set on one it updated.
       .returning({ id: tasks.id, inserted: sql<boolean>`xmax = 0` });

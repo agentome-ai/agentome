@@ -6,6 +6,24 @@ What changed in each release of Agentome. The format follows
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-11-24
+
+Tasks can be deleted, alone or several at once, and a place on the server checks its Claude Code
+before a run. The update adds one column to the database; it applies itself on start.
+
+### Added
+
+- Delete a task from its page. It leaves the lists and takes no more runs; its runs and what they cost stay in the history and the budgets. A task from Jira does not come back when its issue changes. A task whose run is queued or going is not deleted: cancel the run first. Also `DELETE /api/tasks/:id` and `delete_task` in the management MCP server.
+- Change or delete several tasks at once: on Tasks, select tasks with the boxes before them (or X on a row), then Mark as done, Move to review, Reopen or Delete. A task that cannot be changed stays selected, with the reason.
+
+### Changed
+
+- The task, project and team pages show Delete task, Delete project and Delete team as a button instead of in a menu of one item.
+
+### Security
+
+- A place on the server runs no Claude Code older than 2.1.280; such a run fails with `sandbox_unavailable` before it starts. That version and later were checked against links to the sign-in and file swaps racing a read or a write, with the place's own deny rules, and the check is part of the image's build checks.
+
 ## [0.4.2] - 2026-11-23
 
 A fix release: since 0.4.0 a new place on the server could not start. **Update before you make
@@ -239,7 +257,8 @@ to install, configure and update it in [deploy/OPERATIONS.md](deploy/OPERATIONS.
   server, monthly budgets, quality reports, Keycloak sign-in and more agents need a key.
 - Images for amd64 and arm64 on Docker Hub: `agentome/agentome` and `agentome/agentome-seat`.
 
-[Unreleased]: https://github.com/agentome-ai/agentome/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/agentome-ai/agentome/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/agentome-ai/agentome/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/agentome-ai/agentome/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/agentome-ai/agentome/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/agentome-ai/agentome/compare/v0.3.0...v0.4.0

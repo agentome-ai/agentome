@@ -220,5 +220,5 @@ On the team's page:
 - **Duplicate** copies the team, named after it with "(copy)", together with copies of its lead and
   its active members, owned by you. The copies have the agents' setup, not their memory, tasks or
   runs. The copy counts as a new team, so it needs a license key.
-- **More actions**, then **Delete team…** and **Delete team** removes the team. The lead works alone
+- **Delete team**, then **Delete team** in the dialog, removes the team. The lead works alone
   again; the agents stay, with their memory, tasks and runs.
