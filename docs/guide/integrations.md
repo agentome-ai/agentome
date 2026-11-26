@@ -1,7 +1,7 @@
 # Integrations
 
-Agents work in your own systems: GitLab and GitHub for code, Jira Data Center for issues, any MCP
-server for the rest, and the model provider of your choice for agents on the server. This page shows
+Agents work in your own systems: GitLab and GitHub for code, Jira Data Center for issues, Jira Cloud
+administration through an MCP server, any MCP server for the rest, and the model provider of your choice for agents on the server. This page shows
 how to connect each one, and what agents can and cannot do through it.
 
 - [How agents reach your systems](#how-agents-reach-your-systems)
@@ -9,6 +9,7 @@ how to connect each one, and what agents can and cannot do through it.
 - [Webhooks for pipelines and reviews](#webhooks-for-pipelines-and-reviews)
 - [Jira Data Center](#jira-data-center)
 - [MCP servers](#mcp-servers)
+  - [A Jira Cloud administrator](#a-jira-cloud-administrator)
 - [Model connections](#model-connections)
 - [Sign-in with Keycloak](#sign-in-with-keycloak)
 - [n8n](#n8n)

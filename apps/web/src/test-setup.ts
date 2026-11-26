@@ -1,5 +1,10 @@
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
+
+// A page in a test loads through the stubbed API in milliseconds here, but on a GitHub runner a
+// findBy or waitFor took over two seconds, past the library's default second. As the test timeout
+// does, the wait leaves room for a slow CI runner.
+configure({ asyncUtilTimeout: 5000 });
 
 afterEach(() => {
   cleanup();

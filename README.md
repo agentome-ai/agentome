@@ -53,7 +53,7 @@ sensitive.
   container where their agents run under their own Claude or ChatGPT subscription while they are at
   work; agents that work by themselves run in a container with an API key, directly or through
   LiteLLM. A small team can run agents on people's own computers instead.
-- **What they work with:** self-hosted GitLab, GitHub, Jira Data Center, and any MCP server.
+- **What they work with:** self-hosted GitLab, GitHub, Jira Data Center, Jira Cloud, and any MCP server.
 - **How you control them:** a policy per tool (allow, ask, deny), approvals on the web and on a
   phone, limits per run, budgets, and the cost and transcript of every run.
 - **How you install it:** one Docker Compose file on a machine in your network, or the Kubernetes
@@ -163,6 +163,9 @@ flowchart LR
   by the agent, pipeline and review status back on the task by webhooks.
 - **Jira Data Center**: the issues of a project become tasks of its team, and their status follows
   the work.
+- **Jira Cloud**: an administrator agent through the open-source
+  [jira-cloud-admin-mcp](https://github.com/agentome-ai/jira-cloud-admin-mcp): projects, fields,
+  screens, workflows, permissions and Automation rules, each kind of change behind its own policy.
 - **MCP**: any remote MCP server you add, including ones that sign in with OAuth.
 - **Models**: Anthropic and OpenAI keys, or a gateway such as LiteLLM. **Sign-in**: passwords or
   Keycloak.
