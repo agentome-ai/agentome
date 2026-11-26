@@ -62,6 +62,8 @@ beforeAll(async () => {
       AGENTOME_DATABASE_URL: container.getConnectionUri(),
       AGENTOME_DATA_DIR: dataDir,
       AGENTOME_LOG_LEVEL: 'silent',
+      // Runs out of time are part of what the gateway is tested on.
+      AGENTOME_RUN_MAX_MINUTES: '60',
     }),
     // The fake MCP server below listens on this machine, which the gateway otherwise refuses.
     { mcpFetch: (url, init) => realFetch(url, init) },
@@ -1543,7 +1545,7 @@ describe('a library MCP server that signs in with OAuth', () => {
     const wrong = await asAdmin('GET', '/api/library/mcp/oauth/callback?code=the-code&state=nope');
     expect(wrong.statusCode).toBe(302);
     expect(wrong.headers.location).toMatch(
-      /^http:\/\/localhost:3000\/library\?mcpError=This\+sign-in\+has\+expired/,
+      /^http:\/\/localhost:3000\/mcp-servers\?mcpError=This\+sign-in\+has\+expired/,
     );
 
     // The return address here is localhost, as the public one is: it comes back without the
@@ -1553,7 +1555,7 @@ describe('a library MCP server that signs in with OAuth', () => {
       url: `/api/library/mcp/oauth/callback?code=the-code&state=${state}`,
     });
     expect(back.statusCode).toBe(302);
-    expect(back.headers.location).toBe('http://localhost:3000/library?mcpSignedIn=jira');
+    expect(back.headers.location).toBe('http://localhost:3000/mcp-servers?mcpSignedIn=jira');
     const listed = (await asAdmin('GET', '/api/library/mcp'))
       .json<{
         servers: { name: string; signedIn: boolean; tools: { name: string }[] }[];
@@ -1617,6 +1619,30 @@ describe('a library MCP server that signs in with OAuth', () => {
 
     await client.close();
     await finish(runId, token);
+  });
+
+  it('adds no server that does not say how to sign in to it', async () => {
+    // A server with no OAuth metadata at all: every discovery address answers 404.
+    const plain = createServer((_request, response) => void response.writeHead(404).end());
+    await new Promise<void>((resolve) => plain.listen(0, '127.0.0.1', resolve));
+    try {
+      const url = `http://127.0.0.1:${(plain.address() as AddressInfo).port}/mcp`;
+      const refused = await asAdmin('POST', '/api/library/mcp', {
+        name: 'plain',
+        url,
+        auth: 'oauth',
+      });
+      expect(refused.statusCode).toBe(400);
+      expect(refused.json<{ error: { message: string } }>().error.message).toMatch(
+        /^plain (does not publish how to sign in to it|did not say how to sign in)/,
+      );
+      const listed = await asAdmin('GET', '/api/library/mcp');
+      expect(
+        listed.json<{ servers: { name: string }[] }>().servers.map((s) => s.name),
+      ).not.toContain('plain');
+    } finally {
+      await new Promise((resolve) => plain.close(resolve));
+    }
   });
 
   it('says how a step of the sign-in failed, never what the address answered', async () => {

@@ -32,7 +32,7 @@ import { remoteToolName, serversOf } from '../library/mcp.js';
 import { skillsOf } from '../library/skills.js';
 import { setPolicy } from '../mcp/policy.js';
 import { ASSIGN_TASK, TOOLS } from '../mcp/tools.js';
-import { IdParams, LaunchPackage, RunLimits } from '../protocol.js';
+import { IdParams, LaunchPackage } from '../protocol.js';
 import { profileFor, skillsSection } from '../runs/launch.js';
 import { cancelQueuedRuns, type Tx } from '../runs/service.js';
 import { Name } from './users.js';
@@ -124,8 +124,12 @@ const AgentView = AgentSummary.extend({
   modelConnection: z.object({ id: z.uuid(), name: z.string() }).nullable(),
   serverShell: z.boolean(),
   budget: Budget.nullable(),
-  // What a run gets where the budget sets no limit of its own.
-  runDefaults: RunLimits,
+  // What a run gets where the budget sets no limit of its own; null is none.
+  runDefaults: z.object({
+    maxMinutes: z.int().nullable(),
+    maxTurns: z.int().nullable(),
+    maxTokens: z.int().nullable(),
+  }),
   copiedFromAgentId: z.uuid().nullable(),
   template: z.object({ id: z.uuid(), name: z.string(), version: z.int() }).nullable(),
   seat: z
@@ -164,6 +168,8 @@ const AgentView = AgentSummary.extend({
       name: z.string(),
       version: z.string(),
       privateTo: z.string().optional(),
+      /** It brings files beside its SKILL.md, which an export leaves behind. */
+      withFiles: z.boolean().optional(),
     }),
   ),
   // The library's MCP servers the agent was given; their tools are in `tools` under each name.

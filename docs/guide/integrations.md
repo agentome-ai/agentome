@@ -8,7 +8,7 @@ how to connect each one, and what agents can and cannot do through it.
 - [GitLab and GitHub](#gitlab-and-github)
 - [Webhooks for pipelines and reviews](#webhooks-for-pipelines-and-reviews)
 - [Jira Data Center](#jira-data-center)
-- [MCP servers in the Library](#mcp-servers-in-the-library)
+- [MCP servers](#mcp-servers)
 - [Model connections](#model-connections)
 - [Sign-in with Keycloak](#sign-in-with-keycloak)
 - [n8n](#n8n)
@@ -216,16 +216,14 @@ the owner first by default.
 
 If Jira refuses a step, the task shows the error, and later steps try again.
 
-## MCP servers in the Library
+## MCP servers
 
-Any remote MCP server can give agents more tools: a tracker, a wiki, a database. You add it once to
-the **Library**, then give it to agents.
-
-![The Library: skills and MCP servers, with one MCP server open, showing its address, its sign-in and the tools it lists.](img/library.jpg)
+Any remote MCP server can give agents more tools: a tracker, a wiki, a database. You add it once in
+**MCP servers** in the sidebar, then give it to agents.
 
 ### Add a server
 
-1. Open **Library** and select **Add an MCP server**.
+1. Open **MCP servers** and select **Add an MCP server**.
 2. Fill in the **Name**, in lowercase, such as `tracker`. Its tools reach the agent as
    `tracker__<tool>`.
 3. Fill in the **Address** of the server, such as `https://mcp.acme.com/mcp`. It must be a remote
@@ -237,9 +235,10 @@ the **Library**, then give it to agents.
 5. Describe **What it does**, so others know when to use it.
 6. Select **Add server**, or **Add and sign in** for OAuth.
 
-Agentome checks the server and lists its tools.
+Agentome checks the server and lists its tools, a line each; click a tool to read all of what it
+says it does, and past eight tools **Filter tools** finds one.
 
-![An MCP server added to the Library: its address, its sign-in, who added it, who it is shared with, and the tools it listed.](img/library-server.jpg)
+![An MCP server open: its address, its sign-in, who added it, who it is shared with, which agents use it, and the tools it listed.](img/library-server.jpg)
 
 ### Secrets stay on the server
 
@@ -261,7 +260,7 @@ The server's menu also has **Check again**, to read its tools again after it cha
 ### OAuth sign-in per person
 
 With **OAuth in the browser**, each person signs in once with **Sign in** on the server's page in
-the Library, and their agents use their account. A person who has not signed in sees **Not signed
+**MCP servers**, and their agents use their account. A person who has not signed in sees **Not signed
 in**, and the server lists its tools after they sign in.
 
 Sign-ins are personal. When an agent passes to another owner, the new owner signs in again to the
@@ -270,6 +269,31 @@ servers it uses.
 The server's authorization server must accept Agentome's return address. If the sign-in stops at
 once with `invalid_request`, see
 [MCP servers that sign in with OAuth](../../deploy/OPERATIONS.md#mcp-servers-that-sign-in-with-oauth).
+
+### A Jira Cloud administrator
+
+[jira-cloud-admin-mcp](https://github.com/agentome-ai/jira-cloud-admin-mcp) is an open-source MCP
+server for Jira Cloud administration: projects, issue types, custom fields, screens, workflows,
+schemes, permissions, groups and Automation rules. It has one read tool, and a change tool for
+each area, such as `change_fields` or `change_permissions`. So the agent's policies can let it
+edit fields while every permission change waits for you.
+
+1. Run it over HTTP on a host the Agentome server reaches:
+   `npx -y jira-cloud-admin-mcp --http --host 0.0.0.0 --port 8080`. It keeps no credentials;
+   each call brings its own.
+2. Make an API token for a Jira administrator's account at
+   [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens).
+3. In **MCP servers**, select **Add an MCP server**:
+   - **Address**: `http://<host>:8080/mcp?site=<your site>.atlassian.net`.
+   - **Sign-in**: **A token**, typed whole as `Basic ` and the base64 of `email:api-token`.
+4. Add its three skills from its repository's `skills` folder with **Upload a skill folder**:
+   `jira-cloud-admin`, `jira-automation-rules` and `jira-change-safety`.
+5. Make the agent and give it the server and the skills. In **Tools & policies**, set the read
+   tools to **Allow** and each `change_*` tool to **Ask**, or to **Allow** for an area you trust it
+   with.
+
+Each change then waits in **Approvals** with the operation, its body and the agent's reason.
+Try it on a test site first: an approved change is live in Jira at once.
 
 ## Model connections
 

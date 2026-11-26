@@ -86,12 +86,21 @@ export const mainSections: Section[] = [
     },
   },
   {
-    path: '/library',
-    label: 'Library',
-    icon: Icon.Library,
+    path: '/skills',
+    label: 'Skills',
+    icon: Icon.BookOpenText,
     empty: {
-      title: 'The library is empty',
-      text: 'Add skills, MCP servers and role templates here to share them with every agent.',
+      title: 'No skills yet',
+      text: 'Add a skill, a SKILL.md that tells an agent how to do one kind of work, and share it with every agent.',
+    },
+  },
+  {
+    path: '/mcp-servers',
+    label: 'MCP servers',
+    icon: Icon.Plug,
+    empty: {
+      title: 'No MCP servers yet',
+      text: 'Add a remote MCP server to give agents more tools. Its secret stays on Agentome.',
     },
   },
 ];

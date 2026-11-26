@@ -22,6 +22,7 @@ import {
   removeRun,
 } from './workspace.js';
 import type { Workspace } from './workspace.js';
+import { skillFilesFor } from './skill-files.js';
 import { cliCommand, unsandboxed } from './platform.js';
 import { CLI_EXEC_PORT, EXEC_PORT, remoteSpawn, serverReady, tunnelReady } from './remote.js';
 import { readySignIn } from './sign-in.js';
@@ -228,10 +229,13 @@ export async function executeRun(launch: LaunchPackage, deps: RunDeps): Promise<
         place: deps.place === true,
       };
       const local = deps.server === true || deps.place === true;
+      const skillFiles = await skillFilesFor(deps.home, launch, (skillId) =>
+        client.skillFiles(id, token, skillId, signal),
+      );
       workspace = await prepareWorkspace(
         deps.home,
         local ? gitAtServer(launch, client.serverUrl) : launch,
-        seat,
+        { ...seat, skillFiles },
       );
       if (workspace.leftover) {
         const message = `What the last run left uncommitted in this folder is saved on ${workspace.leftover}.`;

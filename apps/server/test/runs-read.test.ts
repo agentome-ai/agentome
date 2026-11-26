@@ -44,6 +44,10 @@ beforeAll(async () => {
     AGENTOME_DATABASE_URL: container.getConnectionUri(),
     AGENTOME_DATA_DIR: dataDir,
     AGENTOME_LOG_LEVEL: 'silent',
+    // The limits these tests read back; an installation has none unless it sets them.
+    AGENTOME_RUN_MAX_MINUTES: '60',
+    AGENTOME_RUN_MAX_TURNS: '50',
+    AGENTOME_RUN_MAX_TOKENS: '2000000',
   });
   app = await buildApp(config);
   db = createDb(container.getConnectionUri(), () => {});

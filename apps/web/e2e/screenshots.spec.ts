@@ -25,7 +25,8 @@ const pages = [
   ['connections', '/admin/connections', 'Connections'],
   ['models', '/admin/models', 'Models'],
   ['logs', '/admin/logs', 'Logs'],
-  ['library', '/library', 'Library'],
+  ['skills', '/skills', 'Skills'],
+  ['mcp-servers', '/mcp-servers', 'MCP servers'],
 ] as const;
 
 /** A run's events are in: its first line, or under a plan the folded transcript. */
@@ -92,7 +93,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.getByRole('link', { name: 'Tools & policies' }).click();
       await page.getByRole('group', { name: 'tracker' }).waitFor();
       await shoot(page, `agent-tools-${theme}`);
-      await page.goto('/library');
+      await page.goto('/mcp-servers');
       await page.getByRole('button', { name: /^tracker/ }).click();
       await page.getByRole('article', { name: 'tracker' }).getByText('Create an issue').waitFor();
       await shoot(page, `library-server-${theme}`);
@@ -103,6 +104,13 @@ for (const theme of ['light', 'dark'] as const) {
       await page.getByRole('dialog', { name: 'Edit tracker' }).waitFor();
       await shoot(page, `library-server-edit-${theme}`);
       await page.keyboard.press('Escape');
+      await page.goto('/skills');
+      await page.getByRole('button', { name: /^issue-admin/ }).click();
+      await page.getByRole('list', { name: 'Files of the skill' }).waitFor();
+      await shoot(page, `library-skill-files-${theme}`);
+      await page.getByRole('button', { name: 'Add a skill' }).click();
+      await page.getByRole('button', { name: 'Upload a skill folder' }).waitFor();
+      await shoot(page, `library-skill-add-${theme}`);
       await page.goto('/admin/people');
       await page.getByRole('button', { name: 'Invite someone' }).click();
       await page.getByRole('button', { name: 'Create link' }).click();
@@ -268,8 +276,14 @@ for (const theme of ['light', 'dark'] as const) {
       await page.goto('/tasks');
       await page.getByRole('row', { name: /Add a README/ }).waitFor();
       await shoot(page, `tasks-${theme}-${size.width}`);
-      await page.getByRole('checkbox', { name: /^Select / }).nth(1).click();
-      await page.getByRole('checkbox', { name: /^Select / }).nth(2).click();
+      await page
+        .getByRole('checkbox', { name: /^Select / })
+        .nth(1)
+        .click();
+      await page
+        .getByRole('checkbox', { name: /^Select / })
+        .nth(2)
+        .click();
       await shoot(page, `tasks-selected-${theme}-${size.width}`);
       await page.goto('/tasks/k1');
       await page.getByRole('heading', { name: 'Done when' }).waitFor();
@@ -1009,7 +1023,8 @@ const phonePages = [
   ['team', '/teams/t1', 'Refunds delivery'],
   ['projects', '/projects', 'Projects'],
   ['project', '/projects/p1', 'Payments'],
-  ['library', '/library', 'Library'],
+  ['skills', '/skills', 'Skills'],
+  ['mcp-servers', '/mcp-servers', 'MCP servers'],
   ['admin', '/admin', 'Admin'],
   ['people', '/admin/people', 'People'],
   ['seats', '/admin/computers', 'Computers'],

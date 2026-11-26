@@ -6,8 +6,16 @@ import { Field, FormError } from '../ui/field';
 import { Input } from '../ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { canDelete, DeleteConfirm } from './delete-confirm';
-import { ContextFacts } from '../shell/page-header';
-import { MoreMenu, Pane, PaneHeader, UsedBy } from './pane';
+import {
+  Expandable,
+  FILTER_FROM,
+  ListFilter,
+  matches,
+  MoreMenu,
+  Pane,
+  PaneHeader,
+  UsedBy,
+} from './pane';
 import type { McpServer } from './skills-data';
 
 // The library's MCP servers: remote servers whose tools
@@ -66,30 +74,35 @@ export function ServerPane(props: {
     }
   }
 
+  const [filter, setFilter] = useState('');
+  const shownTools = server.tools.filter((tool) =>
+    matches(filter, `${tool.name} ${tool.title} ${tool.description}`),
+  );
   return (
     <Pane
       label={server.name}
+      back="MCP servers"
       onBack={props.onBack}
-      context={
-        <>
-          <ContextFacts
-            facts={[
-              ['Added by', mine ? 'You' : (server.owner?.name ?? 'Agentome')],
-              ['Shared with', server.visibility === 'org' ? 'Everyone' : 'Only its author'],
-            ]}
-          />
-          <UsedBy url={`/api/library/mcp/${server.id}/agents`} from="its Tools &amp; policies" />
-        </>
-      }
       header={
         <PaneHeader
           title={server.name}
           about={server.description || undefined}
-          note={
-            server.visibility === 'org'
-              ? 'Everyone can give it to their agents.'
-              : 'Only its author can use it until an admin shares it.'
-          }
+          facts={[
+            [
+              'Sign-in',
+              oauth
+                ? server.signedIn
+                  ? 'OAuth, as you'
+                  : 'OAuth, not signed in'
+                : server.hasAuthorization
+                  ? 'A token, kept on Agentome'
+                  : 'None',
+            ],
+            ['Checked', timeAgo(server.checkedAt)],
+            ['Added by', mine ? 'you' : (server.owner?.name ?? 'Agentome')],
+            ['Shared with', server.visibility === 'org' ? 'everyone' : 'only its author'],
+            ['Used by', <UsedBy url={`/api/library/mcp/${server.id}/agents`} />],
+          ]}
           actions={
             <>
               {oauth && !server.signedIn && (
@@ -125,7 +138,9 @@ export function ServerPane(props: {
               />
             </>
           }
-        />
+        >
+          <p className="font-mono text-small break-all text-ink-2">{server.url}</p>
+        </PaneHeader>
       }
     >
       {props.signedIn && (
@@ -139,50 +154,41 @@ export function ServerPane(props: {
         </p>
       )}
       {error && <FormError>{error}</FormError>}
-      <dl className="overflow-hidden rounded-lg border border-line">
-        {(
-          [
-            ['Address', <span className="font-mono text-[12.5px] break-all">{server.url}</span>],
-            [
-              'Sign-in',
-              oauth
-                ? server.signedIn
-                  ? 'OAuth. You are signed in; your agents use your account.'
-                  : 'OAuth. You are not signed in, so your agents cannot use it yet.'
-                : server.hasAuthorization
-                  ? 'A token, kept on Agentome, never shown'
-                  : 'None',
-            ],
-            ['Checked', timeAgo(server.checkedAt)],
-          ] as const
-        ).map(([label, value]) => (
-          <div
-            key={label}
-            className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-3 border-line px-3 py-2 not-first:border-t"
-          >
-            <dt className="text-ink-3">{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
-      <section aria-labelledby="server-tools" className="grid gap-2">
-        <h3 id="server-tools" className="text-section">
-          {oauth && server.tools.length === 0 ? 'Tools' : tools(server.tools.length)}
-        </h3>
+      <section aria-labelledby="server-tools" className="grid gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 id="server-tools" className="text-section">
+            {oauth && server.tools.length === 0 ? 'Tools' : tools(server.tools.length)}
+          </h3>
+          {server.tools.length > FILTER_FROM && (
+            <ListFilter
+              label="Filter tools"
+              value={filter}
+              onChange={setFilter}
+              className="w-64 max-w-full"
+            />
+          )}
+        </div>
         {server.tools.length === 0 ? (
           <p className="text-ink-3">
             {oauth ? 'Listed after you sign in.' : 'The server listed none at its last check.'}
           </p>
+        ) : shownTools.length === 0 ? (
+          <p className="text-ink-3">No tool has “{filter.trim()}” in its name or description.</p>
         ) : (
           <ul aria-label="Tools" className="overflow-hidden rounded-lg border border-line">
-            {server.tools.map((tool) => (
-              <li key={tool.name} className="border-line px-3 py-2 not-first:border-t">
-                <span className="block">{tool.title}</span>
-                <code className="text-small text-ink-3">{tool.name}</code>
-                {tool.description && (
-                  <span className="block text-small text-ink-2">{tool.description}</span>
-                )}
-              </li>
+            {shownTools.map((tool) => (
+              <Expandable
+                key={tool.name}
+                text={tool.description}
+                head={
+                  <span className="flex min-w-0 flex-wrap items-baseline gap-x-3">
+                    <span className="font-medium">{tool.title || tool.name}</span>
+                    {tool.title && tool.title !== tool.name && (
+                      <code className="text-small text-ink-3">{tool.name}</code>
+                    )}
+                  </span>
+                }
+              />
             ))}
           </ul>
         )}

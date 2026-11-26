@@ -30,7 +30,15 @@ describe('app shell', () => {
   it('renders the sidebar and the empty state of the page', async () => {
     renderAt('/');
     const nav = await screen.findByRole('navigation', { name: 'Main' });
-    for (const name of ['Dashboard', 'Approvals', 'Agents', 'Tasks', 'Projects', 'Library']) {
+    for (const name of [
+      'Dashboard',
+      'Approvals',
+      'Agents',
+      'Tasks',
+      'Projects',
+      'Skills',
+      'MCP servers',
+    ]) {
       expect(within(nav).getByRole('link', { name })).toBeTruthy();
     }
     expect(screen.getByRole('link', { name: 'Admin' })).toBeTruthy();
@@ -102,10 +110,10 @@ describe('app shell', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     await user.keyboard('{Meta>}k{/Meta}');
     const palette = screen.getByRole('dialog', { name: 'Go to a page' });
-    await user.type(within(palette).getByRole('combobox'), 'libr');
+    await user.type(within(palette).getByRole('combobox'), 'mcp');
     await user.keyboard('{Enter}');
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getByRole('heading', { level: 1, name: 'Library' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'MCP servers' })).toBeTruthy();
   });
 
   it("opens the rest of the app from More in the tab bar, as an app's own screen", async () => {
@@ -120,8 +128,8 @@ describe('app shell', () => {
     // The theme switches in place.
     await user.click(more.getByRole('radio', { name: 'Dark' }));
     expect(more.getByRole('radio', { name: 'Dark' }).getAttribute('aria-checked')).toBe('true');
-    await user.click(more.getByRole('link', { name: 'Library' }));
-    expect(screen.getByRole('heading', { level: 1, name: 'Library' })).toBeTruthy();
+    await user.click(more.getByRole('link', { name: 'Skills' }));
+    expect(screen.getByRole('heading', { level: 1, name: 'Skills' })).toBeTruthy();
     expect(tabs.getByRole('link', { name: 'More' }).getAttribute('aria-current')).toBe('page');
   });
 

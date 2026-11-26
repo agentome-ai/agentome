@@ -149,7 +149,7 @@ export interface ClaudeRunOutcome {
   /** The CLI's final text, when it printed a result. */
   readonly resultText?: string;
   readonly error?: ClaudeRunError;
-  /** What the run burned, counted the way `limits.maxTokens` is. */
+  /** What the run burned, by kind; `limitedTokens` says which of them its limit counts. */
   readonly usage: UsageTotals;
 }
 
@@ -253,6 +253,15 @@ function claudeArgs(options: ClaudeRunOptions, resume: string | undefined): stri
   args.push('--add-dir', options.profileDir);
   args.push('--settings', join(options.profileDir, 'settings.json'));
   return args;
+}
+
+/**
+ * The tokens a run's token limit counts: what the model read anew and wrote. A cache read is the
+ * context read again on each turn, a tenth of the price of an input token: counted, it stopped a
+ * long run on Opus at its 25th turn with 2M tokens of which 95% were rereads.
+ */
+export function limitedTokens(totals: UsageTotals): number {
+  return totals.tokensIn + totals.tokensOut + totals.tokensCacheWrite;
 }
 
 function createUsageCounter() {
@@ -453,7 +462,7 @@ export async function runClaude(
       // The totals come with the result, when the run is over: nothing is left to stop, and a
       // finished run must not end as over its limit because the turns undercounted.
       if (event.total) return;
-      const used = Object.values(usage.totals()).reduce((sum, tokens) => sum + tokens, 0);
+      const used = limitedTokens(usage.totals());
       const limit = options.limits.maxTokens;
       const message = `The run used ${used} tokens, more than its limit of ${limit}, and was stopped.`;
       if (used > limit) end({ code: 'token_limit', message });

@@ -31,7 +31,15 @@ import {
   sseWriter,
   streamRun,
 } from './read.js';
-import { cancelRun, finishRun, heartbeat, recordEvents, type RunReporter } from './service.js';
+import {
+  cancelRun,
+  finishRun,
+  heartbeat,
+  recordEvents,
+  type RunReporter,
+  runSkills,
+} from './service.js';
+import { skillFilesOf } from '../library/skills.js';
 import type { Jobs } from '../jobs.js';
 import { tellJira } from '../jira/push.js';
 import { notifyBudget } from '../budgets/service.js';
@@ -67,6 +75,32 @@ export const runRoutes: FastifyPluginAsyncZod<{
       // Only once the run's token opened it: a wrong token files nothing under the run.
       tagLog({ runId: request.params.id });
       return result;
+    },
+  );
+
+  app.get(
+    '/api/runs/:id/skills/:skillId/files',
+    {
+      schema: {
+        summary: "A skill's files, for a live run of an agent that has it or of its team",
+        params: IdParams.extend({ skillId: z.uuid() }),
+        response: {
+          200: z.object({ files: z.array(z.object({ path: z.string(), content: z.string() })) }),
+        },
+      },
+    },
+    async (request) => {
+      const by = await requireRun(db, request);
+      const allowed = await runSkills(db, request.params.id, by);
+      if (!allowed) throw ended();
+      tagLog({ runId: request.params.id });
+      // Not found either way: a run learns nothing of a skill it was not given.
+      if (!allowed.has(request.params.skillId))
+        throw new AppError('not_found', 'This run has no such skill');
+      const files = await skillFilesOf(db, request.params.skillId);
+      return {
+        files: files.map(({ path, content }) => ({ path, content: content.toString('base64') })),
+      };
     },
   );
 

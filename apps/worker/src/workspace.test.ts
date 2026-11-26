@@ -367,6 +367,43 @@ describe('prepareWorkspace', () => {
     const skill = join(skillRun.profile, 'skills', 'code-review', 'SKILL.md');
     expect(readFileSync(skill, 'utf8')).toContain('name: code-review');
     expect(statSync(skill).mode & 0o777).toBe(0o400);
+    // A skill's files beside its SKILL.md: read only, no execute bit, folders read only too.
+    const withFiles = launchPackage({ repository: origin });
+    const files = { skillId: '7d3c2b1a-0000-4000-8000-000000000001', count: 2, digest: 'd' };
+    withFiles.agent.skills = [{ name: 'sr-docs', version: 1, content: '---\n---\n', files }];
+    const fileRun = await prepareWorkspace(home, withFiles, {
+      ...options,
+      skillFiles: new Map([
+        [
+          files.skillId,
+          [
+            { path: 'references/cloud/listeners.md', content: Buffer.from('# Listeners\n') },
+            { path: 'scripts/run.sh', content: Buffer.from('echo hi\n') },
+          ],
+        ],
+      ]),
+    });
+    const folder = join(fileRun.profile, 'skills', 'sr-docs');
+    expect(readFileSync(join(folder, 'references', 'cloud', 'listeners.md'), 'utf8')).toBe(
+      '# Listeners\n',
+    );
+    expect(statSync(join(folder, 'scripts', 'run.sh')).mode & 0o777).toBe(0o400);
+    expect(statSync(join(folder, 'references', 'cloud')).mode & 0o777).toBe(0o500);
+    // Fetched files missing, or a path out of shape, stop the run before the CLI starts.
+    const again = () => {
+      const launch = launchPackage({ repository: origin });
+      launch.agent.skills = withFiles.agent.skills;
+      return launch;
+    };
+    await expect(prepareWorkspace(home, again(), options)).rejects.toThrow(
+      /files of the skill sr-docs are missing/,
+    );
+    await expect(
+      prepareWorkspace(home, again(), {
+        ...options,
+        skillFiles: new Map([[files.skillId, [{ path: '../x', content: Buffer.from('x') }]]]),
+      }),
+    ).rejects.toThrow(/skill file path out of shape/);
     const badSkill = launchPackage({ repository: origin });
     badSkill.agent.skills = [{ name: '../escape', version: 1, content: 'x' }];
     await expect(prepareWorkspace(home, badSkill, options)).rejects.toThrow(

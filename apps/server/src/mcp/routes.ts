@@ -420,7 +420,7 @@ export const mcpRoutes: FastifyPluginAsyncZod<{
                 // dropped here, the library shows Sign in instead of a sign-in that cannot work.
                 await signOut(db, remote.id, run.agentOwnerId);
                 throw new RemoteError(
-                  `Your owner's sign-in to ${remote.name} has ended: they sign in again in Library, MCP servers, ${remote.name}.`,
+                  `Your owner's sign-in to ${remote.name} has ended: they sign in again in MCP servers, ${remote.name}.`,
                   { cause: error },
                 );
               },

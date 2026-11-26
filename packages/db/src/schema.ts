@@ -21,6 +21,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -235,6 +236,22 @@ export const catalogItems = pgTable(
       .on(t.kind, t.name)
       .where(sql`${t.ownerUserId} is null`),
   ],
+);
+
+const bytea = customType<{ data: Buffer }>({ dataType: () => 'bytea' });
+
+// The files a skill version brings beside its SKILL.md: references, specifications, scripts.
+// A version's files never change; a new set is a new version.
+export const skillFiles = pgTable(
+  'skill_files',
+  {
+    skillId: uuid('skill_id')
+      .notNull()
+      .references(() => catalogItems.id, { onDelete: 'cascade' }),
+    path: text('path').notNull(),
+    content: bytea('content').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.skillId, t.path] })],
 );
 
 export const agents = pgTable(

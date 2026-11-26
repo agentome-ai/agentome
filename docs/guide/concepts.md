@@ -191,16 +191,16 @@ belongs to the agent and goes with it when it changes owner.
 Reusable instructions for a kind of work, given to an agent.
 
 A skill is a `SKILL.md` file: its frontmatter names the skill and says what it is for, and its body
-says how to do it. You add skills to the library and give them to agents in the agent's **Skills**
+says how to do it. A skill may bring files beside it, such as documentation the agent reads. You add skills in **Skills** and give them to agents in the agent's **Skills**
 section. Each change to a skill is saved as a new version.
 
-## Library
+## Skills and MCP servers
 
-The shared shelf of skills and MCP servers.
+What agents can be given beyond their instructions.
 
-The **Library** holds **Skills** and **MCP servers**. What you add is yours alone until an admin
+**Skills** and **MCP servers** each have a page in the sidebar. What you add is yours alone until an admin
 shares it with everyone; then everyone can give it to their agents. Some skills come with Agentome.
-An MCP server in the library can sign each person in with OAuth. You give an agent MCP servers in
+An MCP server can sign each person in with OAuth. You give an agent MCP servers in
 its **Tools & policies**, and each of their tools gets a policy like any other. See
 [Integrations](integrations.md).
 

@@ -49,6 +49,10 @@ beforeAll(async () => {
     AGENTOME_DATABASE_URL: container.getConnectionUri(),
     AGENTOME_DATA_DIR: dataDir,
     AGENTOME_LOG_LEVEL: 'silent',
+    // The limits these tests read back; an installation has none unless it sets them.
+    AGENTOME_RUN_MAX_MINUTES: '60',
+    AGENTOME_RUN_MAX_TURNS: '50',
+    AGENTOME_RUN_MAX_TOKENS: '2000000',
     AGENTOME_PUBLIC_URL: 'https://agentome.example.com',
   });
   // A server run from a checkout has no worker bundle to hand out.

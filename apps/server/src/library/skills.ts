@@ -7,9 +7,12 @@ import {
   eq,
   inArray,
   or,
+  skillFiles,
   sql,
   users,
 } from '@agentome/db';
+import { SKILL_FILES, skillFilePath } from '@agentome/shared';
+import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -17,13 +20,68 @@ import { agentFor, agentsThat, Holders } from '../agents/service.js';
 import { AppError } from '../errors.js';
 import { IdParams } from '../protocol.js';
 
-// The skills of the library: a SKILL.md per version, one catalog_items row each. A
-// person adds skills for themself (private); an admin shares one with everyone (org, approved_by).
-// An agent points at rows, so it keeps the version it was given until its owner moves it on.
+// The skills of the library: a SKILL.md per version, one catalog_items row each, and the files
+// it brings beside it in skill_files. A person adds skills for themself (private); an
+// admin shares one with everyone (org, approved_by). An agent points at rows, so it keeps the
+// version it was given until its owner moves it on.
 
 /** The name Claude Code knows a skill by: lowercase letters, digits and hyphens, up to 64. */
 const SkillName = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SkillMd = z.string().trim().min(1).max(100_000);
+
+/** A request with a skill's files: their bytes in base64, with room for paths and JSON. */
+export const SKILL_FILES_BODY = Math.ceil((SKILL_FILES.bytes * 4) / 3) + 4 * 1024 * 1024;
+
+const SkillFileIn = z.object({
+  path: z
+    .string()
+    .min(1)
+    .max(512)
+    .refine(skillFilePath, 'Give each file a relative path of plain folder and file names'),
+  content: z.base64(),
+});
+const SkillFilesIn = z.array(SkillFileIn).max(SKILL_FILES.count).optional();
+const SkillBody = z.object({ content: SkillMd, files: SkillFilesIn });
+
+/** The files of a new version, decoded and checked against the limits; empty without any. */
+function decodeFiles(files: z.infer<typeof SkillFilesIn>) {
+  const decoded = (files ?? []).map(({ path, content }) => ({
+    path,
+    content: Buffer.from(content, 'base64'),
+  }));
+  const paths = new Set(decoded.map(({ path }) => path));
+  if (paths.size !== decoded.length)
+    throw new AppError('validation_failed', 'Each file of a skill needs a path of its own');
+  // A path that is also a folder of another could not be laid out.
+  const clash = decoded.find(({ path }) =>
+    decoded.some((other) => other.path.startsWith(`${path}/`)),
+  );
+  if (clash) throw new AppError('validation_failed', `${clash.path} is both a file and a folder`);
+  const big = decoded.find(({ content }) => content.length > SKILL_FILES.file);
+  if (big)
+    throw new AppError('validation_failed', `${big.path} is over 5 MB, the most a file may be`);
+  const bytes = decoded.reduce((sum, { content }) => sum + content.length, 0);
+  if (bytes > SKILL_FILES.bytes)
+    throw new AppError('validation_failed', "A skill's files may come to 25 MB at most");
+  return decoded;
+}
+
+/**
+ * What the launch package says of a version's files: how many, and a digest of their paths and
+ * bytes, by which the worker keeps them.
+ */
+function filesSummary(files: { path: string; content: Buffer }[]) {
+  if (files.length === 0) return undefined;
+  const digest = createHash('sha256');
+  for (const { path, content } of [...files].sort((a, b) => (a.path < b.path ? -1 : 1))) {
+    digest.update(`${path}\0${content.length}\0`).update(content);
+  }
+  return {
+    count: files.length,
+    bytes: files.reduce((sum, { content }) => sum + content.length, 0),
+    digest: digest.digest('hex'),
+  };
+}
 
 /**
  * name and description from the frontmatter, as Claude Code reads them; anything else is refused.
@@ -58,7 +116,13 @@ export function parseSkill(text: string): { name: string; description: string } 
   return { name, description };
 }
 
-type SkillSpec = { content: string; description: string };
+type FilesSummary = NonNullable<ReturnType<typeof filesSummary>>;
+const filesOfSpec = (skill: { fileCount: number; fileBytes: number; filesDigest?: string }) => ({
+  count: skill.fileCount,
+  bytes: skill.fileBytes,
+  digest: skill.filesDigest ?? '',
+});
+type SkillSpec = { content: string; description: string; files?: FilesSummary };
 const specOf = (spec: unknown): SkillSpec => spec as SkillSpec;
 
 const SkillSummary = z.object({
@@ -68,9 +132,15 @@ const SkillSummary = z.object({
   version: z.int(),
   owner: z.object({ id: z.uuid(), name: z.string() }).nullable(),
   visibility: z.enum(['org', 'private']),
+  /** How many files the version brings beside its SKILL.md, and their size in bytes. */
+  fileCount: z.int(),
+  fileBytes: z.int(),
   createdAt: z.iso.datetime(),
 });
-const Skill = SkillSummary.extend({ content: z.string() });
+const Skill = SkillSummary.extend({
+  content: z.string(),
+  files: z.array(z.object({ path: z.string(), size: z.int() })),
+});
 
 const columns = {
   id: catalogItems.id,
@@ -92,6 +162,9 @@ const toSkill = (row: Row) => ({
   version: Number(row.version),
   owner: row.ownerId ? { id: row.ownerId, name: row.ownerName ?? '' } : null,
   visibility: row.visibility ?? 'private',
+  fileCount: specOf(row.spec).files?.count ?? 0,
+  fileBytes: specOf(row.spec).files?.bytes ?? 0,
+  filesDigest: specOf(row.spec).files?.digest,
   createdAt: (row.createdAt ?? new Date(0)).toISOString(),
 });
 
@@ -112,6 +185,70 @@ async function skillFor(db: Db, id: string, userId: string) {
   return toSkill(row);
 }
 
+/** One version as its page shows it: with the paths and sizes of its files. */
+async function skillWithFiles(db: Db, id: string, userId: string) {
+  const skill = await skillFor(db, id, userId);
+  const files = skill.fileCount
+    ? await db
+        .select({ path: skillFiles.path, size: sql<number>`octet_length(${skillFiles.content})` })
+        .from(skillFiles)
+        .where(eq(skillFiles.skillId, id))
+        .orderBy(skillFiles.path)
+    : [];
+  return { ...skill, files };
+}
+
+/** A version's files with their bytes, for a run of an agent that has it. */
+export async function skillFilesOf(db: Db, id: string) {
+  return db
+    .select({ path: skillFiles.path, content: skillFiles.content })
+    .from(skillFiles)
+    .where(eq(skillFiles.skillId, id))
+    .orderBy(skillFiles.path);
+}
+
+/**
+ * A new version: its row and its files at once, so that no run finds the one without the other.
+ * Without files of its own it keeps those of `previous`, if given: a new SKILL.md alone changes
+ * the text, not the references beside it.
+ */
+async function insertVersion(
+  db: Db,
+  values: Omit<typeof catalogItems.$inferInsert, 'kind' | 'spec' | 'name'> & { content: string },
+  files: z.infer<typeof SkillFilesIn>,
+  previous?: { id: string; files?: FilesSummary },
+) {
+  const decoded = decodeFiles(files);
+  const { name, description } = parseSkill(values.content);
+  const { content, ...rest } = values;
+  const kept = files === undefined ? previous : undefined;
+  const summary = kept ? kept.files : filesSummary(decoded);
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(catalogItems)
+      .values({
+        ...rest,
+        kind: 'skill',
+        name,
+        spec: { content, description, ...(summary && { files: summary }) },
+      })
+      .returning({ id: catalogItems.id });
+    if (!row) throw new Error('The skill was not inserted');
+    // In batches: one insert of thousands of rows would pass PostgreSQL's 65 535 parameters.
+    for (let at = 0; at < decoded.length; at += 500) {
+      await tx
+        .insert(skillFiles)
+        .values(decoded.slice(at, at + 500).map((file) => ({ skillId: row.id, ...file })));
+    }
+    if (kept?.files) {
+      await tx.execute(sql`
+        insert into ${skillFiles} (skill_id, path, content)
+        select ${row.id}::uuid, path, content from ${skillFiles} where skill_id = ${kept.id}`);
+    }
+    return row.id;
+  });
+}
+
 /** The skills an agent was given, pinned to their versions, for its view and its runs. */
 export async function skillsOf(db: Db, refs: unknown) {
   const ids = z
@@ -124,6 +261,20 @@ export async function skillsOf(db: Db, refs: unknown) {
     and(eq(catalogItems.kind, 'skill'), inArray(catalogItems.id, ids)),
   );
   return rows.map(toSkill);
+}
+
+/**
+ * A skill as a launch package carries it: its SKILL.md, and of its files only what the worker
+ * fetches them by.
+ */
+export function launchSkill(skill: Awaited<ReturnType<typeof skillsOf>>[number]) {
+  const { id, name, version, content, fileCount, filesDigest } = skill;
+  return {
+    name,
+    version,
+    content,
+    ...(filesDigest && { files: { skillId: id, count: fileCount, digest: filesDigest } }),
+  };
 }
 
 /**
@@ -228,7 +379,7 @@ export const skillRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }
         response: { 200: Skill },
       },
     },
-    async (request) => skillFor(db, request.params.id, request.user.id),
+    async (request) => skillWithFiles(db, request.params.id, request.user.id),
   );
 
   app.get(
@@ -255,14 +406,15 @@ export const skillRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }
   app.post(
     '/api/library/skills',
     {
+      bodyLimit: SKILL_FILES_BODY,
       schema: {
-        summary: 'Adds a skill for the person, from its SKILL.md',
-        body: z.object({ content: SkillMd }),
+        summary: 'Adds a skill for the person, from its SKILL.md and the files beside it',
+        body: SkillBody,
         response: { 201: Skill },
       },
     },
     async (request, reply) => {
-      const { name, description } = parseSkill(request.body.content);
+      const { name } = parseSkill(request.body.content);
       const [mine] = await db
         .select({ id: catalogItems.id })
         .from(catalogItems)
@@ -278,28 +430,28 @@ export const skillRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }
           'validation_failed',
           `You already have a skill named ${name}: add a version to it instead`,
         );
-      const [row] = await db
-        .insert(catalogItems)
-        .values({
-          kind: 'skill',
-          name,
+      const id = await insertVersion(
+        db,
+        {
+          content: request.body.content,
           version: '1',
-          spec: { content: request.body.content, description },
           ownerUserId: request.user.id,
           visibility: 'private',
-        })
-        .returning({ id: catalogItems.id });
-      return reply.code(201).send(await skillFor(db, row?.id ?? '', request.user.id));
+        },
+        request.body.files,
+      );
+      return reply.code(201).send(await skillWithFiles(db, id, request.user.id));
     },
   );
 
   app.post(
     '/api/library/skills/:id/versions',
     {
+      bodyLimit: SKILL_FILES_BODY,
       schema: {
         summary: "Adds a version to the person's own skill; agents keep theirs until moved on",
         params: IdParams,
-        body: z.object({ content: SkillMd }),
+        body: SkillBody,
         response: { 201: Skill },
       },
     },
@@ -307,7 +459,7 @@ export const skillRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }
       const base = await skillFor(db, request.params.id, request.user.id);
       if (base.owner?.id !== request.user.id)
         throw new AppError('forbidden', 'Only its author changes a skill');
-      const { name, description } = parseSkill(request.body.content);
+      const { name } = parseSkill(request.body.content);
       if (name !== base.name)
         throw new AppError(
           'validation_failed',
@@ -323,19 +475,19 @@ export const skillRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }
             eq(catalogItems.ownerUserId, request.user.id),
           ),
         );
-      const [row] = await db
-        .insert(catalogItems)
-        .values({
-          kind: 'skill',
-          name,
+      const id = await insertVersion(
+        db,
+        {
+          content: request.body.content,
           version: String((latest?.version ?? 0) + 1),
-          spec: { content: request.body.content, description },
           ownerUserId: request.user.id,
           visibility: base.visibility,
           approvedBy: null,
-        })
-        .returning({ id: catalogItems.id });
-      return reply.code(201).send(await skillFor(db, row?.id ?? '', request.user.id));
+        },
+        request.body.files,
+        { id: base.id, files: base.filesDigest ? filesOfSpec(base) : undefined },
+      );
+      return reply.code(201).send(await skillWithFiles(db, id, request.user.id));
     },
   );
 
@@ -361,7 +513,7 @@ export const skillRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }
             skill.owner ? eq(catalogItems.ownerUserId, skill.owner.id) : sql`false`,
           ),
         );
-      return skillFor(db, skill.id, request.user.id);
+      return skillWithFiles(db, skill.id, request.user.id);
     },
   );
 

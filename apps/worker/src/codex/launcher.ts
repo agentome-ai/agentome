@@ -716,8 +716,8 @@ export async function runCodex(
 
   if (exit.error) return fail(notInstalled(cliPath, exit.error));
   if (ended) return outcome(ended);
-  const used =
-    totals.tokensIn + totals.tokensOut + totals.tokensCacheRead + totals.tokensCacheWrite;
+  // Counted as a Claude run's are: cached input read again is not.
+  const used = totals.tokensIn + totals.tokensOut + totals.tokensCacheWrite;
   if (completedTurn && used > options.limits.maxTokens) {
     // Codex reports usage once, at the end of the turn: the limit is told, not enforced, here.
     emit({

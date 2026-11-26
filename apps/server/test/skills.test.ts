@@ -214,6 +214,137 @@ describe('the skills library', () => {
   });
 });
 
+describe("a skill's files", () => {
+  const b64 = (text: string) => Buffer.from(text).toString('base64');
+  const files = [
+    { path: 'references/a.md', content: b64('A') },
+    { path: 'scripts/run.py', content: b64('print(1)\n') },
+  ];
+  // The worker's digest of these files: apps/worker/src/skill-files.test.ts holds the same.
+  const digest = 'b0424fbafea09642a588e494b371af8098149eb26e60f33f000091bd20313e58';
+
+  it('keeps them with the version, refuses paths out of shape, and a text-only version keeps them', async () => {
+    const added = await call(bob, 'POST', '/api/library/skills', {
+      content: skillMd('vendor-docs'),
+      files,
+    });
+    expect(added.statusCode).toBe(201);
+    const skill = added.json<Skill & { fileCount: number; files: object[] }>();
+    expect(skill.fileCount).toBe(2);
+    expect(skill.files).toEqual([
+      { path: 'references/a.md', size: 1 },
+      { path: 'scripts/run.py', size: 9 },
+    ]);
+    for (const path of [
+      '../a.md',
+      '/etc/passwd',
+      '.git/config',
+      'a/.env',
+      'SKILL.md',
+      'a\\b',
+      'a//b',
+    ]) {
+      const refused = await call(bob, 'POST', `/api/library/skills/${skill.id}/versions`, {
+        content: skillMd('vendor-docs'),
+        files: [{ path, content: b64('x') }],
+      });
+      expect(refused.statusCode, path).toBe(400);
+    }
+    const clash = await call(bob, 'POST', `/api/library/skills/${skill.id}/versions`, {
+      content: skillMd('vendor-docs'),
+      files: [
+        { path: 'a', content: b64('x') },
+        { path: 'a/b', content: b64('y') },
+      ],
+    });
+    expect(clash.json<{ error: { message: string } }>().error.message).toBe(
+      'a is both a file and a folder',
+    );
+    const big = await call(bob, 'POST', `/api/library/skills/${skill.id}/versions`, {
+      content: skillMd('vendor-docs'),
+      files: [{ path: 'big.json', content: Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64') }],
+    });
+    expect(big.statusCode).toBe(400);
+
+    const text = await call(bob, 'POST', `/api/library/skills/${skill.id}/versions`, {
+      content: skillMd('vendor-docs', 'Read references/ first.'),
+    });
+    expect(text.json<{ version: number; fileCount: number }>()).toMatchObject({
+      version: 2,
+      fileCount: 2,
+    });
+    const none = await call(bob, 'POST', `/api/library/skills/${skill.id}/versions`, {
+      content: skillMd('vendor-docs'),
+      files: [],
+    });
+    expect(none.json<{ version: number; fileCount: number }>()).toMatchObject({
+      version: 3,
+      fileCount: 0,
+    });
+  });
+
+  it("go to a run of an agent that has the skill, with the run's token, and to no other", async () => {
+    const skill = (
+      await call(bob, 'POST', '/api/library/skills', { content: skillMd('jira-admin'), files })
+    ).json<Skill>();
+    const other = (
+      await call(bob, 'POST', '/api/library/skills', { content: skillMd('not-given'), files })
+    ).json<Skill>();
+    const agent = (await call(bob, 'POST', '/api/agents', { name: 'Jira admin' })).json<{
+      id: string;
+    }>();
+    await call(bob, 'PUT', `/api/agents/${agent.id}/skills`, { skills: [skill.id] });
+    const project = (await call(bob, 'POST', '/api/projects', { name: 'Jira' })).json<{
+      id: string;
+    }>();
+    await call(bob, 'PUT', `/api/projects/${project.id}/agents/${agent.id}`);
+    await call(bob, 'POST', '/api/tasks', {
+      agentId: agent.id,
+      projectId: project.id,
+      title: 'Add a field',
+      repository: null,
+    });
+    const code = (await call(bob, 'POST', '/api/seats/pairing-codes')).json<{ code: string }>()
+      .code;
+    const seat = await app.inject({
+      method: 'POST',
+      url: '/api/seats/pair',
+      payload: {
+        code,
+        name: 'bobs-mac',
+        kind: 'subscription-laptop',
+        engines: ['claude-code'],
+        capabilities: { sandbox: true },
+      },
+    });
+    const claim = await app.inject({
+      method: 'GET',
+      url: '/api/seats/claim?wait=0',
+      headers: { authorization: `Bearer ${seat.json<{ token: string }>().token}` },
+    });
+    const launch = LaunchPackage.parse(claim.json());
+    expect(launch.agent.skills).toEqual([
+      {
+        name: 'jira-admin',
+        version: 1,
+        content: skillMd('jira-admin').trim(),
+        files: { skillId: skill.id, count: 2, digest },
+      },
+    ]);
+    const fetchFiles = (id: string, token = launch.run.token) =>
+      app.inject({
+        method: 'GET',
+        url: `/api/runs/${launch.run.id}/skills/${id}/files`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+    const fetched = await fetchFiles(skill.id);
+    expect(fetched.statusCode).toBe(200);
+    expect(fetched.json()).toEqual({ files });
+    expect((await fetchFiles(other.id)).statusCode).toBe(404);
+    expect((await fetchFiles(skill.id, 'not-the-token')).statusCode).toBe(401);
+  });
+});
+
 describe('deleting a skill', () => {
   it('takes every version: its author may, an admin once it is shared, nobody else', async () => {
     const draft = (

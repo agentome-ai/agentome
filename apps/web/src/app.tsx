@@ -1,6 +1,6 @@
 import { LucideProvider } from 'lucide-react';
 import { lazy, Suspense, type ReactNode } from 'react';
-import { Navigate, Route, Routes } from 'react-router';
+import { Navigate, Route, Routes, useLocation } from 'react-router';
 import { AdminPage } from './admin/admin-page';
 import { ConnectionsPage } from './admin/connections-page';
 import { LicensePage } from './admin/license-page';
@@ -25,7 +25,8 @@ import { NotificationsPage } from './settings/notifications-page';
 import { RunsPage } from './runs/runs-page';
 import { SessionShell } from './session';
 import { frame, PageHeader } from './shell/page-header';
-import { LibraryPage } from './library/library-page';
+import { ServersPage } from './library/servers-page';
+import { SkillsPage } from './library/skills-page';
 import { footerSections, mainSections, SectionPage } from './shell/sections';
 import { EmptyState, ErrorState } from './shell/states';
 import { TaskPage } from './tasks/task-page';
@@ -59,7 +60,8 @@ const pages: Record<string, ReactNode> = {
   '/teams': <TeamsPage />,
   '/projects': <ProjectsPage />,
   '/runs': <RunsPage />,
-  '/library': <LibraryPage />,
+  '/skills': <SkillsPage />,
+  '/mcp-servers': <ServersPage />,
   '/help': <HelpPage />,
 };
 
@@ -92,6 +94,7 @@ export function App() {
             <Route path="/admin/computers" element={<SeatsPage />} />
             {/* The page's earlier name: old links still land on it. */}
             <Route path="/admin/seats" element={<Navigate to="/admin/computers" replace />} />
+            <Route path="/library" element={<LibraryMoved />} />
             <Route path="/admin/connections" element={<ConnectionsPage />} />
             <Route path="/admin/models" element={<ModelsPage />} />
             <Route path="/admin/license" element={<LicensePage />} />
@@ -124,6 +127,25 @@ export function App() {
         <Toaster />
       </TooltipProvider>
     </LucideProvider>
+  );
+}
+
+/**
+ * The Library was once one page of skills and MCP servers: its links, a sign-in's return among
+ * them, land on the page of what they name.
+ */
+function LibraryMoved() {
+  const { search } = useLocation();
+  const params = new URLSearchParams(search);
+  const servers =
+    params.has('server') ||
+    params.get('kind') === 'servers' ||
+    params.has('mcpSignedIn') ||
+    params.has('mcpError');
+  params.delete('kind');
+  const rest = params.toString();
+  return (
+    <Navigate to={`${servers ? '/mcp-servers' : '/skills'}${rest ? `?${rest}` : ''}`} replace />
   );
 }
 

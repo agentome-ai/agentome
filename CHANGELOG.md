@@ -6,6 +6,26 @@ What changed in each release of Agentome. The format follows
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-11-26
+
+A skill can bring its files, the Library becomes two pages, and runs have no limits unless you
+set them. The update adds one table to the database; it applies itself on start.
+
+### Added
+
+- A skill brings its files: scripts, templates and references beside its SKILL.md. **Upload a skill folder** on Skills, or `files` in `POST /api/library/skills` and in a new version (up to 3,000 files, 25 MB in all, 5 MB a file); a version without files keeps the previous one's. A run gets them read only beside the skill. An exported agent says its skills' files stay behind.
+- Guide, Integrations: a Jira Cloud administrator agent with the open-source `jira-cloud-admin-mcp` server.
+
+### Changed
+
+- **Skills** and **MCP servers** are two pages in the sidebar and in ⌘K instead of the Library; old `/library` links lead to the page they name. An item's facts and the agents that use it stand in one line under its name. A server's tools are a line each, opening to the whole description, with a filter past eight.
+- Run limits are off by default. `AGENTOME_RUN_MAX_MINUTES`, `AGENTOME_RUN_MAX_TURNS` and `AGENTOME_RUN_MAX_TOKENS` have no default, and an agent's Budget shows **No limit** where neither sets one; set, they work as before. Workers of earlier versions run such runs unchanged.
+- The token limit no longer counts cache reads, for Claude Code and Codex: on a long run they were nearly all of the count.
+
+### Fixed
+
+- An MCP server with OAuth sign-in is added only when it says how to sign in to it; one that publishes no OAuth metadata is refused with that reason instead of staying in the list unusable.
+
 ## [0.4.3] - 2026-11-24
 
 Tasks can be deleted, alone or several at once, and a place on the server checks its Claude Code
@@ -257,7 +277,8 @@ to install, configure and update it in [deploy/OPERATIONS.md](deploy/OPERATIONS.
   server, monthly budgets, quality reports, Keycloak sign-in and more agents need a key.
 - Images for amd64 and arm64 on Docker Hub: `agentome/agentome` and `agentome/agentome-seat`.
 
-[Unreleased]: https://github.com/agentome-ai/agentome/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/agentome-ai/agentome/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/agentome-ai/agentome/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/agentome-ai/agentome/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/agentome-ai/agentome/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/agentome-ai/agentome/compare/v0.4.0...v0.4.1

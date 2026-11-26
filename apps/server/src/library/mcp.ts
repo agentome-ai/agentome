@@ -30,6 +30,7 @@ import {
   beginSignIn,
   bearerFor,
   CALLBACK_PATH,
+  checkSignIn,
   finishSignIn,
   type OAuthSpec,
   pendingSignIn,
@@ -182,7 +183,7 @@ export async function remoteFor(
   const authorization = await bearerFor(db, key, oauthServer(server), userId, fetchImpl);
   if (!authorization) {
     throw new RemoteError(
-      `${who} not signed in to ${server.name}: Library, MCP servers, ${server.name}, Sign in.`,
+      `${who} not signed in to ${server.name}: MCP servers, ${server.name}, Sign in.`,
     );
   }
   return { url: server.spec.url, authorization };
@@ -219,7 +220,7 @@ export const mcpLibraryRoutes: FastifyPluginAsyncZod<{
   // to the public address; there the sign-in's state names the person.
   const loopbackReturn = isLoopback(new URL(config.oauthReturnUrl).hostname);
   const library = (query: Record<string, string>) =>
-    `${loopbackReturn ? config.publicUrl : ''}/library?${new URLSearchParams(query).toString()}`;
+    `${loopbackReturn ? config.publicUrl : ''}/mcp-servers?${new URLSearchParams(query).toString()}`;
   app.addHook('onRequest', async (request, reply) => {
     if (loopbackReturn && request.routeOptions.url === CALLBACK_PATH) return;
     return app.requireSession(request, reply);
@@ -285,7 +286,14 @@ export const mcpLibraryRoutes: FastifyPluginAsyncZod<{
         );
       if (taken) throw new AppError('validation_failed', `You already have a server named ${name}`);
       if (authorization) browserOnly(request);
-      // Its tools are listed with the first sign-in: before it, the server lets nobody in.
+      // Its tools are listed with the first sign-in: before it, the server lets nobody in. Its
+      // sign-in is checked now, so that a server nobody can sign in to is never added.
+      if (auth === 'oauth') {
+        await checkSignIn({ name, url }, fetchImpl).catch((error: unknown) => {
+          if (error instanceof RemoteError) throw new AppError('validation_failed', error.message);
+          throw error;
+        });
+      }
       const tools =
         auth === 'oauth'
           ? []

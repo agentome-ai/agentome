@@ -116,10 +116,10 @@ export function ImportAgentDialog() {
           {done ? (
             <>
               <D.DialogDescription>
-                It uses MCP servers your library doesn't have yet:{' '}
+                It uses MCP servers you don't have yet:{' '}
                 <span className="text-ink">{done.missingServers.join(', ')}</span>. Add them in{' '}
-                <Link to="/library" className="underline underline-offset-2">
-                  Library
+                <Link to="/mcp-servers" className="underline underline-offset-2">
+                  MCP servers
                 </Link>
                 , then give them to the agent in its Tools &amp; policies.
               </D.DialogDescription>
@@ -133,7 +133,7 @@ export function ImportAgentDialog() {
             <>
               <D.DialogDescription>
                 From an .agent.json file: one exported from Agentome, or one from the catalog on
-                agentome.ai. Its skills join your library.
+                agentome.ai. Its skills are added to your skills.
               </D.DialogDescription>
               <input
                 ref={input}

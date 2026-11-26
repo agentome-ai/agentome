@@ -7,7 +7,7 @@ services:
   app:
     # The release: an update or a rollback changes AGENTOME_VERSION. In a checkout,
     # compose.override.yaml builds agentome:local from the source instead.
-    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.4.3}
+    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.4.4}
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,7 +99,7 @@ services:
   # In production, run it on a machine of its own.
   seat:
     profiles: [server-seat]
-    image: docker.io/agentome/agentome-seat:${AGENTOME_VERSION:-0.4.3}
+    image: docker.io/agentome/agentome-seat:${AGENTOME_VERSION:-0.4.4}
     depends_on: [app]
     read_only: true
     # An agent's commands run here: no capability, no way to gain one, and a ceiling on memory
@@ -137,7 +137,7 @@ services:
   # reads the places' key, which the app derives from its own, read-only.
   place-launcher:
     profiles: [places]
-    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.4.3}
+    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.4.4}
     # The app writes the places' key at its start; the launcher only reads it.
     command: ['agentome', 'place-launcher']
     depends_on:
@@ -175,7 +175,7 @@ services:
   # host), so a launcher broken into is not the host's root. No network at all.
   docker-guard:
     profiles: [places]
-    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.4.3}
+    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.4.4}
     command: ['agentome', 'docker-guard']
     user: root
     volumes:
@@ -198,7 +198,7 @@ services:
   # socket.
   place-egress:
     profiles: [places, server-seat]
-    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.4.3}
+    image: docker.io/agentome/agentome:${AGENTOME_VERSION:-0.4.4}
     command: ['agentome', 'place-egress']
     # The app writes the proxy's key at its start: before that there is no folder to mount.
     depends_on:

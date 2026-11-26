@@ -101,6 +101,7 @@ const sectionIds = sections.map(([id]) => id);
 // A number as people type it: 2,000,000 and 2 000 000 are 2000000.
 const digits = (value: string) => value.replace(/[\s,_]/g, '');
 const number = (value: number) => value.toLocaleString('en-US');
+const limit = (value: number | null) => (value === null ? 'No limit' : number(value));
 
 /** What is wrong with the draft, by field, in the words of the field's error line. */
 function problemsOf(draft: Draft): Partial<Record<Key, string>> {
@@ -254,7 +255,17 @@ function AgentEditor({ id }: { id: string }) {
       return setDialog(action);
     }
     try {
-      if (action === 'export') return await download(`/api/agents/${agent.id}/export`);
+      if (action === 'export') {
+        await download(`/api/agents/${agent.id}/export`);
+        // The file holds each SKILL.md, not the files beside it.
+        const withFiles = agent.skills.filter((skill) => skill.withFiles).map((s) => s.name);
+        if (withFiles.length > 0) {
+          toast(`${agent.name} is exported without its skills' files`, {
+            description: `The file holds the SKILL.md of ${withFiles.join(', ')}, not the files beside it. Upload their folders to Skills where you import it.`,
+          });
+        }
+        return;
+      }
       const next = await api<Agent>(`/api/agents/${agent.id}/${action}`, { method: 'POST' });
       void sidebar.reload();
       if (action === 'duplicate') await navigate(`/agents/${next.id}`);
@@ -541,9 +552,9 @@ function AgentEditor({ id }: { id: string }) {
             <div className="grid grid-cols-2 gap-4">
               {(
                 [
-                  ['maxMinutes', 'Minutes per run', number(agent.runDefaults.maxMinutes)],
-                  ['maxTurns', 'Turns per run', number(agent.runDefaults.maxTurns)],
-                  ['maxTokens', 'Tokens per run', number(agent.runDefaults.maxTokens)],
+                  ['maxMinutes', 'Minutes per run', limit(agent.runDefaults.maxMinutes)],
+                  ['maxTurns', 'Turns per run', limit(agent.runDefaults.maxTurns)],
+                  ['maxTokens', 'Tokens per run', limit(agent.runDefaults.maxTokens)],
                   ['usdPerMonth', 'Monthly limit, USD', 'No limit'],
                 ] as const
               ).map(([key, label, placeholder]) => (

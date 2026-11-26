@@ -35,7 +35,7 @@ describe('loadConfig', () => {
       secretKey: expect.any(String),
       webDir: undefined,
       logLevel: 'info',
-      runLimits: { maxMinutes: 60, maxTurns: 50, maxTokens: 2_000_000 },
+      runLimits: { maxMinutes: null, maxTurns: null, maxTokens: null },
       orphanMinutes: 3,
       knowledgeSyncMinutes: 60,
       jiraPollMinutes: 5,
@@ -183,6 +183,15 @@ describe('loadConfig', () => {
       AGENTOME_HTTP_PORT: 'tcp://10.0.0.2:80',
     });
     expect(config.listen).toEqual({ host: '0.0.0.0', port: 3000 });
+  });
+
+  it('sets no run limit by default, nor for a limit compose passes empty', () => {
+    const config = loadConfig({
+      AGENTOME_DATA_DIR: dataDir,
+      AGENTOME_RUN_MAX_MINUTES: '',
+      AGENTOME_RUN_MAX_TURNS: '300',
+    });
+    expect(config.runLimits).toEqual({ maxMinutes: null, maxTurns: 300, maxTokens: null });
   });
 
   it('names every invalid variable', () => {

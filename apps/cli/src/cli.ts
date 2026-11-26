@@ -13,7 +13,7 @@ import { askAt, exec, Refusal } from './system.js';
 
 // The release this program installs: its own version, put here by the build.
 declare const AGENTOME_VERSION: string | undefined;
-const VERSION = typeof AGENTOME_VERSION === 'string' ? AGENTOME_VERSION : '0.4.3';
+const VERSION = typeof AGENTOME_VERSION === 'string' ? AGENTOME_VERSION : '0.4.4';
 
 const USAGE = `agentome ${VERSION}: AI employees, on your own servers
 

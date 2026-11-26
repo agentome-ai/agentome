@@ -59,6 +59,11 @@ const retired = (message: string) =>
     .optional();
 
 const Limit = (fallback: number) => z.coerce.number().int().min(1).default(fallback);
+// A limit with no default: unset, or set empty as compose passes an unset variable, is none.
+const OptionalLimit = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.coerce.number().int().min(1).optional(),
+);
 
 const DEFAULT_DATABASE_URL = 'postgres://agentome:agentome@localhost:5432/agentome';
 
@@ -85,10 +90,12 @@ const Env = z.object({
   AGENTOME_LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
-  // Run limits for agents whose budget does not set its own.
-  AGENTOME_RUN_MAX_MINUTES: Limit(60),
-  AGENTOME_RUN_MAX_TURNS: Limit(50),
-  AGENTOME_RUN_MAX_TOKENS: Limit(2_000_000),
+  // Run limits for agents whose budget does not set its own; none unless set. Until 0.4.4 they
+  // were 60 minutes, 50 turns and 2M tokens, which stopped long administration and engineering
+  // tasks halfway: the owner asked for none by default.
+  AGENTOME_RUN_MAX_MINUTES: OptionalLimit,
+  AGENTOME_RUN_MAX_TURNS: OptionalLimit,
+  AGENTOME_RUN_MAX_TOKENS: OptionalLimit,
   AGENTOME_RUN_ORPHAN_MINUTES: Limit(3),
   AGENTOME_KNOWLEDGE_SYNC_MINUTES: Limit(60),
   AGENTOME_JIRA_POLL_MINUTES: Limit(5),
@@ -211,9 +218,9 @@ export function loadConfig(env: Record<string, string | undefined>) {
     webDir: checkWebDir(values.AGENTOME_WEB_DIR),
     logLevel: values.AGENTOME_LOG_LEVEL,
     runLimits: {
-      maxMinutes: values.AGENTOME_RUN_MAX_MINUTES,
-      maxTurns: values.AGENTOME_RUN_MAX_TURNS,
-      maxTokens: values.AGENTOME_RUN_MAX_TOKENS,
+      maxMinutes: values.AGENTOME_RUN_MAX_MINUTES ?? null,
+      maxTurns: values.AGENTOME_RUN_MAX_TURNS ?? null,
+      maxTokens: values.AGENTOME_RUN_MAX_TOKENS ?? null,
     },
     orphanMinutes: values.AGENTOME_RUN_ORPHAN_MINUTES,
     knowledgeSyncMinutes: values.AGENTOME_KNOWLEDGE_SYNC_MINUTES,

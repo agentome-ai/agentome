@@ -26,7 +26,7 @@ import type { ConnectionKind } from '@agentome/shared';
 import { z } from 'zod';
 import { AppError } from '../errors.js';
 import { grantInForce } from './grants.js';
-import type { RunLimits } from '../protocol.js';
+import type { LimitDefaults } from '../runs/launch.js';
 import { ownPolicy, policyFor } from '../mcp/policy.js';
 import { ASSIGN_TASK } from '../mcp/tools.js';
 import { reportsOf, teamOfLead } from './team.js';
@@ -236,7 +236,7 @@ export async function templateOf(db: Db, agent: AgentRow) {
 }
 
 /** Everything the editor and the sheet show about one agent. */
-export async function agentView(db: Db, agent: AgentRow, runDefaults: RunLimits) {
+export async function agentView(db: Db, agent: AgentRow, runDefaults: LimitDefaults) {
   const [[owner], template, [run], [seat], people, agentProjects, servers, [connection]] =
     await Promise.all([
       db.select({ name: users.name }).from(users).where(eq(users.id, agent.ownerUserId)),
@@ -370,6 +370,7 @@ export async function agentView(db: Db, agent: AgentRow, runDefaults: RunLimits)
       name: skill.name,
       version: String(skill.version),
       privateTo: skill.visibility === 'private' ? skill.owner?.name : undefined,
+      ...(skill.fileCount > 0 && { withFiles: true }),
     })),
     memoryDocuments: (await currentMemory(db, agent.id)).length,
     // What its runs cost this month, at API prices.

@@ -73,6 +73,17 @@ export const ClaimQuery = z.object({
 export const RunLimits = z.object({ maxMinutes: z.int(), maxTurns: z.int(), maxTokens: z.int() });
 export type RunLimits = z.infer<typeof RunLimits>;
 
+/**
+ * A skill in a launch package. Its files, when it has some, the worker fetches by `skillId` and
+ * keeps by `digest`.
+ */
+const LaunchSkill = z.object({
+  name: z.string(),
+  version: z.int(),
+  content: z.string(),
+  files: z.object({ skillId: z.uuid(), count: z.int(), digest: z.string() }).optional(),
+});
+
 export const LaunchPackage = z.object({
   run: z.object({ id: z.uuid(), token: z.string(), limits: RunLimits }),
   agent: z.object({
@@ -83,7 +94,7 @@ export const LaunchPackage = z.object({
     engine: Engine,
     modelPref: z.string().nullable(),
     /** The agent's skills at their pinned versions; the worker puts them in the profile. */
-    skills: z.array(z.object({ name: z.string(), version: z.int(), content: z.string() })),
+    skills: z.array(LaunchSkill),
     /** The agent's memory as it is at claim; the worker puts it in the profile. */
     memoryDocuments: z.array(z.object({ path: z.string(), version: z.int(), content: z.string() })),
   }),
@@ -104,7 +115,7 @@ export const LaunchPackage = z.object({
           prompt: z.string(),
           modelPref: z.string().nullable(),
           token: z.string(),
-          skills: z.array(z.object({ name: z.string(), version: z.int(), content: z.string() })),
+          skills: z.array(LaunchSkill),
           memoryDocuments: z.array(
             z.object({ path: z.string(), version: z.int(), content: z.string() }),
           ),

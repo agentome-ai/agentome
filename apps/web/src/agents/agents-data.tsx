@@ -56,7 +56,8 @@ export type Agent = AgentSummary & {
   modelConnection: { id: string; name: string } | null;
   serverShell: boolean;
   budget: Budget | null;
-  runDefaults: { maxMinutes: number; maxTurns: number; maxTokens: number };
+  /** The platform's run limits; null is none. */
+  runDefaults: { maxMinutes: number | null; maxTurns: number | null; maxTokens: number | null };
   copiedFromAgentId: string | null;
   template: { id: string; name: string; version: number } | null;
   seat: { id: string; name: string; busy: boolean; lastSeenAt: string | null } | null;

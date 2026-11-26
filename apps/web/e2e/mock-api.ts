@@ -467,6 +467,8 @@ const librarySkill = (
   version,
   owner: own ? { id: 'u1', name: 'Ann Admin' } : { id: 'u2', name: 'Ilya Smirnov' },
   visibility: org ? 'org' : 'private',
+  fileCount: 0,
+  fileBytes: 0,
   createdAt: ago(60 * 24 * (version + 1)),
 });
 const librarySkills = [
@@ -494,7 +496,31 @@ const librarySkills = [
     true,
     false,
   ),
+  {
+    ...librarySkill(
+      'sk4',
+      'issue-admin',
+      "Changes the tracker's fields, screens and workflows the safe way: draft, ask, publish, check",
+      1,
+      true,
+      false,
+    ),
+    fileCount: 924,
+    fileBytes: 7_969_177,
+  },
 ];
+// The files the issue-admin skill brings beside its SKILL.md, the first of its 924.
+const trackerAdminFiles = [
+  ['references/INDEX.md', 6_204],
+  ['references/fields/custom-fields.md', 18_311],
+  ['references/fields/field-contexts.md', 9_870],
+  ['references/permissions/permission-schemes.md', 21_402],
+  ['references/workflows/drafts-and-publishing.md', 14_655],
+  ['references/workflows/validators-and-conditions.md', 27_118],
+  ['specs/platform-openapi.json', 2_512_788],
+  ['examples/listeners/assign-on-create.groovy', 2_209],
+  ['examples/scheduled/close-stale-issues.groovy', 3_406],
+].map(([path, size]) => ({ path, size }));
 const codeReviewMd = `---
 name: code-review
 description: Reviews a branch and reports only the findings it is sure of
@@ -1119,7 +1145,13 @@ export const api: Record<string, unknown> = {
       },
     ],
   },
-  'GET /api/library/skills/sk1': { ...librarySkills[0], content: codeReviewMd },
+  'GET /api/library/skills/sk1': { ...librarySkills[0], content: codeReviewMd, files: [] },
+  'GET /api/library/skills/sk4': {
+    ...librarySkills[3],
+    content: `---\nname: issue-admin\ndescription: Changes the issue tracker's configuration\n---\n\n# Issue tracker admin\n\nRead \`references/INDEX.md\` first: it says which reference holds what. Before any change, read the current configuration, write the change as a draft, and ask before publishing it.\n`,
+    files: trackerAdminFiles,
+  },
+  'GET /api/library/skills/sk4/agents': { agents: [{ id: 'a1', name: 'Payments backend' }] },
   // Who has an item: two agents the skill, one the tracker, nobody the rest.
   'GET /api/library/skills/sk1/agents': {
     agents: [

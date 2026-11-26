@@ -1,18 +1,27 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { ApiError, api, asApiError, timeAgo } from '../api';
-import { ApiErrorState, useMe } from '../session';
-import { ContextFacts, frame, PageHeader, split } from '../shell/page-header';
+import { useMe } from '../session';
 import { LoadingState } from '../shell/states';
 import { Button } from '../ui/button';
-import { cn } from '../ui/cn';
 import * as D from '../ui/dialog';
-import { Field, FormError } from '../ui/field';
+import { FormError, Field } from '../ui/field';
 import { Textarea } from '../ui/input';
 import { canDelete, DeleteConfirm } from './delete-confirm';
-import { AddServerDialog, ServerPane, serverNote } from './mcp-servers';
-import { ListItem, MoreMenu, Pane, PaneHeader, UsedBy } from './pane';
-import type { McpServer, Skill, SkillSummary } from './skills-data';
+import {
+  FILTER_FROM,
+  ListFilter,
+  ListItem,
+  ListPage,
+  ListPageState,
+  matches,
+  MoreMenu,
+  Pane,
+  PaneHeader,
+  UsedBy,
+} from './pane';
+import { encodeFiles, filesOf, readFolder, sizeOf, type SkillFolder } from './skill-folder';
+import type { Skill, SkillSummary } from './skills-data';
 
 const Markdown = lazy(() =>
   import('../ui/markdown').then(({ Markdown }) => ({ default: Markdown })),
@@ -29,90 +38,56 @@ description: Writes release notes from merged pull requests, in the house style
 2. Group them as Added, Changed and Fixed.
 `;
 
-type Library = { skills: SkillSummary[]; servers: McpServer[] };
 type Me = { id: string; role: string };
-/** What the pane shows: a skill, a server, or the form for a new skill. */
-type Picked = { skill: string } | { server: string } | { new: 'skill' };
+/** What the pane shows: a skill, or the form for a new one. */
+type Picked = { skill: string } | { new: 'skill' };
 
 /**
- * /library: the skills and MCP servers a person may give their agents, as Approvals is laid out.
- * The list on the left, yours first; the one picked on the right, whole, with
- * Edit beside its name. The pick is in the address, so a link opens an item and Back works. On a
- * phone the list is the page and an item opens over it.
+ * /skills: the skills a person may give their agents. The list on the left, yours first; the
+ * one picked on the right, whole, with Edit beside its name. The pick is in the address, so a
+ * link opens a skill and Back works.
  */
-export function LibraryPage() {
+export function SkillsPage() {
   const me = useMe();
-  const [library, setLibrary] = useState<Library | ApiError>();
-  const [addingServer, setAddingServer] = useState(false);
+  const [skills, setSkills] = useState<SkillSummary[] | ApiError>();
   const [params, setParams] = useSearchParams();
+  const [filter, setFilter] = useState('');
   const load = useCallback(async () => {
     try {
-      const [{ skills }, { servers }] = await Promise.all([
-        api<{ skills: SkillSummary[] }>('/api/library/skills'),
-        api<{ servers: McpServer[] }>('/api/library/mcp'),
-      ]);
-      setLibrary({ skills, servers });
+      setSkills((await api<{ skills: SkillSummary[] }>('/api/library/skills')).skills);
     } catch (caught) {
-      setLibrary(asApiError(caught));
+      setSkills(asApiError(caught));
     }
   }, []);
   useEffect(() => void load(), [load]);
-
-  // How an OAuth sign-in went: the server's callback comes back with it in the address, said
-  // once and then taken out of the address.
-  const [notice, setNotice] = useState<{ signedIn?: string; error?: string }>();
-  useEffect(() => {
-    const signedIn = params.get('mcpSignedIn') ?? undefined;
-    const error = params.get('mcpError') ?? undefined;
-    if (!signedIn && !error) return;
-    setNotice({ signedIn, error });
-    const next = new URLSearchParams(params);
-    next.delete('mcpSignedIn');
-    next.delete('mcpError');
-    setParams(next, { replace: true });
-  }, [params, setParams]);
-
   const pick = (next?: Picked) => setParams(next ?? {});
 
-  if (!library || library instanceof ApiError) {
-    return (
-      <>
-        <PageHeader title="Library" />
-        <div className={cn(frame.wide, 'pt-6')}>
-          {library ? (
-            <ApiErrorState title="Couldn't load the library" error={library} onRetry={load} />
-          ) : (
-            <LoadingState label="Loading the library" />
-          )}
-        </div>
-      </>
-    );
+  if (!skills || skills instanceof ApiError) {
+    return <ListPageState title="Skills" what="skills" error={skills} onRetry={load} />;
   }
 
-  const { skills, servers } = library;
+  const shown = skills.filter((skill) => matches(filter, `${skill.name} ${skill.description}`));
   const groups = [
-    { label: 'Yours', skills: skills.filter((skill) => skill.owner?.id === me.id) },
+    { label: 'Yours', skills: shown.filter((skill) => skill.owner?.id === me.id) },
     {
       label: 'Shared by others',
-      skills: skills.filter((skill) => skill.owner && skill.owner.id !== me.id),
+      skills: shown.filter((skill) => skill.owner && skill.owner.id !== me.id),
     },
-    { label: 'From Agentome', skills: skills.filter((skill) => !skill.owner) },
+    { label: 'From Agentome', skills: shown.filter((skill) => !skill.owner) },
   ].filter((group) => group.skills.length > 0);
 
-  // What the address names; without a name, the server the browser has just signed in to, or the
-  // first item of the list. A phone shows the list until something is named.
-  const named = params.has('skill') || params.has('server') || params.has('new');
-  const justSignedIn = servers.find((server) => server.name === notice?.signedIn);
-  const server = named
-    ? servers.find((each) => each.id === params.get('server'))
-    : (justSignedIn ?? (skills.length === 0 ? servers[0] : undefined));
+  // What the address names, else the first skill of the list. A phone shows the list until
+  // something is named.
+  const named = params.has('skill') || params.has('new');
   const skill = params.get('new')
     ? undefined
     : named
       ? skills.find((each) => each.id === params.get('skill'))
-      : server
-        ? undefined
-        : groups[0]?.skills[0];
+      : groups[0]?.skills[0];
+  const changed = async (id: string) => {
+    await load();
+    pick({ skill: id });
+  };
 
   let pane;
   if (params.get('new') === 'skill') {
@@ -122,26 +97,8 @@ export function LibraryPage() {
         id="new"
         me={me}
         onBack={() => pick()}
-        onChanged={async (id) => {
-          await load();
-          pick({ skill: id });
-        }}
+        onChanged={changed}
         onDeleted={load}
-      />
-    );
-  } else if (server) {
-    pane = (
-      <ServerPane
-        key={server.id}
-        server={server}
-        me={me}
-        signedIn={notice?.signedIn === server.name}
-        onBack={() => pick()}
-        onChanged={load}
-        onDeleted={async () => {
-          pick();
-          await load();
-        }}
       />
     );
   } else if (skill) {
@@ -152,10 +109,7 @@ export function LibraryPage() {
         summary={skill}
         me={me}
         onBack={() => pick()}
-        onChanged={async (id) => {
-          await load();
-          pick({ skill: id });
-        }}
+        onChanged={changed}
         onDeleted={async () => {
           pick();
           await load();
@@ -164,31 +118,45 @@ export function LibraryPage() {
     );
   } else {
     pane = (
-      <Pane label="Library" onBack={() => pick()}>
+      <Pane label="Skills" back="Skills" onBack={() => pick()}>
         <p className="text-ink-3">
           {named
-            ? 'This item is not in the library any more. Pick another from the list.'
-            : 'Nothing here yet. Add a skill or an MCP server, then give it to your agents.'}
+            ? 'This skill is not here any more. Pick another from the list.'
+            : 'No skills yet. Add one, then give it to your agents from their Skills section.'}
         </p>
       </Pane>
     );
   }
 
-  const heading = 'flex items-center justify-between gap-2 px-4 pt-3.5 pb-1.5';
   return (
-    <>
-      <PageHeader title="Library" />
-      <div className={split.page}>
-        <nav aria-label="Library" className={cn(split.list, 'pb-6', named && 'max-md:hidden')}>
-          <div className={heading}>
-            <h2 className="text-section">Skills</h2>
-            <Button size="sm" variant="quiet" onClick={() => pick({ new: 'skill' })}>
-              Add a skill
-            </Button>
-          </div>
+    <ListPage
+      title="Skills"
+      named={named}
+      head={
+        <>
+          <span className="text-small text-ink-3 tabular-nums">
+            {skills.length} {skills.length === 1 ? 'skill' : 'skills'}
+          </span>
+          <Button size="sm" variant="quiet" onClick={() => pick({ new: 'skill' })}>
+            Add a skill
+          </Button>
+        </>
+      }
+      list={
+        <>
+          {skills.length > FILTER_FROM && (
+            <div className="px-4 pb-2">
+              <ListFilter label="Filter skills" value={filter} onChange={setFilter} />
+            </div>
+          )}
           {skills.length === 0 && (
             <p className="px-4 pb-2 text-small text-ink-3">
-              No skills yet. A skill is a SKILL.md that tells an agent how to do one kind of work.
+              A skill is a SKILL.md that tells an agent how to do one kind of work.
+            </p>
+          )}
+          {skills.length > 0 && shown.length === 0 && (
+            <p className="px-4 pb-2 text-small text-ink-3">
+              No skill has “{filter.trim()}” in its name or description.
             </p>
           )}
           {groups.map((group) => (
@@ -207,53 +175,44 @@ export function LibraryPage() {
               </ul>
             </section>
           ))}
-          <div className={cn(heading, 'mt-4')}>
-            <h2 className="text-section">MCP servers</h2>
-            <Button size="sm" variant="quiet" onClick={() => setAddingServer(true)}>
-              Add an MCP server
-            </Button>
-          </div>
-          {servers.length === 0 ? (
-            <p className="px-4 pb-2 text-small text-ink-3">
-              No MCP servers yet. Add a remote one, such as your tracker's, and give it to an agent
-              from its Tools &amp; policies.
-            </p>
-          ) : (
-            <ul
-              aria-label="MCP servers"
-              className="grid grid-cols-[minmax(0,1fr)] border-t border-line"
-            >
-              {servers.map((each) => (
-                <ListItem
-                  key={each.id}
-                  name={each.name}
-                  note={serverNote(each)}
-                  current={each.id === server?.id}
-                  onPick={() => pick({ server: each.id })}
-                />
-              ))}
-            </ul>
-          )}
-        </nav>
-        <div className={cn(split.item, !named && 'max-md:hidden')}>
-          {notice?.error && (
-            <div className="max-w-190 px-4 pt-4 md:px-10">
-              <FormError>Couldn't sign in: {notice.error}</FormError>
-            </div>
-          )}
-          {pane}
-        </div>
-      </div>
-      {addingServer && (
-        <AddServerDialog
-          onClose={() => setAddingServer(false)}
-          onAdded={async (id) => {
-            await load();
-            pick({ server: id });
-          }}
-        />
-      )}
-    </>
+        </>
+      }
+    >
+      {pane}
+    </ListPage>
+  );
+}
+
+/** The files a version brings beside its SKILL.md: their paths, which the agent reads them by. */
+function SkillFiles({ skill }: { skill: Skill }) {
+  const { files } = skill;
+  return (
+    <section aria-labelledby="skill-files" className="grid gap-2">
+      <h3 id="skill-files" className="text-section">
+        Files
+      </h3>
+      <p className="text-small text-ink-3">
+        {filesOf(skill.fileCount, skill.fileBytes)}, beside the SKILL.md in each run, read only. The
+        agent reads them when the skill says to.
+      </p>
+      <ul
+        tabIndex={0}
+        aria-label="Files of the skill"
+        className="max-h-80 overflow-auto rounded-lg border border-line font-mono text-small"
+      >
+        {files.map((file) => (
+          <li
+            key={file.path}
+            className="flex justify-between gap-4 border-b border-line px-3 py-1.5 last:border-b-0"
+          >
+            <span className="min-w-0 truncate" title={file.path}>
+              {file.path}
+            </span>
+            <span className="shrink-0 text-ink-3">{sizeOf(file.size)}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -278,6 +237,9 @@ function SkillPane(props: {
   const [text, setText] = useState(adding ? template : '');
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
+  /** A folder picked for the new version: its files replace the ones the skill had. */
+  const [folder, setFolder] = useState<SkillFolder>();
+  const folderInput = useRef<HTMLInputElement>(null);
   const read = useCallback(
     () =>
       api<Skill>(`/api/library/skills/${id}`).then(setSkill, (caught: unknown) =>
@@ -294,8 +256,10 @@ function SkillPane(props: {
     setPending(true);
     setError(undefined);
     try {
-      const saved = await api<Skill>(url, { method: 'POST', body });
+      const files = body && folder ? { files: await encodeFiles(folder) } : {};
+      const saved = await api<Skill>(url, { method: 'POST', body: body && { ...body, ...files } });
       setEditing(false);
+      setFolder(undefined);
       // A new version is a new item, which the page picks; a shared skill is this one, read again.
       if (saved.id === id) await read();
       await props.onChanged(saved.id);
@@ -309,6 +273,23 @@ function SkillPane(props: {
   const loaded = skill && !(skill instanceof ApiError) ? skill : undefined;
   const shown = loaded ?? props.summary;
   const mine = shown?.owner?.id === me.id;
+
+  async function pickFolder(list: FileList | null) {
+    const read = await readFolder([...(list ?? [])]);
+    if (folderInput.current) folderInput.current.value = '';
+    if ('error' in read) return setError(read.error);
+    setError(undefined);
+    setFolder(read);
+    if (read.skillMd !== undefined) setText(read.skillMd);
+  }
+  const kept = !adding && !folder && loaded && loaded.fileCount > 0;
+  const filesHint = folder
+    ? `${filesOf(folder.files.length, folder.bytes)}${folder.skillMd === undefined ? '' : ' and its SKILL.md'}${
+        folder.hidden > 0 ? `; ${folder.hidden} hidden left out` : ''
+      }.${adding ? '' : ' They replace the files of this version.'}`
+    : kept
+      ? `Without a new folder, this version keeps the ${filesOf(loaded.fileCount, loaded.fileBytes)} of version ${loaded.version}.`
+      : 'A folder with a SKILL.md and the files it reads beside it, such as references and scripts. Up to 3,000 files and 25 MB.';
   const form = (
     <form
       className="grid gap-4"
@@ -337,9 +318,41 @@ function SkillPane(props: {
           />
         )}
       </Field>
+      <div className="grid gap-2" role="group" aria-label="Files">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => folderInput.current?.click()}>
+            {folder ? 'Choose another folder' : 'Upload a skill folder'}
+          </Button>
+          {folder && (
+            <Button variant="quiet" onClick={() => setFolder(undefined)}>
+              Remove the files
+            </Button>
+          )}
+        </div>
+        <p className="text-small text-ink-3">{filesHint}</p>
+        <input
+          ref={folderInput}
+          type="file"
+          multiple
+          // The browser reads a whole folder, each file with its path in it.
+          {...{ webkitdirectory: '' }}
+          className="sr-only"
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={(event) => void pickFolder(event.target.files)}
+        />
+      </div>
       {error && <FormError>{error}</FormError>}
       <div className="flex justify-end gap-2">
-        <Button variant="quiet" onClick={() => (adding ? props.onBack() : setEditing(false))}>
+        <Button
+          variant="quiet"
+          onClick={() => {
+            setFolder(undefined);
+            setError(undefined);
+            if (adding) props.onBack();
+            else setEditing(false);
+          }}
+        >
           Cancel
         </Button>
         <Button type="submit" variant="primary" disabled={pending || !text.trim()}>
@@ -353,11 +366,12 @@ function SkillPane(props: {
     return (
       <Pane
         label="Add a skill"
+        back="Skills"
         onBack={props.onBack}
         header={
           <PaneHeader
             title="Add a skill"
-            about="Paste a SKILL.md. Only you can use it until an admin shares it."
+            about="Paste a SKILL.md, or upload the skill's folder. Only you can use it until an admin shares it."
           />
         }
       >
@@ -367,7 +381,7 @@ function SkillPane(props: {
   }
   if (!shown) {
     return (
-      <Pane label="Skill" onBack={props.onBack}>
+      <Pane label="Skill" back="Skills" onBack={props.onBack}>
         {skill instanceof ApiError ? (
           <FormError>{skill.message}</FormError>
         ) : (
@@ -380,28 +394,21 @@ function SkillPane(props: {
   return (
     <Pane
       label={shown.name}
+      back="Skills"
       onBack={props.onBack}
-      context={
-        <>
-          <ContextFacts
-            facts={[
-              ['Version', String(shown.version)],
-              ['Added', `${timeAgo(shown.createdAt)} by ${by}`],
-              ['Shared with', shown.visibility === 'org' ? 'Everyone' : 'Only its author'],
-            ]}
-          />
-          <UsedBy url={`/api/library/skills/${shown.id}/agents`} from="its Skills section" />
-        </>
-      }
       header={
         <PaneHeader
           title={shown.name}
           about={shown.description}
-          note={`Version ${shown.version}, added ${timeAgo(shown.createdAt)} by ${by}. ${
-            shown.visibility === 'org'
-              ? 'Everyone can give it to their agents.'
-              : 'Only its author can use it until an admin shares it.'
-          }`}
+          facts={[
+            ['Version', String(shown.version)],
+            ['Added', `${timeAgo(shown.createdAt)} by ${by}`],
+            ['Shared with', shown.visibility === 'org' ? 'everyone' : 'only its author'],
+            ...(shown.fileCount > 0
+              ? [['Files', filesOf(shown.fileCount, shown.fileBytes)] as const]
+              : []),
+            ['Used by', <UsedBy url={`/api/library/skills/${shown.id}/agents`} />],
+          ]}
           actions={
             !editing && (
               <>
@@ -450,10 +457,13 @@ function SkillPane(props: {
             <p className="mb-3 font-mono text-small text-ink-3">SKILL.md</p>
             {loaded && (
               <Suspense>
-                <Markdown>{loaded.content.replace(/^---[\s\S]*?---\s*/, '')}</Markdown>
+                <Markdown className="max-w-[80ch]">
+                  {loaded.content.replace(/^---[\s\S]*?---\s*/, '')}
+                </Markdown>
               </Suspense>
             )}
           </div>
+          {loaded && loaded.files.length > 0 && <SkillFiles skill={loaded} />}
         </>
       )}
       <D.Dialog open={deleting} onOpenChange={setDeleting}>

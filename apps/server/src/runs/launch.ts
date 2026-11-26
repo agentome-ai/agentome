@@ -3,6 +3,9 @@ import type { agents, tasks } from '@agentome/db';
 import { z } from 'zod';
 import type { LaunchPackage, RunLimits } from '../protocol.js';
 
+/** The platform's run limits: `null` is none. */
+export type LimitDefaults = { [K in keyof RunLimits]: number | null };
+
 type Agent = typeof agents.$inferSelect;
 type Task = typeof tasks.$inferSelect;
 
@@ -22,12 +25,23 @@ const BudgetLimits = z
   .object({ maxMinutes: Override, maxTurns: Override, maxTokens: Override })
   .catch({});
 
-export function runLimits(defaults: RunLimits, budget: unknown): RunLimits {
+/**
+ * What a run without a limit takes to the computer: the largest each worker accepts. A worker
+ * takes numbers only, so the ones already installed keep running with no limit set; a time limit
+ * of ~24 days is the longest a timer holds.
+ */
+export const NO_LIMIT: RunLimits = {
+  maxMinutes: Math.floor((2 ** 31 - 1) / 60_000),
+  maxTurns: 2 ** 31 - 1,
+  maxTokens: 2 ** 31 - 1,
+};
+
+export function runLimits(defaults: LimitDefaults, budget: unknown): RunLimits {
   const own = BudgetLimits.parse(budget ?? {});
   return {
-    maxMinutes: own.maxMinutes ?? defaults.maxMinutes,
-    maxTurns: own.maxTurns ?? defaults.maxTurns,
-    maxTokens: own.maxTokens ?? defaults.maxTokens,
+    maxMinutes: own.maxMinutes ?? defaults.maxMinutes ?? NO_LIMIT.maxMinutes,
+    maxTurns: own.maxTurns ?? defaults.maxTurns ?? NO_LIMIT.maxTurns,
+    maxTokens: own.maxTokens ?? defaults.maxTokens ?? NO_LIMIT.maxTokens,
   };
 }
 

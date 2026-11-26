@@ -20,7 +20,9 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 
 import { teamDir, type TeamHookConfig } from './claude/team-hook.js';
-import type { Artifact, LaunchPackage } from './client.js';
+import type { Artifact, LaunchPackage, LaunchSkill } from './client.js';
+import type { SkillFile } from './skill-files.js';
+import { skillFilePath } from '@agentome/shared';
 import { connectionFile, describe } from './config.js';
 import { cliCommand, rulePath, unsandboxed } from './platform.js';
 
@@ -73,18 +75,37 @@ const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
  * An agent's skills as skills/<name>/SKILL.md, read only; its CLAUDE.md or prompt lists them.
  * Plain files the agent reads, never Claude Code's own skills (.claude/skills, which
  * --setting-sources user keeps from loading): the CLI would act on their frontmatter's hooks,
- * allowed-tools and inline commands.
+ * allowed-tools and inline commands. A skill's files go beside its SKILL.md, read only and
+ * without the execute bit: a script of theirs runs through `bash` or `python`, as the agent's
+ * tools allow.
  */
-function writeSkills(base: string, skills: { name: string; content: string }[]) {
+function writeSkills(base: string, skills: LaunchSkill[], files: Map<string, SkillFile[]>) {
   if (skills.length === 0) return;
-  for (const { name, content } of skills) {
-    if (!SKILL_NAME.test(name))
-      throw new Error(`The server sent a skill name out of shape: ${name}`);
-    mkdirSync(join(base, 'skills', name), { recursive: true, mode: 0o700 });
-    writeFileSync(join(base, 'skills', name, 'SKILL.md'), content, { mode: 0o400 });
-    chmodSync(join(base, 'skills', name), 0o500);
+  for (const skill of skills) {
+    if (!SKILL_NAME.test(skill.name))
+      throw new Error(`The server sent a skill name out of shape: ${skill.name}`);
+    const folder = join(base, 'skills', skill.name);
+    mkdirSync(folder, { recursive: true, mode: 0o700 });
+    writeFileSync(join(folder, 'SKILL.md'), skill.content, { mode: 0o400 });
+    const own = skill.files ? files.get(skill.files.skillId) : undefined;
+    if (skill.files && !own) throw new Error(`The files of the skill ${skill.name} are missing`);
+    for (const { path, content } of own ?? []) {
+      if (!skillFilePath(path))
+        throw new Error(`The server sent a skill file path out of shape: ${path}`);
+      mkdirSync(dirname(join(folder, path)), { recursive: true, mode: 0o700 });
+      writeFileSync(join(folder, path), content, { mode: 0o400 });
+    }
+    readOnly(folder);
   }
   chmodSync(join(base, 'skills'), 0o500);
+}
+
+/** A folder and the folders in it, read only: their files are already. */
+function readOnly(dir: string): void {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) readOnly(join(dir, entry.name));
+  }
+  chmodSync(dir, 0o500);
 }
 
 const REPO_SKILLS_LIMIT = 50;
@@ -247,7 +268,14 @@ type Team = NonNullable<LaunchPackage['team']>;
  * the subagent, the token would be in the CLI's arguments, which any process on the computer may
  * list, and --strict-mcp-config blocks a subagent's own servers anyway (CLI 2.1.280).
  */
-function writeTeam(dir: string, profile: string, team: Team, stepUrl: string, mcpConfig: string) {
+function writeTeam(
+  dir: string,
+  profile: string,
+  team: Team,
+  stepUrl: string,
+  mcpConfig: string,
+  files: Map<string, SkillFile[]>,
+) {
   const keys = team.members.map(({ key }) => key);
   for (const key of keys) {
     if (!SKILL_NAME.test(key)) throw new Error(`The server sent a team key out of shape: ${key}`);
@@ -258,7 +286,7 @@ function writeTeam(dir: string, profile: string, team: Team, stepUrl: string, mc
     const base = join(profile, 'team', member.key);
     mkdirSync(base, { mode: 0o700 });
     writeMemory(base, member.memoryDocuments);
-    writeSkills(base, member.skills);
+    writeSkills(base, member.skills, files);
     chmodSync(base, 0o500);
     const others = keys.filter((key) => key !== member.key).map((key) => `mcp__agentome-${key}`);
     agents[member.key] = {
@@ -322,8 +350,16 @@ export function removeRuns(home: string, env: NodeJS.ProcessEnv): void {
 export async function prepareWorkspace(
   home: string,
   launch: LaunchPackage,
-  options: { signal: AbortSignal; timeout: number; server?: boolean; place?: boolean },
+  options: {
+    signal: AbortSignal;
+    timeout: number;
+    server?: boolean;
+    place?: boolean;
+    /** The skills' files, by skill version, as skillFilesFor fetched them. */
+    skillFiles?: Map<string, SkillFile[]>;
+  },
 ) {
+  const skillFiles = options.skillFiles ?? new Map<string, SkillFile[]>();
   if (options.server !== true) refuseStrangeTools(launch.workspace.profile.settings.allowedTools);
   const dir = workspaceDir(home, launch.run.id);
   const profile = join(dir, 'profile');
@@ -406,12 +442,19 @@ export async function prepareWorkspace(
   );
   writeFileSync(join(profile, 'CLAUDE.md'), claudeMd, { mode: 0o400 });
   writeMemory(profile, launch.agent.memoryDocuments ?? []);
-  writeSkills(profile, launch.agent.skills ?? []);
+  writeSkills(profile, launch.agent.skills ?? [], skillFiles);
   const { projectMd } = launch.workspace.profile;
   if (projectMd) writeFileSync(join(profile, 'PROJECT.md'), projectMd, { mode: 0o400 });
   const agents =
     team && mcpConfig
-      ? writeTeam(dir, profile, team, `${launch.workspace.mcp?.url}/team-step`, mcpConfig)
+      ? writeTeam(
+          dir,
+          profile,
+          team,
+          `${launch.workspace.mcp?.url}/team-step`,
+          mcpConfig,
+          skillFiles,
+        )
       : undefined;
   const hooks = agents ? teamHooks(dir, options.timeout) : undefined;
   const laptop = options.server !== true;

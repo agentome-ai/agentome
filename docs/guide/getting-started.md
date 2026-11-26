@@ -97,7 +97,7 @@ settings are listed in [CONFIG.md](../../deploy/CONFIG.md).
 
 You are signed in as the first administrator and land on the **Dashboard**. The sidebar holds the
 work (**Dashboard**, **Approvals**, **Tasks**, **Runs**) and, under **Workforce**, **Agents**,
-**Teams**, **Projects** and **Library**. **Admin** and **Help** are at its foot. Press `⌘K`
+**Teams**, **Projects**, **Skills** and **MCP servers**. **Admin** and **Help** are at its foot. Press `⌘K`
 (`Ctrl K` on Windows and Linux) anywhere to jump to a page.
 
 ![The Agentome window: the sidebar on the left and the empty Dashboard on the right](img/shell.jpg)

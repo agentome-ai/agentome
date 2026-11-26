@@ -797,7 +797,7 @@ Agentome's address instead of `http://app:3000`. For more seats at once, start m
 
 ## MCP servers that sign in with OAuth
 
-A library MCP server can sign each person in with OAuth: Sign in in the library
+An MCP server can sign each person in with OAuth: Sign in on its page in MCP servers
 opens the server's sign-in in the browser, and the browser comes back to Agentome at
 `/api/library/mcp/oauth/callback`. The server's authorization server must accept that return
 address, or the sign-in stops at once with `invalid_request`.
@@ -1002,7 +1002,7 @@ volume, then the server starts again:
 ```sh
 kubectl -n agentome scale deploy/agentome --replicas=0
 kubectl -n agentome run agentome-restore --rm -i --restart=Never \
-  --image=docker.io/agentome/agentome:0.4.3 --override-type=strategic --overrides='
+  --image=docker.io/agentome/agentome:0.4.4 --override-type=strategic --overrides='
 {"spec": {"securityContext": {"runAsNonRoot": true, "runAsUser": 1000, "runAsGroup": 1000,
     "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
   "containers": [{"name": "agentome-restore", "envFrom": [{"secretRef": {"name": "agentome"}}],

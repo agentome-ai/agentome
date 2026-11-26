@@ -1,7 +1,7 @@
 import { agents, asc, type Db, eq, inArray, teamMembers, teams } from '@agentome/db';
 import { z } from 'zod';
 import { AppError } from '../errors.js';
-import { skillsOf } from '../library/skills.js';
+import { launchSkill, skillsOf } from '../library/skills.js';
 import { currentMemory } from '../memory/service.js';
 import type { LaunchPackage } from '../protocol.js';
 import type { Tx } from '../runs/service.js';
@@ -191,11 +191,7 @@ export async function teamForRun(db: Db, leadId: string) {
     members.map(async (member, index) => {
       const key = keys[index] ?? 'agent';
       const { token, hash } = newToken();
-      const skills = (await skillsOf(db, member.skills)).map(({ name, version, content }) => ({
-        name,
-        version,
-        content,
-      }));
+      const skills = (await skillsOf(db, member.skills)).map(launchSkill);
       const memoryDocuments = (await currentMemory(db, member.id)).map(
         ({ path, version, content }) => ({ path, version, content }),
       );

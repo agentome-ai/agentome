@@ -13,6 +13,10 @@ const skill = (id: string, name: string, owner: string, visibility: string) => (
   version: 1,
   owner: { id: owner, name: owner === admin.id ? admin.name : 'Ilya' },
   visibility,
+  fileCount: 0,
+  fileBytes: 0,
+  // A version read whole lists its files; the list leaves them out, and nothing reads them there.
+  files: [] as { path: string; size: number }[],
   createdAt: new Date().toISOString(),
 });
 
@@ -27,7 +31,7 @@ const menuOf = async (user: ReturnType<typeof userEvent.setup>, name: string, it
   await user.click(await screen.findByRole('menuitem', { name: item }));
 };
 
-function renderLibrary(routes: Parameters<typeof mockApi>[0], at = '/library') {
+function renderLibrary(routes: Parameters<typeof mockApi>[0], at = '/skills') {
   const calls = mockApi({
     'GET /api/me': admin,
     'GET /api/library/mcp': { servers: [] },
@@ -43,7 +47,7 @@ function renderLibrary(routes: Parameters<typeof mockApi>[0], at = '/library') {
   return { calls, user: userEvent.setup() };
 }
 
-describe('the library', () => {
+describe('the skills', () => {
   it('lists the skills by whose they are and shows the first one whole', async () => {
     const mine = skill('s1', 'payments-fixtures', admin.id, 'private');
     const shipped = { ...skill('s3', 'frontend-design', 'u9', 'org'), owner: null };
@@ -67,7 +71,8 @@ describe('the library', () => {
     ).toBe('true');
     expect(await shown.findByRole('heading', { name: 'Fixtures' })).toBeTruthy();
     expect(shown.queryByText(/name: payments-fixtures/)).toBeNull();
-    expect(shown.getByText(/Version 1, added .* by you\. Only its author can use it/)).toBeTruthy();
+    expect(shown.getByText('only its author')).toBeTruthy();
+    expect(shown.getByText(/ago by you|just now by you/)).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
@@ -99,10 +104,11 @@ describe('the library', () => {
       calls.find((call) => call.route === 'POST /api/library/skills/s1/versions')?.body,
     ).toEqual({ content: `${source}More.` });
     // The new version is the one shown now.
-    expect(await screen.findByText(/Version 2, added/)).toBeTruthy();
+    expect(await screen.findByRole('article', { name: 'payments-fixtures' })).toBeTruthy();
+    expect(await screen.findByText('2')).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: /^release-notes/ }));
-    (await pane('release-notes')).findByText(/Version 1, added .* by Ilya/);
+    expect(await (await pane('release-notes')).findByText(/by Ilya/)).toBeTruthy();
     expect((await pane('release-notes')).queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
@@ -140,7 +146,71 @@ describe('the library', () => {
     expect(await form.findByText('Give the skill a description in its frontmatter')).toBeTruthy();
   });
 
-  it('says which of the person’s agents have the item, and where to give it to one', async () => {
+  it('adds a skill from its folder: its SKILL.md, the files beside it, hidden ones left out', async () => {
+    const text = '---\nname: sr-docs\ndescription: A vendor docs\n---\n\nRead references/.';
+    const added = {
+      ...skill('s5', 'sr-docs', admin.id, 'private'),
+      fileCount: 1,
+      fileBytes: 3,
+      content: text,
+      files: [{ path: 'references/a.md', size: 3 }],
+    };
+    let posted = false;
+    const { calls, user } = renderLibrary({
+      'GET /api/library/skills': () => ({ json: { skills: posted ? [added] : [] } }),
+      'POST /api/library/skills': () => {
+        posted = true;
+        return { json: added };
+      },
+      'GET /api/library/skills/s5': added,
+    });
+    const inFolder = (path: string, content: string) => {
+      const file = new File([content], path.split('/').pop() ?? path);
+      Object.defineProperty(file, 'webkitRelativePath', { value: path });
+      return file;
+    };
+    await user.click(await screen.findByRole('button', { name: 'Add a skill' }));
+    const form = await pane('Add a skill');
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    if (!input) throw new Error('No folder input');
+    await user.upload(input, [
+      inFolder('sr-docs/SKILL.md', text),
+      inFolder('sr-docs/references/a.md', 'abc'),
+      inFolder('sr-docs/.git/config', 'x'),
+    ]);
+    expect(
+      await form.findByText('1 file, 3 bytes and its SKILL.md; 1 hidden left out.'),
+    ).toBeTruthy();
+    await user.click(form.getByRole('button', { name: 'Add skill' }));
+    expect(calls.find((call) => call.route === 'POST /api/library/skills')?.body).toEqual({
+      content: text,
+      files: [{ path: 'references/a.md', content: btoa('abc') }],
+    });
+    const shown = await pane('sr-docs');
+    expect(
+      // The files come with the version read whole, after the pane opens.
+      within(await shown.findByRole('list', { name: 'Files of the skill' })).getByText(
+        'references/a.md',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('refuses a folder whose files a skill cannot take, before sending anything', async () => {
+    const { calls, user } = renderLibrary({ 'GET /api/library/skills': { skills: [] } });
+    await user.click(await screen.findByRole('button', { name: 'Add a skill' }));
+    const form = await pane('Add a skill');
+    const big = new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'spec.json');
+    Object.defineProperty(big, 'webkitRelativePath', { value: 'sr/spec.json' });
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    if (!input) throw new Error('No folder input');
+    await user.upload(input, [big]);
+    expect(
+      await form.findByText('spec.json is 5.0 MB. A file of a skill may be 5 MB at most.'),
+    ).toBeTruthy();
+    expect(calls.some((call) => call.route === 'POST /api/library/skills')).toBe(false);
+  });
+
+  it('says which of the person’s agents have the skill', async () => {
     const mine = skill('s1', 'payments-fixtures', admin.id, 'private');
     const theirs = skill('s2', 'release-notes', 'u9', 'org');
     const { user } = renderLibrary({
@@ -152,21 +222,16 @@ describe('the library', () => {
       },
       'GET /api/library/skills/s2/agents': { agents: [] },
     });
-    const about = within(
-      await screen.findByRole('complementary', { name: 'About payments-fixtures' }),
-    );
-    expect(about.getByRole('heading', { name: 'Used by' })).toBeTruthy();
+    const about = await pane('payments-fixtures');
+    expect(about.getByText('Used by')).toBeTruthy();
     expect(
       (await about.findByRole('link', { name: 'Payments backend' })).getAttribute('href'),
     ).toBe('/agents/a1');
     await user.click(screen.getByRole('button', { name: /^release-notes/ }));
-    const none = within(await screen.findByRole('complementary', { name: 'About release-notes' }));
-    expect(
-      await none.findByText('None of your agents yet. Give it to one from its Skills section.'),
-    ).toBeTruthy();
+    expect(await (await pane('release-notes')).findByText('None of your agents')).toBeTruthy();
   });
 
-  it('opens the skill its address names', async () => {
+  it('opens the skill its address names, from an old Library link too', async () => {
     const mine = skill('s1', 'payments-fixtures', admin.id, 'private');
     const theirs = skill('s2', 'release-notes', 'u9', 'org');
     renderLibrary(
@@ -176,11 +241,11 @@ describe('the library', () => {
       },
       '/library?skill=s2',
     );
-    expect((await pane('release-notes')).findByText(/Version 1, added/)).toBeTruthy();
+    expect(await (await pane('release-notes')).findByText('Version')).toBeTruthy();
   });
 });
 
-describe('deleting from the library', () => {
+describe('deleting a skill', () => {
   it("deletes the author's skill after asking, and offers no Delete on one Agentome ships", async () => {
     const mine = skill('s1', 'payments-fixtures', admin.id, 'private');
     const shipped = { ...skill('s3', 'frontend-design', 'u9', 'org'), owner: null };
@@ -191,7 +256,7 @@ describe('deleting from the library', () => {
       'DELETE /api/library/skills/s1': () => ({ status: 204 }),
     });
     await user.click(await screen.findByRole('button', { name: /^frontend-design/ }));
-    (await pane('frontend-design')).findByText(/Version 1, added .* by Agentome/);
+    expect(await (await pane('frontend-design')).findByText(/by Agentome/)).toBeTruthy();
     // Nothing can be done to a skill Agentome ships: no Edit and no menu.
     expect(
       (await pane('frontend-design')).queryAllByRole('button', { name: /Edit|More actions/ }),
@@ -211,7 +276,7 @@ describe('deleting from the library', () => {
   });
 });
 
-describe('the MCP servers of the library', () => {
+describe('the MCP servers', () => {
   const tracker = {
     id: 'm1',
     name: 'tracker',
@@ -224,8 +289,11 @@ describe('the MCP servers of the library', () => {
     visibility: 'private',
   };
 
+  const renderServers = (routes: Parameters<typeof mockApi>[0], at = '/mcp-servers') =>
+    renderLibrary(routes, at);
+
   it('adds a server with its secret, then shows its tools without the secret', async () => {
-    const { calls, user } = renderLibrary({
+    const { calls, user } = renderServers({
       'GET /api/library/skills': { skills: [] },
       'GET /api/library/mcp': { servers: [tracker] },
       'POST /api/library/mcp': tracker,
@@ -247,14 +315,14 @@ describe('the MCP servers of the library', () => {
     });
     expect(listed('MCP servers')).toEqual(['tracker1 tool']);
     const shown = await pane('tracker');
-    expect(shown.getByText(/kept on Agentome, never shown/)).toBeTruthy();
+    expect(shown.getByText('A token, kept on Agentome')).toBeTruthy();
     expect(shown.getByText('Create an issue')).toBeTruthy();
     await menuOf(user, 'tracker', 'Share with everyone');
     expect(calls.some((call) => call.route === 'POST /api/library/mcp/m1/share')).toBe(true);
   });
 
   it("edits the author's server: its address, what it does and a new token", async () => {
-    const { calls, user } = renderLibrary({
+    const { calls, user } = renderServers({
       'GET /api/library/skills': { skills: [] },
       'GET /api/library/mcp': { servers: [tracker] },
       'PATCH /api/library/mcp/m1': { ...tracker, url: 'https://mcp.acme.com/v2/mcp' },
@@ -277,7 +345,7 @@ describe('the MCP servers of the library', () => {
 
   it("offers no Edit on someone else's server, and says what the server refused of an edit", async () => {
     const theirs = { ...tracker, id: 'm3', name: 'metrics', owner: { id: 'u9', name: 'Ilya' } };
-    const { user } = renderLibrary({
+    const { user } = renderServers({
       'GET /api/library/skills': { skills: [] },
       'GET /api/library/mcp': { servers: [tracker, theirs] },
       'PATCH /api/library/mcp/m1': failure(400, 'validation_failed', 'The request is not valid', [
@@ -294,7 +362,7 @@ describe('the MCP servers of the library', () => {
   });
 
   it('deletes a server after asking', async () => {
-    const { calls, user } = renderLibrary({
+    const { calls, user } = renderServers({
       'GET /api/library/skills': { skills: [] },
       'GET /api/library/mcp': { servers: [tracker] },
       'DELETE /api/library/mcp/m1': () => ({ status: 204 }),
@@ -310,7 +378,7 @@ describe('the MCP servers of the library', () => {
     const jira = { ...tracker, id: 'm2', name: 'jira', auth: 'oauth', signedIn: false, tools: [] };
     const assign = vi.fn();
     vi.stubGlobal('location', { ...window.location, assign });
-    const { calls, user } = renderLibrary({
+    const { calls, user } = renderServers({
       'GET /api/library/skills': { skills: [] },
       'GET /api/library/mcp': { servers: [tracker] },
       'POST /api/library/mcp': jira,
@@ -340,14 +408,14 @@ describe('the MCP servers of the library', () => {
 
   it('says how the sign-in the browser came back from went, and offers Sign in to who has none', async () => {
     const jira = { ...tracker, id: 'm2', name: 'jira', auth: 'oauth', signedIn: false, tools: [] };
-    renderLibrary(
+    renderServers(
       { 'GET /api/library/skills': { skills: [] }, 'GET /api/library/mcp': { servers: [jira] } },
-      '/library?mcpError=The+sign-in+was+cancelled',
+      '/mcp-servers?mcpError=The+sign-in+was+cancelled',
     );
     expect(await screen.findByText(/Couldn't sign in: The sign-in was cancelled/)).toBeTruthy();
     expect(listed('MCP servers')).toEqual(['jiraNot signed in']);
     const shown = await pane('jira');
-    expect(shown.getByText(/You are not signed in/)).toBeTruthy();
+    expect(shown.getByText('OAuth, not signed in')).toBeTruthy();
     expect(shown.getByText('Listed after you sign in.')).toBeTruthy();
     expect(shown.getByRole('button', { name: 'Sign in' })).toBeTruthy();
     // Nothing to check before a sign-in: the menu has only what its author may do.
@@ -355,10 +423,10 @@ describe('the MCP servers of the library', () => {
     expect(screen.queryByRole('menuitem', { name: 'Check again' })).toBeNull();
   });
 
-  it('opens the server the browser has just signed in to, and says so once', async () => {
+  it('opens the server the browser has just signed in to, from the old return address too', async () => {
     const jira = { ...tracker, id: 'm2', name: 'jira', auth: 'oauth', signedIn: true };
     const mine = skill('s1', 'payments-fixtures', admin.id, 'private');
-    renderLibrary(
+    renderServers(
       {
         'GET /api/library/skills': { skills: [mine] },
         'GET /api/library/mcp': { servers: [tracker, jira] },
@@ -370,22 +438,69 @@ describe('the MCP servers of the library', () => {
       'textContent',
       'Signed in to jira. Your agents that have it can use its tools.',
     );
-    expect(shown.getByText(/You are signed in; your agents use your account/)).toBeTruthy();
+    expect(shown.getByText('OAuth, as you')).toBeTruthy();
   });
 
-  it('opens Add an MCP server when the list is empty', async () => {
+  it('filters a long list of skills', async () => {
+    const many = Array.from({ length: 9 }, (_, i) =>
+      skill(`s${i}`, i === 4 ? 'release-notes' : `skill-${i}`, admin.id, 'private'),
+    );
     const { user } = renderLibrary({
-      'GET /api/library/skills': { skills: [] },
-      'GET /api/library/mcp': { servers: [] },
+      'GET /api/library/skills': { skills: many },
+      'GET /api/library/skills/s0': { ...many[0], content: '---\nname: skill-0\n---\n' },
+      'GET /api/library/skills/s0/agents': { agents: [] },
     });
+    const filter = await screen.findByRole('searchbox', { name: 'Filter skills' });
+    expect(screen.getByText('9 skills')).toBeTruthy();
+    await user.type(filter, 'release');
+    expect(listed('Yours: skills')).toEqual(['release-notesWrites release-notes']);
+    await user.clear(filter);
+    await user.type(filter, 'nothing like it');
+    expect(
+      screen.getByText('No skill has “nothing like it” in its name or description.'),
+    ).toBeTruthy();
+  });
+
+  it('lists a server’s tools a line each, whole on a click, and filters a long list', async () => {
+    const many = Array.from({ length: 9 }, (_, i) => ({
+      name: i === 3 ? 'close_issue' : `tool_${i}`,
+      title: i === 3 ? 'Close an issue' : `Tool ${i}`,
+      description: i === 3 ? 'Closes an issue with a resolution and a comment' : '',
+    }));
+    const { user } = renderServers({
+      'GET /api/library/mcp': { servers: [{ ...tracker, tools: many }] },
+      'GET /api/library/mcp/m1/agents': { agents: [] },
+    });
+    const shown = await pane('tracker');
+    const close = shown.getByRole('button', { name: /Close an issue/ });
+    expect(close.getAttribute('aria-expanded')).toBe('false');
+    await user.click(close);
+    expect(close.getAttribute('aria-expanded')).toBe('true');
+    // A tool with nothing more to say does not open.
+    expect(shown.getByRole('button', { name: /Tool 0/ })).toHaveProperty('disabled', true);
+    await user.type(shown.getByRole('searchbox', { name: 'Filter tools' }), 'resolution');
+    expect(
+      within(shown.getByRole('list', { name: 'Tools' })).getAllByRole('listitem'),
+    ).toHaveLength(1);
+  });
+
+  it('says what the page is for when it has no servers, and opens Add an MCP server', async () => {
+    const { user } = renderServers({ 'GET /api/library/mcp': { servers: [] } });
     expect(await screen.findByText(/No MCP servers yet/)).toBeTruthy();
-    expect(screen.getByText(/Nothing here yet/)).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Add an MCP server' }));
     expect(screen.getByRole('dialog', { name: 'Add an MCP server' })).toBeTruthy();
   });
 
+  it('has Skills and MCP servers in the sidebar, not the Library', async () => {
+    renderServers({ 'GET /api/library/mcp': { servers: [tracker] } });
+    const sidebar = await screen.findByRole('link', { name: 'MCP servers' });
+    expect(sidebar.getAttribute('href')).toBe('/mcp-servers');
+    expect(screen.getByRole('link', { name: 'Skills' }).getAttribute('href')).toBe('/skills');
+    expect(screen.queryByRole('link', { name: 'Library' })).toBeNull();
+  });
+
   it('names the field the server refuses, under that field', async () => {
-    const { user } = renderLibrary({
+    const { user } = renderServers({
       'GET /api/library/skills': { skills: [] },
       'GET /api/library/mcp': { servers: [tracker] },
       'POST /api/library/mcp': failure(400, 'validation_failed', 'The request is not valid', [

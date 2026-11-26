@@ -67,11 +67,11 @@ An agent file is an `.agent.json` file: one exported from Agentome, or one from 
    **Choose another file**.
 4. Click **Import agent**.
 
-The agent's skills join your library as your own skills. Where your library already has the same
-text, that skill is used as it is. The agent gets the MCP servers of your library that have the same
-names. If the file names servers your library does not have, the dialog lists them before the agent
-opens: add them in **Library** (see [Integrations](integrations.md)), then give them to the agent in
-its **Tools & policies** section.
+The agent's skills join **Skills** as your own. Where a skill there already has the same text,
+that skill is used as it is. The agent gets the MCP servers you have under the same names. If the
+file names servers you do not have, the dialog lists them before the agent opens: add them in
+**MCP servers** (see [Integrations](integrations.md)), then give them to the agent in its **Tools &
+policies** section.
 
 An older agent file brings only the agent itself, and the dialog says so.
 
@@ -85,7 +85,9 @@ Both buttons are on the agent sheet, the panel on the right of the editor.
   editor.
 - **Export** downloads the agent as an `.agent.json` file: its name, role, instructions, engine,
   model, budget, tool policies, skills (as their full `SKILL.md`), and the names of its MCP servers.
-  The file holds no owner, no memory, no history and no secrets. Import it on another Agentome, or
+  The file holds no owner, no memory, no history and no secrets. It holds no files of a skill either:
+  Agentome says so when the agent's skills have some, and you upload their folders in **Skills** of
+  the other Agentome. Import it on another Agentome, or
   keep it as a backup of the setup.
 
 ## The agent editor
@@ -139,7 +141,7 @@ two tabs:
 
 Click **Copy** to copy the file you are looking at, and **Done** to close.
 
-Next to `CLAUDE.md`, a run also gets each skill's `SKILL.md`, the agent's memory documents as they
+Next to `CLAUDE.md`, a run also gets each skill's `SKILL.md` with the files beside it, the agent's memory documents as they
 were when the run started, and, for a task in a project, a `PROJECT.md` about the project. The
 preview shows the saved agent: if you have unsaved changes, it says so, and you see them only after
 you save.
@@ -176,8 +178,8 @@ start from.
 ## Skills
 
 A skill is a `SKILL.md` file that tells an agent how to do one kind of work, such as writing release
-notes or reviewing a migration. Skills live in the **Library**, and an agent reads one when a task
-calls for it.
+notes or reviewing a migration. Skills live in **Skills** in the sidebar, and an agent reads one
+when a task calls for it.
 
 To give the agent a skill, click **Add a skill** in the **Skills** section, search for the skill and
 pick it; the list shows each skill with its version. To take a skill away, click the cross on its
@@ -185,25 +187,43 @@ chip.
 
 ### Shared and private skills
 
-In **Library**, skills come in three groups: **Yours**, **Shared by others** and **From Agentome**.
+**Skills** lists them in three groups: **Yours**, **Shared by others** and **From Agentome**; past
+eight skills, **Filter skills** finds one by its name or description. The skill you pick opens
+beside the list, with its version, who added it, who it is shared with and which of your agents
+use it in one line under its name.
 A skill you add is private: only you can give it to your agents until an admin opens it and chooses
 **Share with everyone**. A private skill shows **private** on its chip in the editor, and the sheet
 counts private skills under **Knows**.
 
-To add a skill to the library, open **Library**, click **Add a skill**, paste the `SKILL.md`, and
+To add a skill, open **Skills**, click **Add a skill**, paste the `SKILL.md`, and
 click **Add skill**. Its frontmatter names the skill and says what it is for.
 
-![The Library: skills grouped as Yours, Shared by others and From Agentome, with a skill open on its SKILL.md, version and who it is shared with](img/library.jpg)
+### Skills with files
+
+Many skills keep what they know in files beside their `SKILL.md`: documentation, API
+specifications, example scripts. To add one, click **Upload a skill folder** in **Add a skill** and
+pick the folder that holds its `SKILL.md`; for a skill on GitHub, download the repository as a ZIP,
+unpack it and pick the skill's folder. Agentome takes the `SKILL.md` and every file beside it,
+leaves hidden files such as `.git` out, and lists the files on the skill's page under **Files**.
+
+A skill may have up to 3,000 files, 25 MB in all and 5 MB a file. In each run the files are beside
+the `SKILL.md`, read only. A script among them does not run by itself: the agent runs it with
+`bash` or `python`, which its tools and sandbox allow or not.
+
+To change the files, click **Edit** and upload the folder again: the new version has the new
+files. A new version saved without a folder keeps the files of the one before.
+
+![Skills: grouped as Yours, Shared by others and From Agentome, with a skill open on its SKILL.md and its version, author, sharing and agents in one line](img/library.jpg)
 
 ### Versions
 
-Each skill has versions. To change one of your skills, open it in **Library**, click **Edit**, and
+Each skill has versions. To change one of your skills, open it in **Skills**, click **Edit**, and
 click **Save as a new version**. Keep the name to save a new version; a new name makes a new skill.
 
 An agent keeps the version it was given; only a skill **From Agentome** is updated in place when
-Agentome is. When the library has a newer version, the editor shows **Move to version** with its
+Agentome is. When **Skills** has a newer version, the editor shows **Move to version** with its
 number next to the skill's chip. Click it when you are ready for the agent to use the new text. The
-skill's page in the library lists which of your agents have it, under **Used by**.
+skill's page lists which of your agents have it, under **Used by**.
 
 ## Team
 
@@ -218,15 +238,15 @@ and how a lead splits a task are in [Teams](teams.md).
 
 The **Tools & policies** section decides what the agent can reach and what it may do without asking.
 
-### MCP servers from the library
+### MCP servers
 
-At the top of the section, click **Add an MCP server** and pick one of the servers in your library.
+At the top of the section, click **Add an MCP server** and pick one of your servers.
 Its tools join the list below under the server's name. To take a server away, click the cross on its
 chip. The server's secret stays on Agentome and never reaches the computer that runs the agent. You
-add servers to the library in **Library** with **Add an MCP server**; see
+add servers in **MCP servers** in the sidebar with **Add an MCP server**; see
 [Integrations](integrations.md).
 
-![Add an MCP server in the Library: its name, address, sign-in and what it does](img/library-server.jpg)
+![An MCP server open: its address, sign-in, who added it and its tools, a line each](img/library-server.jpg)
 
 ![Tools & policies: the MCP servers of Payments backend above the list of its tools](img/agent-tools.jpg)
 
@@ -371,7 +391,8 @@ The **Budget** section limits what one run, and a month of runs, may use. Save a
 ### Per-run limits
 
 **Minutes per run**, **Turns per run** and **Tokens per run**: a run stops at the first limit it
-reaches. An empty field uses the platform default shown in it.
+reaches. An empty field uses the platform default shown in it; **No limit** when there is none,
+which is how Agentome comes.
 
 ### Monthly limit
 

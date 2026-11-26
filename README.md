@@ -163,7 +163,7 @@ flowchart LR
   by the agent, pipeline and review status back on the task by webhooks.
 - **Jira Data Center**: the issues of a project become tasks of its team, and their status follows
   the work.
-- **MCP**: any MCP server from the library, including ones that sign in with OAuth.
+- **MCP**: any remote MCP server you add, including ones that sign in with OAuth.
 - **Models**: Anthropic and OpenAI keys, or a gateway such as LiteLLM. **Sign-in**: passwords or
   Keycloak.
 

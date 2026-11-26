@@ -65,3 +65,4 @@ export type ModelConnectionKind = z.infer<typeof ModelConnectionKind>;
 
 export * from './banner.js';
 export * from './run-events.js';
+export * from './skill-files.js';

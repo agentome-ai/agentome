@@ -6,12 +6,24 @@ export type SkillSummary = {
   version: number;
   owner: { id: string; name: string } | null;
   visibility: 'org' | 'private';
+  /** How many files the version brings beside its SKILL.md, and their size in bytes. */
+  fileCount: number;
+  fileBytes: number;
   createdAt: string;
 };
-export type Skill = SkillSummary & { content: string };
+export type Skill = SkillSummary & { content: string; files: { path: string; size: number }[] };
 
-/** An agent's skill as its view lists it: the pinned version, and whose it is if private. */
-export type AgentSkill = { id: string; name: string; version: string; privateTo?: string };
+/**
+ * An agent's skill as its view lists it: the pinned version, whose it is if private, and
+ * whether it brings files, which an export leaves behind.
+ */
+export type AgentSkill = {
+  id: string;
+  name: string;
+  version: string;
+  privateTo?: string;
+  withFiles?: boolean;
+};
 
 /** A remote MCP server of the library, with the tools it listed at its last check. */
 export type McpServer = {

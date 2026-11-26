@@ -73,6 +73,17 @@ async function infoOf(server: Server, fetchFn: FetchLike) {
   };
 }
 
+/**
+ * Whether the server says how to sign in to it, asked before it is added: one that does not
+ * would stay in the library with a sign-in that can never start.
+ */
+export async function checkSignIn(
+  server: Pick<Server, 'name' | 'url'>,
+  fetchFn: FetchLike,
+): Promise<void> {
+  await infoOf({ ...server, id: '', oauth: undefined }, fetchFn);
+}
+
 function clientOf(key: Buffer, oauth: OAuthSpec | undefined) {
   if (!oauth?.client) return undefined;
   return OAuthClientInformationFullSchema.parse(JSON.parse(decryptSecret(key, oauth.client)));
@@ -165,7 +176,7 @@ export async function pendingSignIn(db: Db, state: string, userId: string | null
   if (!row?.verifier) {
     throw new AppError(
       'validation_failed',
-      'This sign-in has expired or was started by someone else. Start it again from Library.',
+      'This sign-in has expired or was started by someone else. Start it again from MCP servers.',
     );
   }
   return { ...row, verifier: row.verifier };
@@ -247,7 +258,7 @@ export async function bearerFor(
       fetchFn,
     }).catch((error: unknown) => {
       throw new RemoteError(
-        `${server.name} did not renew the sign-in: ${stepFailure(error)}. Sign in again in Library.`,
+        `${server.name} did not renew the sign-in: ${stepFailure(error)}. Sign in again in MCP servers.`,
         { cause: error },
       );
     });

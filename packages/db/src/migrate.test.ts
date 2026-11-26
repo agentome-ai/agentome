@@ -65,6 +65,7 @@ describe('migrate', () => {
       'schedules',
       'seats',
       'sessions',
+      'skill_files',
       'task_comments',
       'tasks',
       'team_members',
@@ -109,6 +110,7 @@ describe('migrate', () => {
       await old.execute(sql`create table public.runs (id uuid primary key)`);
       await old.execute(sql`create table public.installation (id integer primary key)`);
       await old.execute(sql`create table public.tasks (id uuid primary key)`);
+      await old.execute(sql`create table public.catalog_items (id uuid primary key)`);
       await old.execute(
         sql`create type public.seat_kind as enum ('subscription-laptop', 'api-server', 'local-model')`,
       );
@@ -121,8 +123,8 @@ describe('migrate', () => {
       const tables = await old.execute(
         sql`select 1 from information_schema.tables where table_schema = 'public'`,
       );
-      // The seven above, and two_factors, which a migration after the baseline makes.
-      expect(tables).toHaveLength(8);
+      // The eight above, and two_factors and skill_files, which migrations after the baseline make.
+      expect(tables).toHaveLength(10);
     } finally {
       await old.$client.end();
     }

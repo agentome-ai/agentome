@@ -48,9 +48,8 @@ export function McpServersPicker(props: { agent: Agent; onSaved: (agent: Agent) 
   return (
     <div className="mb-6 grid gap-3">
       <p className="text-small text-ink-2">
-        MCP servers from the{' '}
-        <Link to="/library" className={textLink}>
-          library
+        <Link to="/mcp-servers" className={textLink}>
+          MCP servers
         </Link>{' '}
         give the agent more tools. The server&apos;s secret stays on Agentome.
       </p>

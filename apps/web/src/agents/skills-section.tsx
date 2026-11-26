@@ -44,6 +44,7 @@ export function SkillsSection(props: {
           name: skill.name,
           version: String(skill.version),
           privateTo: skill.visibility === 'private' ? skill.owner?.name : undefined,
+          ...(skill.fileCount > 0 && { withFiles: true }),
         })),
       );
     } catch (caught) {
@@ -63,9 +64,9 @@ export function SkillsSection(props: {
     <div className="grid gap-3">
       {skills.length === 0 ? (
         <p className="text-ink-2">
-          No skills yet. Give the agent one from the{' '}
-          <Link to="/library" className={textLink}>
-            library
+          No skills yet. Give the agent one from{' '}
+          <Link to="/skills" className={textLink}>
+            Skills
           </Link>
           : it reads the skill when a task calls for it.
         </p>

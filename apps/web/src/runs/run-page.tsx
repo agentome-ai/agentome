@@ -373,6 +373,9 @@ function NoEvents({ run, connection }: { run: RunDetail; connection: Connection 
 }
 
 const limitHit: Record<string, true> = { timeout: true, max_turns: true, token_limit: true };
+// A limit the run did not have: the server sends the largest a worker takes (`NO_LIMIT`).
+const NONE = 2 ** 31 - 1;
+const NONE_MINUTES = Math.floor(NONE / 60_000);
 
 const starters = { cron: 'Schedule', webhook: 'Webhook', agent: 'Another agent', user: 'Someone' };
 
@@ -433,7 +436,13 @@ function Facts({ run, work }: { run: RunDetail; work: TeamWork | undefined }) {
         {/* The budget is the agent's business until the run runs into it. */}
         {limits && failure && failure in limitHit && (
           <Fact label="Limits">
-            {limits.maxMinutes} min, {limits.maxTurns} turns, {formatTokensShort(limits.maxTokens)}
+            {[
+              limits.maxMinutes < NONE_MINUTES && `${limits.maxMinutes} min`,
+              limits.maxTurns < NONE && `${limits.maxTurns} turns`,
+              limits.maxTokens < NONE && formatTokensShort(limits.maxTokens),
+            ]
+              .filter(Boolean)
+              .join(', ')}
           </Fact>
         )}
       </dl>

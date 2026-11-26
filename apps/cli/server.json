@@ -3,7 +3,7 @@
   "name": "io.github.agentome-ai/agentome",
   "title": "Agentome",
   "description": "Manage AI agents, teams, projects and tasks on your own self-hosted Agentome server.",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "websiteUrl": "https://agentome.ai/docs/administration/#api-tokens-and-managing-agentome-from-claude-code-or-codex",
   "repository": {
     "url": "https://github.com/agentome-ai/agentome",
@@ -43,7 +43,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "agentome",
-      "version": "0.4.3",
+      "version": "0.4.4",
       "transport": { "type": "stdio" },
       "packageArguments": [{ "type": "positional", "value": "mcp" }],
       "environmentVariables": [

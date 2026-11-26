@@ -22,16 +22,23 @@ import {
 import { grantInForce } from '../agents/grants.js';
 import type { RunEventDraft } from '@agentome/shared';
 import { and, asc, eq, inArray, isNotNull, isNull, or, type SQL, sql } from 'drizzle-orm';
-import type { z } from 'zod';
+import { z } from 'zod';
 import { AppError } from '../errors.js';
 import { gitAccess } from '../git/credential.js';
 import { connectionFor } from '../connections/service.js';
-import { skillsOf } from '../library/skills.js';
+import { launchSkill, skillsOf } from '../library/skills.js';
 import { currentMemory } from '../memory/service.js';
-import type { EventsBody, FinishBody, LaunchPackage, RunLimits } from '../protocol.js';
+import type { EventsBody, FinishBody, LaunchPackage } from '../protocol.js';
 import { newToken } from '../tokens.js';
-import { memberServer, teamForRun } from '../agents/team.js';
-import { buildLaunchPackage, projectMd, RELAY_PATH, runLimits, skillsSection } from './launch.js';
+import { memberServer, RunTeam, teamForRun } from '../agents/team.js';
+import {
+  buildLaunchPackage,
+  type LimitDefaults,
+  projectMd,
+  RELAY_PATH,
+  runLimits,
+  skillsSection,
+} from './launch.js';
 import { taskRepository } from '../tasks/repository.js';
 import { taskHistory } from './history.js';
 import { requireBudget } from '../budgets/service.js';
@@ -135,7 +142,7 @@ export async function claimRun(
   db: Db,
   seat: Pick<typeof seats.$inferSelect, 'id' | 'ownerUserId' | 'engines' | 'kind' | 'idleMinutes'>,
   options: {
-    limits: RunLimits;
+    limits: LimitDefaults;
     publicUrl: string;
     secretKey: string;
     /** Starts getting a person's place ready for its next run's services, after the claim. */
@@ -243,11 +250,7 @@ export async function claimRun(
     .select({ skills: agents.skills })
     .from(agents)
     .where(eq(agents.id, launch.agent.id));
-  const skills = (await skillsOf(db, agent?.skills)).map(({ name, version, content }) => ({
-    name,
-    version,
-    content,
-  }));
+  const skills = (await skillsOf(db, agent?.skills)).map(launchSkill);
   // A team runs as Claude Code's subagents: a Codex agent leads none.
   const team = launch.agent.engine === 'claude-code' ? await teamForRun(db, launch.agent.id) : null;
   const history = launch.task ? await taskHistory(db, launch.task.id, launch.run.id) : '';
@@ -433,6 +436,26 @@ async function touchRun(tx: Db | Tx, runId: string, by: RunReporter) {
     .where(live(runId, by))
     .returning({ seatId: runs.seatId, cancelRequestedAt: runs.cancelRequestedAt });
   return run;
+}
+
+/**
+ * The skill versions whose files a live run may fetch: those of its agent and of its team's
+ * members. Null when the run is not live or not the reporter's.
+ */
+export async function runSkills(db: Db, runId: string, by: RunReporter) {
+  const [run] = await db
+    .select({ agentId: runs.agentId, team: runs.team })
+    .from(runs)
+    .where(live(runId, by));
+  if (!run) return null;
+  const members = RunTeam.safeParse(run.team).data?.members ?? [];
+  const holders = [run.agentId, ...members.map((member) => member.agentId)];
+  const rows = await db
+    .select({ skills: agents.skills })
+    .from(agents)
+    .where(inArray(agents.id, holders));
+  const Refs = z.array(z.object({ id: z.string() })).catch([]);
+  return new Set(rows.flatMap((row) => Refs.parse(row.skills).map((ref) => ref.id)));
 }
 
 export async function recordEvents(

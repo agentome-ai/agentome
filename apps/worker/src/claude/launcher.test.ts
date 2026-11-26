@@ -416,11 +416,11 @@ describe('runClaude: limits and cancellation', () => {
     expect(invocations()).toEqual([]);
   });
 
-  it('stops the run past its token limit', async () => {
+  it('stops the run past its token limit, counting no cache read', async () => {
     const { outcome, events, types } = await run(
       options(
         { CLAUDE_FAKE_FIXTURE: fixture('tool-use.jsonl'), CLAUDE_FAKE_LINE_DELAY_MS: '300' },
-        { limits: { timeoutMs: 30_000, maxTurns: 20, maxTokens: 10_000 } },
+        { limits: { timeoutMs: 30_000, maxTurns: 20, maxTokens: 2_000 } },
       ),
     );
     expect(types).toEqual(['started', 'assistant_message', 'tool_use', 'usage', 'error']);
@@ -428,7 +428,7 @@ describe('runClaude: limits and cancellation', () => {
       status: 'failed',
       error: {
         code: 'token_limit',
-        message: 'The run used 11442 tokens, more than its limit of 10000, and was stopped.',
+        message: 'The run used 2242 tokens, more than its limit of 2000, and was stopped.',
       },
     });
     expect(foldRunStatus(events)).toBe('failed');
@@ -439,11 +439,22 @@ describe('runClaude: limits and cancellation', () => {
     const { outcome, events } = await run(
       options(
         { CLAUDE_FAKE_FIXTURE: fixture('tool-use.jsonl') },
-        { limits: { timeoutMs: 30_000, maxTurns: 20, maxTokens: 10_000 } },
+        { limits: { timeoutMs: 30_000, maxTurns: 20, maxTokens: 2_000 } },
       ),
     );
     expect(outcome.error?.code).toBe('token_limit');
     expect(foldRunStatus(events)).toBe('failed');
+  });
+
+  it('lets a run whose tokens are mostly cache reads go on under its limit', async () => {
+    // 9,200 of the first turn's 11,442 tokens are the context read again from the cache.
+    const { outcome } = await run(
+      options(
+        { CLAUDE_FAKE_FIXTURE: fixture('tool-use.jsonl') },
+        { limits: { timeoutMs: 30_000, maxTurns: 20, maxTokens: 10_000 } },
+      ),
+    );
+    expect(outcome.error?.code).not.toBe('token_limit');
   });
 });
 

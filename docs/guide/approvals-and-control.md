@@ -39,7 +39,7 @@ A new agent starts with these defaults:
 
 - **Open a change request**, **Reply on a change request** and **Comment on the Jira issue** ask first,
   since other people read what they produce, and it could carry what the agent read.
-- Every tool of an MCP server from the Library asks first, since nobody has checked what it does.
+- Every tool of an MCP server you added asks first, since nobody has checked what it does.
 - Everything else is allowed.
 
 A call that waits holds its run: the run shows as waiting for approval, and goes on as soon as
@@ -161,17 +161,14 @@ page again.
 
 ## Limits per run
 
-Every run has three limits, so that an agent that loses its way stops on its own:
+A run can have three limits, so that an agent that loses its way stops on its own: minutes, turns
+and tokens. None is set by default: a run goes until its work is done. Tokens count what the model
+reads anew and writes; the context it reads again from the cache on each turn is not counted.
 
-| Limit   | Default   |
-| ------- | --------- |
-| Minutes | 60        |
-| Turns   | 50        |
-| Tokens  | 2,000,000 |
-
-To change them for one agent, open the agent's **Budget** section and fill in **Minutes per run**,
-**Turns per run** or **Tokens per run**. An empty field uses the default shown in it. An admin sets
-the defaults for the whole installation (see [Run limits](../../deploy/CONFIG.md#run-limits)).
+To limit one agent, open its **Budget** section and fill in **Minutes per run**, **Turns per run**
+or **Tokens per run**. An empty field uses the installation's default shown in it, or **No limit**.
+An admin sets defaults for the whole installation (see
+[Run limits](../../deploy/CONFIG.md#run-limits)).
 
 When a run reaches a limit, the computer stops it and the run fails with a message that names the
 limit, for example "The run exceeded its time limit of 60 min and was stopped." The run keeps its

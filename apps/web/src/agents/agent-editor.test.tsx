@@ -21,7 +21,7 @@ const agent: Agent = {
   modelConnection: null,
   serverShell: false,
   budget: { maxTurns: 80 },
-  runDefaults: { maxMinutes: 60, maxTurns: 50, maxTokens: 2_000_000 },
+  runDefaults: { maxMinutes: null, maxTurns: 50, maxTokens: null },
   copiedFromAgentId: null,
   template: { id: 't1', name: 'Backend developer', version: 2 },
   seat: null,
@@ -281,6 +281,11 @@ describe('the agent editor', () => {
     const { calls, user } = renderEditor();
     await screen.findByRole('heading', { level: 1, name: 'Payments backend' });
     const turns = screen.getByRole('textbox', { name: 'Turns per run' });
+    // An empty field shows the platform's limit, and that there is none.
+    expect(turns.getAttribute('placeholder')).toBe('50');
+    expect(
+      screen.getByRole('textbox', { name: 'Minutes per run' }).getAttribute('placeholder'),
+    ).toBe('No limit');
     await user.clear(turns);
     await user.type(turns, 'eighty');
     expect(screen.getByText('Enter a whole number, or leave it empty.')).toBeTruthy();
@@ -738,7 +743,9 @@ describe('the policy matrix', () => {
         "An agent's quality needs a license key.",
       ),
     });
-    expect(await screen.findByText(/Agents that work by themselves need a license key/)).toBeTruthy();
+    expect(
+      await screen.findByText(/Agents that work by themselves need a license key/),
+    ).toBeTruthy();
     expect(screen.getByRole('radio', { name: 'By itself' })).toHaveProperty('disabled', true);
     expect(screen.getByRole('textbox', { name: 'Monthly limit, USD' })).toHaveProperty(
       'disabled',

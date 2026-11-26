@@ -1,7 +1,14 @@
 import type { agents, tasks } from '@agentome/db';
 import { describe, expect, it } from 'vitest';
 import { LaunchPackage } from '../protocol.js';
-import { buildLaunchPackage, profileFor, projectMd, runLimits, wordsForRun } from './launch.js';
+import {
+  buildLaunchPackage,
+  NO_LIMIT,
+  profileFor,
+  projectMd,
+  runLimits,
+  wordsForRun,
+} from './launch.js';
 
 const defaults = { maxMinutes: 60, maxTurns: 50, maxTokens: 2_000_000 };
 
@@ -160,6 +167,15 @@ describe('runLimits', () => {
       defaults,
     );
     expect(runLimits(defaults, 'nonsense')).toEqual(defaults);
+  });
+
+  it('sends the largest limit a worker takes where neither the platform nor the budget sets one', () => {
+    const none = { maxMinutes: null, maxTurns: null, maxTokens: null };
+    expect(runLimits(none, null)).toEqual(NO_LIMIT);
+    expect(runLimits(none, { maxTurns: 200 })).toEqual({ ...NO_LIMIT, maxTurns: 200 });
+    // Every one of them passes the worker's check, and its time limit fits a timer.
+    for (const limit of Object.values(NO_LIMIT)) expect(limit).toBeLessThan(2 ** 31);
+    expect(NO_LIMIT.maxMinutes * 60_000).toBeLessThan(2 ** 31);
   });
 });
 

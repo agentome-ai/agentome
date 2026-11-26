@@ -15,6 +15,17 @@ const TIMEOUT_MS = 15_000;
 const CLAIM_TIMEOUT_MS = 40_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * A skill of the run. `files`, when it brings some: what this worker fetches them by
+ * (`skillId`) and keeps them by (`digest`); absent from an older server.
+ */
+export interface LaunchSkill {
+  name: string;
+  version?: number;
+  content: string;
+  files?: { skillId: string; count: number; digest: string };
+}
+
 /** What a claim hands over: the fields this worker reads. */
 export interface LaunchPackage {
   run: {
@@ -29,7 +40,7 @@ export interface LaunchPackage {
     engine?: 'claude-code' | 'codex';
     modelPref: string | null;
     /** The agent's skills at their pinned versions. Absent from an older server. */
-    skills?: { name: string; version: number; content: string }[];
+    skills?: LaunchSkill[];
     /** The agent's memory at claim. Absent from an older server. */
     memoryDocuments?: { path: string; version: number; content: string }[];
   };
@@ -42,7 +53,7 @@ export interface LaunchPackage {
       prompt: string;
       modelPref: string | null;
       token: string;
-      skills: { name: string; content: string }[];
+      skills: LaunchSkill[];
       memoryDocuments: { path: string; content: string }[];
     }[];
     steps: { members: string[]; note: string }[];
@@ -248,6 +259,15 @@ export function seatClient({ serverUrl, token }: Pick<Connection, 'serverUrl' | 
     async events(id: string, runToken: string, events: WireEvent[], signal?: AbortSignal) {
       const answer = await run(id, 'events', { token: runToken, body: events, signal });
       return { cancelRequested: cancelRequested(answer) };
+    },
+    /** A skill's files for the run, in base64: up to 25 MB, so with a longer wait. */
+    async skillFiles(id: string, runToken: string, skillId: string, signal?: AbortSignal) {
+      const url = `${serverUrl}/api/runs/${encodeURIComponent(id)}/skills/${encodeURIComponent(skillId)}/files`;
+      const answer = await call(url, 'GET', { token: runToken, signal, timeoutMs: 120_000 });
+      const files = (answer.body as { files?: unknown } | undefined)?.files;
+      if (!Array.isArray(files))
+        throw new ServerError(200, undefined, "The server did not send the skill's files.");
+      return files as { path: string; content: string }[];
     },
     async heartbeat(id: string, runToken: string) {
       const answer = await run(id, 'heartbeat', { token: runToken });
